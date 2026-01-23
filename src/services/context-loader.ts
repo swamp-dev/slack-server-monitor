@@ -40,7 +40,7 @@ const UNSAFE_PATH_PREFIXES = [
   '/proc',
   '/dev',
   '/root',
-  '/home',
+  // '/home' removed - allow user home directories for infrastructure repos
 ];
 
 /**
