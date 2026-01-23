@@ -1,77 +1,70 @@
-import Anthropic from '@anthropic-ai/sdk';
-import type {
-  MessageParam,
-  ContentBlockParam,
-  ToolResultBlockParam,
-  TextBlock,
-  ToolUseBlock,
-} from '@anthropic-ai/sdk/resources/messages.js';
-import { getToolSpecs, executeTool } from './tools/index.js';
-import type { ToolConfig } from './tools/types.js';
-import { buildSystemPrompt } from '../config/prompts.js';
-import { logger } from '../utils/logger.js';
+/**
+ * Claude service - re-exports from providers for backward compatibility
+ */
+
+import { createProvider, resetProvider, type BackendType, type ProviderFactoryConfig } from './providers/index.js';
+import type { ClaudeProvider, UserConfig, AskResult, ConversationMessage, ToolCallLog } from './providers/types.js';
+
+// Re-export types for backward compatibility
+export type { UserConfig, AskResult, ConversationMessage, ToolCallLog, BackendType };
 
 /**
  * Configuration for Claude service
  */
 export interface ClaudeConfig {
-  apiKey: string;
+  /** Backend type: api, cli, or auto */
+  backend: BackendType;
+  /** API key (required for api backend) */
+  apiKey?: string;
+  /** Model for API backend */
   model: string;
+  /** Path to CLI executable */
+  cliPath: string;
+  /** Model alias for CLI backend */
+  cliModel: string;
+  /** Maximum tokens for response */
   maxTokens: number;
+  /** Maximum tool calls per turn */
   maxToolCalls: number;
-}
-
-/**
- * User-specific configuration
- */
-export interface UserConfig {
-  systemPromptAddition?: string;
-  contextDirContent?: string;
-  disabledTools: string[];
-  toolConfig: ToolConfig;
-}
-
-/**
- * Tool call log entry
- */
-export interface ToolCallLog {
-  name: string;
-  input: Record<string, unknown>;
-  outputPreview: string;
-}
-
-/**
- * Result from asking Claude
- */
-export interface AskResult {
-  response: string;
-  toolCalls: ToolCallLog[];
-  usage: {
-    inputTokens: number;
-    outputTokens: number;
-  };
-}
-
-/**
- * Simple message for conversation history
- */
-export interface ConversationMessage {
-  role: 'user' | 'assistant';
-  content: string;
+  /** Maximum agentic loop iterations */
+  maxIterations: number;
 }
 
 /**
  * Claude AI service with tool use support
+ *
+ * This class wraps the provider for backward compatibility.
+ * New code should use getProvider() directly.
  */
 export class ClaudeService {
-  private client: Anthropic;
-  private config: ClaudeConfig;
+  private provider: ClaudeProvider;
 
   constructor(config: ClaudeConfig) {
-    this.config = config;
-    this.client = new Anthropic({
-      apiKey: config.apiKey,
-    });
+    const factoryConfig: ProviderFactoryConfig = {
+      backend: config.backend,
+    };
+
+    // Configure API provider if we have an API key
+    if (config.apiKey) {
+      factoryConfig.api = {
+        apiKey: config.apiKey,
+        model: config.model,
+        maxTokens: config.maxTokens,
+        maxToolCalls: config.maxToolCalls,
+        maxIterations: config.maxIterations,
+      };
+    }
+
+    // Configure CLI provider
+    factoryConfig.cli = {
+      cliPath: config.cliPath,
+      model: config.cliModel,
+      maxTokens: config.maxTokens,
+      maxToolCalls: config.maxToolCalls,
+      maxIterations: config.maxIterations,
+    };
+
+    this.provider = createProvider(factoryConfig);
   }
 
   /**
@@ -82,177 +75,21 @@ export class ClaudeService {
     conversationHistory: ConversationMessage[],
     userConfig: UserConfig
   ): Promise<AskResult> {
-    const toolCalls: ToolCallLog[] = [];
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
-    let toolCallCount = 0;
-
-    // Build messages from conversation history
-    const messages: MessageParam[] = this.buildMessages(conversationHistory, question);
-
-    // Get available tools (respecting user's disabled tools)
-    const tools = getToolSpecs(userConfig.disabledTools);
-
-    // Build system prompt
-    const systemPrompt = buildSystemPrompt({
-      userAddition: userConfig.systemPromptAddition,
-      contextDirContent: userConfig.contextDirContent,
-    });
-
-    // Tool use loop with hard iteration limit (defense in depth)
-    const MAX_ITERATIONS = 20;
-    let iteration = 0;
-
-    while (iteration++ < MAX_ITERATIONS) {
-      logger.debug('Calling Claude API', {
-        messageCount: messages.length,
-        toolCount: tools.length,
-      });
-
-      const response = await this.client.messages.create({
-        model: this.config.model,
-        max_tokens: this.config.maxTokens,
-        system: systemPrompt,
-        tools,
-        messages,
-      });
-
-      // Track usage
-      totalInputTokens += response.usage.input_tokens;
-      totalOutputTokens += response.usage.output_tokens;
-
-      logger.debug('Claude API response', {
-        stopReason: response.stop_reason,
-        contentBlocks: response.content.length,
-        usage: response.usage,
-      });
-
-      // Check if we have tool calls to process
-      const toolUseBlocks = response.content.filter(
-        (block): block is ToolUseBlock => block.type === 'tool_use'
-      );
-
-      if (toolUseBlocks.length === 0 || response.stop_reason === 'end_turn') {
-        // No more tool calls - extract final text response
-        const textBlocks = response.content.filter(
-          (block): block is TextBlock => block.type === 'text'
-        );
-
-        const finalResponse = textBlocks.map(b => b.text).join('\n');
-
-        return {
-          response: finalResponse || 'I apologize, but I was unable to generate a response.',
-          toolCalls,
-          usage: {
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-          },
-        };
-      }
-
-      // Check tool call limit
-      toolCallCount += toolUseBlocks.length;
-      if (toolCallCount > this.config.maxToolCalls) {
-        logger.warn('Tool call limit reached', { limit: this.config.maxToolCalls });
-        return {
-          response: `I reached the maximum number of tool calls (${String(this.config.maxToolCalls)}) while investigating. Here's what I found so far:\n\n${this.extractPartialResponse(response.content)}`,
-          toolCalls,
-          usage: {
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-          },
-        };
-      }
-
-      // Execute tool calls
-      const toolResults: ToolResultBlockParam[] = [];
-
-      for (const toolBlock of toolUseBlocks) {
-        const result = await executeTool(
-          toolBlock.id,
-          toolBlock.name,
-          toolBlock.input as Record<string, unknown>,
-          userConfig.toolConfig
-        );
-
-        // Log the tool call
-        toolCalls.push({
-          name: toolBlock.name,
-          input: toolBlock.input as Record<string, unknown>,
-          outputPreview: result.content.slice(0, 200),
-        });
-
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: result.toolUseId,
-          content: result.content,
-          is_error: result.isError,
-        });
-
-        logger.debug('Tool executed', {
-          tool: toolBlock.name,
-          isError: result.isError,
-          outputLength: result.content.length,
-        });
-      }
-
-      // Add assistant response and tool results to messages
-      messages.push({
-        role: 'assistant',
-        content: response.content as ContentBlockParam[],
-      });
-
-      messages.push({
-        role: 'user',
-        content: toolResults,
-      });
-    }
-
-    // Safety fallback - should not reach here if loop exits normally
-    logger.error('Max iterations reached in tool loop', { iterations: MAX_ITERATIONS });
-    return {
-      response: 'I was unable to complete the analysis - maximum iterations reached.',
-      toolCalls,
-      usage: {
-        inputTokens: totalInputTokens,
-        outputTokens: totalOutputTokens,
-      },
-    };
+    return this.provider.ask(question, conversationHistory, userConfig);
   }
 
   /**
-   * Build messages array from conversation history plus new question
+   * Get the provider name (for logging)
    */
-  private buildMessages(
-    history: ConversationMessage[],
-    newQuestion: string
-  ): MessageParam[] {
-    const messages: MessageParam[] = [];
-
-    for (const msg of history) {
-      messages.push({
-        role: msg.role,
-        content: msg.content,
-      });
-    }
-
-    // Add new question
-    messages.push({
-      role: 'user',
-      content: newQuestion,
-    });
-
-    return messages;
+  get providerName(): string {
+    return this.provider.name;
   }
 
   /**
-   * Extract any text response from a partial content array
+   * Whether this provider tracks token usage
    */
-  private extractPartialResponse(content: Anthropic.Messages.ContentBlock[]): string {
-    const textBlocks = content.filter(
-      (block): block is TextBlock => block.type === 'text'
-    );
-    return textBlocks.map(b => b.text).join('\n') || 'No partial response available.';
+  get tracksTokens(): boolean {
+    return this.provider.tracksTokens;
   }
 }
 
@@ -265,4 +102,12 @@ let claudeService: ClaudeService | null = null;
 export function getClaudeService(config: ClaudeConfig): ClaudeService {
   claudeService ??= new ClaudeService(config);
   return claudeService;
+}
+
+/**
+ * Reset the Claude service singleton (for testing)
+ */
+export function resetClaudeService(): void {
+  claudeService = null;
+  resetProvider();
 }

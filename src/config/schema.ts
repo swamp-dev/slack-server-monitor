@@ -11,6 +11,23 @@ const SlackUserIdSchema = z.string().regex(/^U[A-Z0-9]+$/, 'Invalid Slack user I
 const SlackChannelIdSchema = z.string().regex(/^C[A-Z0-9]+$/, 'Invalid Slack channel ID format');
 
 /**
+ * Safe CLI path pattern - only allows alphanumeric, underscores, hyphens, forward slashes, and dots
+ * Prevents command injection via malicious CLI path values
+ */
+const SafeCliPathSchema = z.string()
+  .regex(/^[a-zA-Z0-9_./-]+$/, 'CLI path contains invalid characters')
+  .refine(
+    (path) => !path.includes('..'),
+    'CLI path cannot contain parent directory references'
+  );
+
+/**
+ * Safe model name pattern - only allows alphanumeric, underscores, hyphens, and dots
+ */
+const SafeModelNameSchema = z.string()
+  .regex(/^[a-zA-Z0-9_.-]+$/, 'Model name contains invalid characters');
+
+/**
  * Configuration schema for the Slack Server Monitor
  */
 export const ConfigSchema = z.object({
@@ -58,19 +75,27 @@ export const ConfigSchema = z.object({
   }),
 
   claude: z.object({
-    /** Anthropic API key */
-    apiKey: z.string().min(1, 'Anthropic API key is required'),
-    /** Claude model to use */
-    model: z.string().default('claude-sonnet-4-20250514'),
+    /** Backend type: api (SDK), cli (Claude Code), or auto (try api first) */
+    backend: z.enum(['api', 'cli', 'auto']).default('auto'),
+    /** Anthropic API key (required for 'api' backend) */
+    apiKey: z.string().optional(),
+    /** Claude model to use with API backend */
+    model: SafeModelNameSchema.default('claude-sonnet-4-20250514'),
+    /** Path to Claude CLI executable (validated to prevent command injection) */
+    cliPath: SafeCliPathSchema.default('claude'),
+    /** Model alias for CLI backend (e.g., 'sonnet', 'opus', 'haiku') */
+    cliModel: SafeModelNameSchema.default('sonnet'),
     /** Maximum tokens for response */
     maxTokens: z.number().int().positive().default(2048),
     /** Maximum tool calls per turn to prevent runaway loops */
-    maxToolCalls: z.number().int().positive().max(25).default(10),
+    maxToolCalls: z.number().int().positive().default(40),
+    /** Maximum agentic loop iterations (defense in depth) */
+    maxIterations: z.number().int().positive().default(50),
     /** Rate limit: max requests per window */
     rateLimitMax: z.number().int().positive().default(5),
     /** Rate limit: window size in seconds */
     rateLimitWindowSeconds: z.number().int().positive().default(60),
-    /** Daily token budget */
+    /** Daily token budget (only tracked for API backend) */
     dailyTokenLimit: z.number().int().positive().default(100000),
     /** Conversation TTL in hours */
     conversationTtlHours: z.number().int().positive().default(24),
@@ -84,7 +109,18 @@ export const ConfigSchema = z.object({
     maxLogLines: z.number().int().positive().max(100).default(50),
     /** Context directory - Claude reads CLAUDE.md and .claude/context/ from here */
     contextDir: z.string().optional(),
-  }).optional(),
+  }).refine(
+    (data) => {
+      // API backend requires an API key
+      if (data.backend === 'api' && !data.apiKey) {
+        return false;
+      }
+      // Auto backend requires at least one of api key or cli
+      // (cli is always available if claude is installed)
+      return true;
+    },
+    { message: 'API backend requires ANTHROPIC_API_KEY to be set' }
+  ).optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

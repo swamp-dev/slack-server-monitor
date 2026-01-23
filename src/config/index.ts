@@ -49,12 +49,17 @@ function loadConfig(): Config {
       level: (process.env.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error') ?? 'info',
       auditLogPath: process.env.AUDIT_LOG_PATH ?? undefined,
     },
-    claude: process.env.ANTHROPIC_API_KEY
+    // Enable Claude if API key is set OR backend is explicitly 'cli'
+    claude: (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_BACKEND === 'cli')
       ? {
-          apiKey: process.env.ANTHROPIC_API_KEY,
+          backend: (process.env.CLAUDE_BACKEND as 'api' | 'cli' | 'auto') ?? 'auto',
+          apiKey: process.env.ANTHROPIC_API_KEY ?? undefined,
           model: process.env.CLAUDE_MODEL ?? 'claude-sonnet-4-20250514',
+          cliPath: process.env.CLAUDE_CLI_PATH ?? 'claude',
+          cliModel: process.env.CLAUDE_CLI_MODEL ?? 'sonnet',
           maxTokens: parseIntWithDefault(process.env.CLAUDE_MAX_TOKENS, 2048),
-          maxToolCalls: parseIntWithDefault(process.env.CLAUDE_MAX_TOOL_CALLS, 10),
+          maxToolCalls: parseIntWithDefault(process.env.CLAUDE_MAX_TOOL_CALLS, 40),
+          maxIterations: parseIntWithDefault(process.env.CLAUDE_MAX_ITERATIONS, 50),
           rateLimitMax: parseIntWithDefault(process.env.CLAUDE_RATE_LIMIT_MAX, 5),
           rateLimitWindowSeconds: parseIntWithDefault(process.env.CLAUDE_RATE_LIMIT_WINDOW_SECONDS, 60),
           dailyTokenLimit: parseIntWithDefault(process.env.CLAUDE_DAILY_TOKEN_LIMIT, 100000),
