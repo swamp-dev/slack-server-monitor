@@ -48,15 +48,14 @@ export function createProvider(config: ProviderFactoryConfig): ClaudeProvider {
   }
 
   // Auto backend: prefer API if available, fall back to CLI
-  if (backend === 'auto') {
-    if (config.api) {
-      logger.info('Auto-selecting API provider (API key available)');
-      return new ApiProvider(config.api);
-    }
-    if (config.cli) {
-      logger.info('Auto-selecting CLI provider (no API key, CLI configured)');
-      return new CliProvider(config.cli);
-    }
+  // backend === 'auto' at this point
+  if (config.api) {
+    logger.info('Auto-selecting API provider (API key available)');
+    return new ApiProvider(config.api);
+  }
+  if (config.cli) {
+    logger.info('Auto-selecting CLI provider (no API key, CLI configured)');
+    return new CliProvider(config.cli);
   }
 
   throw new Error(`No valid provider configuration found for backend: ${backend}`);

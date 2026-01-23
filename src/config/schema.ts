@@ -6,6 +6,48 @@ import { z } from 'zod';
 const SlackUserIdSchema = z.string().regex(/^U[A-Z0-9]+$/, 'Invalid Slack user ID format');
 
 /**
+ * SECURITY: Unsafe path prefixes for backup directories
+ * These directories should never be used as backup sources
+ */
+const UNSAFE_BACKUP_PREFIXES = [
+  '/etc',
+  '/root',
+  '/home',
+  '/bin',
+  '/sbin',
+  '/usr',
+  '/lib',
+  '/sys',
+  '/proc',
+  '/dev',
+  '/boot',
+];
+
+/**
+ * SECURITY: Safe backup directory schema
+ * Validates that backup directories are absolute paths without traversal
+ * and don't point to sensitive system directories
+ */
+const SafeBackupDirSchema = z.string()
+  .refine(
+    (p) => p.startsWith('/'),
+    'Backup directory must be an absolute path'
+  )
+  .refine(
+    (p) => !p.includes('..'),
+    'Backup directory cannot contain parent directory references (..)'
+  )
+  .refine(
+    (p) => {
+      const normalized = p.replace(/\/+/g, '/').replace(/\/$/, '');
+      return !UNSAFE_BACKUP_PREFIXES.some(
+        (prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`)
+      );
+    },
+    'Backup directory cannot be a system directory'
+  );
+
+/**
  * Slack channel ID format: C followed by alphanumeric characters
  */
 const SlackChannelIdSchema = z.string().regex(/^C[A-Z0-9]+$/, 'Invalid Slack channel ID format');
@@ -26,6 +68,16 @@ const SafeCliPathSchema = z.string()
  */
 const SafeModelNameSchema = z.string()
   .regex(/^[a-zA-Z0-9_.-]+$/, 'Model name contains invalid characters');
+
+/**
+ * Context option schema - alias:path pair for context directory switching
+ */
+const ContextOptionSchema = z.object({
+  /** Short alias for the context (e.g., "homelab", "infra") */
+  alias: z.string().regex(/^[a-zA-Z0-9_-]+$/, 'Context alias must be alphanumeric with underscores/hyphens'),
+  /** Absolute path to the context directory */
+  path: z.string().min(1, 'Context path cannot be empty'),
+});
 
 /**
  * Configuration schema for the Slack Server Monitor
@@ -61,8 +113,8 @@ export const ConfigSchema = z.object({
     sslDomains: z.array(z.string()).default([]),
     /** Maximum log lines to return (security cap) */
     maxLogLines: z.number().int().positive().max(500).default(50),
-    /** Backup directories to monitor */
-    backupDirs: z.array(z.string()).default([]),
+    /** Backup directories to monitor (validated for security) */
+    backupDirs: z.array(SafeBackupDirSchema).default([]),
     /** S3 bucket for backup verification */
     s3BackupBucket: z.string().optional(),
   }),
@@ -109,6 +161,8 @@ export const ConfigSchema = z.object({
     maxLogLines: z.number().int().positive().max(100).default(50),
     /** Context directory - Claude reads CLAUDE.md and .claude/context/ from here */
     contextDir: z.string().optional(),
+    /** Available context directories that can be switched per-channel */
+    contextOptions: z.array(ContextOptionSchema).default([]),
   }).refine(
     (data) => {
       // API backend requires an API key

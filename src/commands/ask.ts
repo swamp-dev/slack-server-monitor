@@ -2,8 +2,9 @@ import type { App, SlackCommandMiddlewareArgs, AllMiddlewareArgs } from '@slack/
 import { config } from '../config/index.js';
 import { getClaudeService } from '../services/claude.js';
 import { getConversationStore } from '../services/conversation-store.js';
+import { getContextStore } from '../services/context-store.js';
 import { loadUserConfig } from '../services/user-config.js';
-import { getContext, type LoadedContext } from '../services/context-loader.js';
+import { getContext, getContextByAlias, type LoadedContext } from '../services/context-loader.js';
 import { logger } from '../utils/logger.js';
 import { section, context as contextBlock, error as errorBlock } from '../formatters/blocks.js';
 
@@ -13,9 +14,14 @@ import { section, context as contextBlock, error as errorBlock } from '../format
 const claudeRateLimits = new Map<string, number[]>();
 
 /**
- * Check if user is within Claude rate limit
+ * SECURITY: Atomically check and record a Claude request
+ * This prevents race conditions where multiple requests could slip through
+ * between checking and recording.
+ *
+ * @param userId - The Slack user ID
+ * @returns true if request is allowed and recorded, false if rate limited
  */
-function isWithinClaudeRateLimit(userId: string): boolean {
+export function checkAndRecordClaudeRequest(userId: string): boolean {
   if (!config.claude) return false;
 
   const now = Date.now();
@@ -24,22 +30,76 @@ function isWithinClaudeRateLimit(userId: string): boolean {
 
   // Remove old requests outside window
   const validRequests = requests.filter(t => now - t < windowMs);
-  claudeRateLimits.set(userId, validRequests);
 
-  return validRequests.length < config.claude.rateLimitMax;
+  // Check if at limit
+  if (validRequests.length >= config.claude.rateLimitMax) {
+    // Update with cleaned list but don't add new request
+    claudeRateLimits.set(userId, validRequests);
+    return false;
+  }
+
+  // Under limit - record the request atomically
+  validRequests.push(now);
+  claudeRateLimits.set(userId, validRequests);
+  return true;
 }
 
 /**
- * Record a Claude request for rate limiting
+ * Get remaining requests for a user in the current window
+ * Used for testing and diagnostics
  */
-function recordClaudeRequest(userId: string): void {
+export function getRemainingRequests(userId: string): number {
+  if (!config.claude) return 0;
+
+  const now = Date.now();
+  const windowMs = config.claude.rateLimitWindowSeconds * 1000;
   const requests = claudeRateLimits.get(userId) ?? [];
-  requests.push(Date.now());
-  claudeRateLimits.set(userId, requests);
+  const validRequests = requests.filter(t => now - t < windowMs);
+
+  return Math.max(0, config.claude.rateLimitMax - validRequests.length);
 }
 
-/** Cached context from context directory */
-let loadedContext: LoadedContext | null = null;
+/**
+ * Clear rate limit data for a user (for testing)
+ */
+export function clearRateLimitForUser(userId: string): void {
+  claudeRateLimits.delete(userId);
+}
+
+/**
+ * Clear all rate limit data (for testing)
+ */
+export function clearAllRateLimits(): void {
+  claudeRateLimits.clear();
+}
+
+/** Cached default context from context directory */
+let defaultContext: LoadedContext | null = null;
+
+/**
+ * Resolve the active context for a channel
+ * Returns the channel-specific context if set, otherwise the default context
+ */
+async function resolveChannelContext(
+  channelId: string,
+  claudeConfig: NonNullable<typeof config.claude>
+): Promise<LoadedContext | null> {
+  const contextStore = getContextStore(claudeConfig.dbPath);
+  const channelContextAlias = contextStore.getChannelContext(channelId);
+
+  if (channelContextAlias) {
+    // Find the context option with this alias
+    const option = claudeConfig.contextOptions.find((o) => o.alias === channelContextAlias);
+    if (option) {
+      return await getContextByAlias(option.alias, option.path);
+    }
+    // Alias no longer exists in options, fall through to default
+    logger.warn('Channel context alias not found in options', { channelId, alias: channelContextAlias });
+  }
+
+  // Return the default context
+  return defaultContext;
+}
 
 /**
  * Register the /ask command
@@ -55,14 +115,14 @@ export async function registerAskCommand(app: App): Promise<void> {
 
   const claudeConfig = config.claude;
 
-  // Load context from context directory if configured
+  // Load default context from context directory if configured
   if (claudeConfig.contextDir) {
-    loadedContext = await getContext(claudeConfig.contextDir);
-    if (loadedContext?.combined) {
-      logger.info('Loaded context from directory', {
+    defaultContext = await getContext(claudeConfig.contextDir);
+    if (defaultContext?.combined) {
+      logger.info('Loaded default context from directory', {
         contextDir: claudeConfig.contextDir,
-        hasClaudeMd: !!loadedContext.claudeMd,
-        contextFiles: loadedContext.contextFiles.size,
+        hasClaudeMd: !!defaultContext.claudeMd,
+        contextFiles: defaultContext.contextFiles.size,
       });
     }
   }
@@ -82,16 +142,7 @@ export async function registerAskCommand(app: App): Promise<void> {
       return;
     }
 
-    // Check Claude rate limit
-    if (!isWithinClaudeRateLimit(userId)) {
-      await respond({
-        blocks: [errorBlock(`Rate limit exceeded. Please wait before asking another question.`)],
-        response_type: 'ephemeral',
-      });
-      return;
-    }
-
-    // Check daily token budget
+    // Check daily token budget first (before consuming a rate limit slot)
     const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
     if (store.isDailyBudgetExceeded(claudeConfig.dailyTokenLimit)) {
       await respond({
@@ -101,8 +152,14 @@ export async function registerAskCommand(app: App): Promise<void> {
       return;
     }
 
-    // Record the request
-    recordClaudeRequest(userId);
+    // Check and record rate limit atomically
+    if (!checkAndRecordClaudeRequest(userId)) {
+      await respond({
+        blocks: [errorBlock(`Rate limit exceeded. Please wait before asking another question.`)],
+        response_type: 'ephemeral',
+      });
+      return;
+    }
 
     try {
       // Post initial message (visible to user)
@@ -132,13 +189,16 @@ export async function registerAskCommand(app: App): Promise<void> {
       // Get conversation history (excluding the current question we just added)
       const history = conversation.messages.slice(0, -1);
 
+      // Resolve channel-specific context (or use default)
+      const activeContext = await resolveChannelContext(channelId, claudeConfig);
+
       // Load user config
       const userConfig = await loadUserConfig(userId, {
         allowedDirs: claudeConfig.allowedDirs,
         maxFileSizeKb: claudeConfig.maxFileSizeKb,
         maxLogLines: claudeConfig.maxLogLines,
         contextDir: claudeConfig.contextDir,
-        contextDirContent: loadedContext?.combined,
+        contextDirContent: activeContext?.combined,
       });
 
       // Get Claude service and ask
@@ -259,17 +319,7 @@ export function registerThreadHandler(app: App): void {
       return;
     }
 
-    // Check Claude rate limit
-    if (!isWithinClaudeRateLimit(userId)) {
-      await client.chat.postMessage({
-        channel: channelId,
-        thread_ts: threadTs,
-        text: 'Rate limit exceeded. Please wait before asking another question.',
-      });
-      return;
-    }
-
-    // Check daily budget
+    // Check daily budget first (before consuming a rate limit slot)
     if (store.isDailyBudgetExceeded(claudeConfig.dailyTokenLimit)) {
       await client.chat.postMessage({
         channel: channelId,
@@ -279,7 +329,15 @@ export function registerThreadHandler(app: App): void {
       return;
     }
 
-    recordClaudeRequest(userId);
+    // Check and record rate limit atomically
+    if (!checkAndRecordClaudeRequest(userId)) {
+      await client.chat.postMessage({
+        channel: channelId,
+        thread_ts: threadTs,
+        text: 'Rate limit exceeded. Please wait before asking another question.',
+      });
+      return;
+    }
 
     try {
       // Post thinking message
@@ -301,13 +359,16 @@ export function registerThreadHandler(app: App): void {
       // Get conversation history (excluding the current question we just added)
       const history = updatedConversation.messages.slice(0, -1);
 
+      // Resolve channel-specific context (or use default)
+      const activeContext = await resolveChannelContext(channelId, claudeConfig);
+
       // Load user config
       const userConfig = await loadUserConfig(userId, {
         allowedDirs: claudeConfig.allowedDirs,
         maxFileSizeKb: claudeConfig.maxFileSizeKb,
         maxLogLines: claudeConfig.maxLogLines,
         contextDir: claudeConfig.contextDir,
-        contextDirContent: loadedContext?.combined,
+        contextDirContent: activeContext?.combined,
       });
 
       // Get Claude service and ask

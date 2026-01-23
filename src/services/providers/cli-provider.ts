@@ -267,10 +267,11 @@ ${JSON.stringify(tools, null, 2)}
         const parsed = JSON.parse(jsonStr) as { tool: string; input: Record<string, unknown> };
 
         if (parsed.tool && typeof parsed.tool === 'string') {
+          const toolId = `cli-${String(Date.now())}-${String(callIndex++)}`;
           toolCallRequests.push({
-            id: `cli-${Date.now()}-${String(callIndex++)}`,
+            id: toolId,
             name: parsed.tool,
-            input: parsed.input ?? {},
+            input: parsed.input,
           });
         }
       } catch (e) {

@@ -137,11 +137,12 @@ export function statusEmoji(status: 'ok' | 'warn' | 'error' | 'unknown'): string
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
 
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   const value = bytes / Math.pow(1024, i);
+  const unit = units[i] ?? 'B';
 
-  return `${value.toFixed(1)} ${units[i]}`;
+  return `${value.toFixed(1)} ${unit}`;
 }
 
 /**
@@ -153,9 +154,9 @@ export function formatUptime(seconds: number): string {
   const minutes = Math.floor((seconds % 3600) / 60);
 
   const parts: string[] = [];
-  if (days > 0) parts.push(`${days}d`);
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0 || parts.length === 0) parts.push(`${minutes}m`);
+  if (days > 0) parts.push(`${String(days)}d`);
+  if (hours > 0) parts.push(`${String(hours)}h`);
+  if (minutes > 0 || parts.length === 0) parts.push(`${String(minutes)}m`);
 
   return parts.join(' ');
 }

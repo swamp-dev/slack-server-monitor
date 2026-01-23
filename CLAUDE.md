@@ -42,6 +42,7 @@ src/
 ├── services/
 │   ├── claude.ts             # Claude service wrapper (backward compatible)
 │   ├── conversation-store.ts # SQLite storage for conversations
+│   ├── context-store.ts      # SQLite storage for channel context
 │   ├── user-config.ts        # Per-user config from ~/.claude/
 │   ├── context-loader.ts     # Load CLAUDE.md and .claude/context/ from context dir
 │   ├── providers/
@@ -71,17 +72,20 @@ src/
 
 | Command | Description |
 |---------|-------------|
-| `/status` | All container states |
-| `/status <svc>` | Detailed container info |
+| `/services` | All container states |
+| `/services <svc>` | Detailed container info |
 | `/logs <svc> [n]` | Last n lines of logs (max 500) |
 | `/resources` | CPU, memory, disk, swap |
 | `/disk` | Per-mount disk usage |
-| `/security` | fail2ban status |
-| `/ssl` | Certificate expiration |
-| `/backups` | Backup status |
-| `/pm2` | PM2 process list |
 | `/network` | Docker networks |
+| `/security` | fail2ban jail status and ban counts |
+| `/security <jail>` | Detailed jail info with banned IPs |
+| `/ssl` | Check SSL certificates for configured domains |
+| `/ssl <domain>` | Check specific domain SSL certificate |
+| `/backups` | Local and S3 backup status |
+| `/pm2` | PM2 process list with status and resource usage |
 | `/ask <question>` | Ask Claude AI about your server (requires `ANTHROPIC_API_KEY` or Claude CLI) |
+| `/context` | View/switch Claude context directory for this channel |
 
 ### Claude AI Integration
 
@@ -188,6 +192,7 @@ CLAUDE_DAILY_TOKEN_LIMIT=100000
 | `CLAUDE_DAILY_TOKEN_LIMIT` | 100000 | Daily token budget (API backend only) |
 | `CLAUDE_DB_PATH` | ./data/claude.db | SQLite database for conversations |
 | `CLAUDE_CONTEXT_DIR` | - | Directory containing infrastructure context (see below) |
+| `CLAUDE_CONTEXT_OPTIONS` | - | Comma-separated alias:path pairs for context switching |
 
 ### Backend Options
 
@@ -243,6 +248,27 @@ This directory is automatically added to `CLAUDE_ALLOWED_DIRS` so Claude can rea
 - Ansible inventory: /root/ansible/inventory.yml
 - Docker stacks: /opt/stacks/
 ```
+
+### Per-Channel Context Switching
+
+If you manage multiple environments (e.g., homelab and production), you can configure multiple context directories and switch between them per-channel using the `/context` command.
+
+**Configuration:**
+
+Set `CLAUDE_CONTEXT_OPTIONS` with alias:path pairs:
+```bash
+CLAUDE_CONTEXT_OPTIONS=homelab:/opt/homelab,infra:/opt/infrastructure,ansible:/root/ansible
+```
+
+**Usage:**
+
+| Command | Description |
+|---------|-------------|
+| `/context` | Show current context and available options |
+| `/context set <alias>` | Set context for this channel |
+| `/context clear` | Clear context (use default) |
+
+Context is stored per-channel in the SQLite database. Each channel can have a different context, allowing you to organize conversations by environment.
 
 ### Per-User Configuration
 

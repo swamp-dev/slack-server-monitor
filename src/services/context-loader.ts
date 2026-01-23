@@ -27,6 +27,7 @@ export interface LoadedContext {
 
 /**
  * Unsafe path prefixes that should not be used as context directories
+ * SECURITY: Includes user home directories to prevent access to sensitive user data
  */
 const UNSAFE_PATH_PREFIXES = [
   '/etc',
@@ -38,12 +39,15 @@ const UNSAFE_PATH_PREFIXES = [
   '/sys',
   '/proc',
   '/dev',
+  '/root',
+  '/home',
 ];
 
 /**
  * Validate that a context directory path is safe
+ * Exported for use in config validation
  */
-async function validateContextDir(contextDir: string): Promise<string> {
+export async function validateContextDir(contextDir: string): Promise<string> {
   // Reject paths containing parent directory references
   if (contextDir.includes('..')) {
     throw new Error('Context directory path cannot contain ".." (parent directory references)');
@@ -161,25 +165,57 @@ function buildCombinedContext(
 }
 
 /**
- * Cache for loaded context (loaded once at startup)
+ * Cache for loaded contexts by alias (supports multiple context directories)
  */
-let cachedContext: LoadedContext | null = null;
+const contextCache = new Map<string, LoadedContext>();
+
+/**
+ * Default cache key for backward compatibility
+ */
+const DEFAULT_CACHE_KEY = '__default__';
 
 /**
  * Get or load context from directory (cached)
+ * Uses a default key for backward compatibility with single context directory
  */
 export async function getContext(contextDir: string | undefined): Promise<LoadedContext | null> {
   if (!contextDir) {
     return null;
   }
 
-  cachedContext ??= await loadContextFromDirectory(contextDir);
-  return cachedContext;
+  if (!contextCache.has(DEFAULT_CACHE_KEY)) {
+    const context = await loadContextFromDirectory(contextDir);
+    contextCache.set(DEFAULT_CACHE_KEY, context);
+  }
+  return contextCache.get(DEFAULT_CACHE_KEY) ?? null;
 }
 
 /**
- * Clear the context cache (for testing or reloading)
+ * Get or load context for a specific alias/path combination
+ */
+export async function getContextByAlias(
+  alias: string,
+  contextPath: string
+): Promise<LoadedContext> {
+  const cached = contextCache.get(alias);
+  if (cached) {
+    return cached;
+  }
+  const context = await loadContextFromDirectory(contextPath);
+  contextCache.set(alias, context);
+  return context;
+}
+
+/**
+ * Clear the entire context cache (for testing or reloading)
  */
 export function clearContextCache(): void {
-  cachedContext = null;
+  contextCache.clear();
+}
+
+/**
+ * Clear cache for a specific alias (for testing or reloading)
+ */
+export function clearContextCacheForAlias(alias: string): void {
+  contextCache.delete(alias);
 }

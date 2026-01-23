@@ -14,14 +14,16 @@ import {
 import { logger } from '../utils/logger.js';
 
 /**
- * Register the /status command
+ * Register the /services command
+ *
+ * Note: Originally /status, but that's a reserved Slack command
  *
  * Usage:
- *   /status           - List all containers
- *   /status <service> - Show details for a specific container
+ *   /services           - List all containers
+ *   /services <service> - Show details for a specific container
  */
-export function registerStatusCommand(app: App): void {
-  app.command('/status', async ({ command, ack, respond }) => {
+export function registerServicesCommand(app: App): void {
+  app.command('/services', async ({ command, ack, respond }) => {
     await ack();
 
     const serviceName = command.text.trim();
@@ -131,7 +133,7 @@ export function registerStatusCommand(app: App): void {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'An unexpected error occurred';
-      logger.error('Status command failed', { error: message, serviceName });
+      logger.error('Services command failed', { error: message, serviceName });
       await respond({ blocks: [error(message)], response_type: 'ephemeral' });
     }
   });

@@ -85,7 +85,7 @@ export async function getContainerStatus(
       name: name ?? '',
       image: image ?? '',
       status: status ?? '',
-      state: (state as ContainerInfo['state']) ?? 'created',
+      state: (state ?? 'created') as ContainerInfo['state'],
       ports: ports ?? '',
       created: created ?? '',
     });
@@ -126,8 +126,9 @@ export async function getContainerDetails(containerName: string): Promise<Contai
     const ports: Record<string, string> = {};
     if (portBindings) {
       for (const [containerPort, bindings] of Object.entries(portBindings)) {
-        if (bindings?.[0]) {
-          ports[containerPort] = bindings[0].HostPort;
+        const firstBinding = bindings[0];
+        if (firstBinding) {
+          ports[containerPort] = firstBinding.HostPort;
         }
       }
     }
@@ -136,22 +137,31 @@ export async function getContainerDetails(containerName: string): Promise<Contai
     const networks = networkSettings?.Networks as Record<string, unknown> | undefined;
     const networkNames = networks ? Object.keys(networks) : [];
 
+    // Helper to safely convert unknown to string
+    const toStr = (val: unknown, fallback = ''): string => {
+      if (val === null || val === undefined) return fallback;
+      if (typeof val === 'string') return val;
+      if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+      // For objects, return fallback to avoid [object Object]
+      return fallback;
+    };
+
     return {
-      id: String(container.Id ?? ''),
-      name: String(container.Name ?? '').replace(/^\//, ''),
-      image: String(containerConfig?.Image ?? ''),
+      id: toStr(container.Id),
+      name: toStr(container.Name).replace(/^\//, ''),
+      image: toStr(containerConfig?.Image),
       state: {
-        status: String(containerState?.Status ?? ''),
+        status: toStr(containerState?.Status),
         running: Boolean(containerState?.Running),
-        startedAt: String(containerState?.StartedAt ?? ''),
-        finishedAt: String(containerState?.FinishedAt ?? ''),
+        startedAt: toStr(containerState?.StartedAt),
+        finishedAt: toStr(containerState?.FinishedAt),
       },
       restartCount: Number(containerState?.RestartCount ?? 0),
-      platform: String(container.Platform ?? 'linux'),
+      platform: toStr(container.Platform, 'linux'),
       mounts: (mounts ?? []).map((m) => ({
-        source: String(m.Source ?? ''),
-        destination: String(m.Destination ?? ''),
-        mode: String(m.Mode ?? ''),
+        source: toStr(m.Source),
+        destination: toStr(m.Destination),
+        mode: toStr(m.Mode),
       })),
       networks: networkNames,
       ports,

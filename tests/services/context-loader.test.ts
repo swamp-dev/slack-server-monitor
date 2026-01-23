@@ -92,6 +92,30 @@ describe('context-loader', () => {
       );
     });
 
+    it('should reject /root directory', async () => {
+      await expect(loadContextFromDirectory('/root')).rejects.toThrow(
+        'cannot be under system path'
+      );
+      await expect(loadContextFromDirectory('/root/.ssh')).rejects.toThrow(
+        'cannot be under system path'
+      );
+      await expect(loadContextFromDirectory('/root/some/path')).rejects.toThrow(
+        'cannot be under system path'
+      );
+    });
+
+    it('should reject /home directory', async () => {
+      await expect(loadContextFromDirectory('/home')).rejects.toThrow(
+        'cannot be under system path'
+      );
+      await expect(loadContextFromDirectory('/home/user')).rejects.toThrow(
+        'cannot be under system path'
+      );
+      await expect(loadContextFromDirectory('/home/user/.config')).rejects.toThrow(
+        'cannot be under system path'
+      );
+    });
+
     it('should build combined context with sections', async () => {
       await fs.writeFile(path.join(testDir, 'CLAUDE.md'), '# Main Context');
       const contextPath = path.join(testDir, '.claude', 'context');

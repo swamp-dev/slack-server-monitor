@@ -33,7 +33,14 @@ A **read-only** Slack bot for home server monitoring and diagnostics using Socke
 | `/resources` | CPU, memory, swap overview |
 | `/disk` | Disk usage per mount point |
 | `/network` | Docker networks and port mappings |
-| `/ask <question>` | Ask Claude AI about your server (requires `ANTHROPIC_API_KEY`) |
+| `/security` | fail2ban jail status and ban counts |
+| `/security <jail>` | Detailed jail info with banned IPs |
+| `/ssl` | Check SSL certificates for configured domains |
+| `/ssl <domain>` | Check specific domain SSL certificate |
+| `/backups` | Local and S3 backup status |
+| `/pm2` | PM2 process list with status and resource usage |
+| `/ask <question>` | Ask Claude AI about your server (requires `ANTHROPIC_API_KEY` or Claude CLI) |
+| `/context` | View/switch Claude context directory for this channel |
 
 ## Quick Start
 
@@ -57,6 +64,12 @@ In your Slack App settings, go to Slash Commands and add:
 - `/resources` - System resources
 - `/disk` - Disk usage
 - `/network` - Network info
+- `/security` - fail2ban status (optional)
+- `/ssl` - SSL certificate status (optional)
+- `/backups` - Backup status (optional)
+- `/pm2` - PM2 process status (optional)
+- `/ask` - Ask Claude AI (optional, requires API key or CLI)
+- `/context` - Switch Claude context directory (optional)
 
 ### 3. Configure Environment
 
@@ -172,6 +185,8 @@ sudo systemctl start slack-monitor
 | `MAX_LOG_LINES` | No | 50 | Default log lines (max 500) |
 | `MONITORED_SERVICES` | No | - | Container prefixes to monitor |
 | `SSL_DOMAINS` | No | - | Domains for SSL checks |
+| `BACKUP_DIRS` | No | - | Local backup directories to check |
+| `S3_BACKUP_BUCKET` | No | - | S3 bucket for backup status |
 | `LOG_LEVEL` | No | info | debug/info/warn/error |
 | `AUDIT_LOG_PATH` | No | - | File path for audit logs |
 
@@ -179,16 +194,23 @@ sudo systemctl start slack-monitor
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | Yes* | - | Anthropic API key (enables `/ask`) |
-| `CLAUDE_MODEL` | No | claude-sonnet-4-20250514 | Claude model to use |
+| `CLAUDE_BACKEND` | No | auto | Backend: `api` (SDK), `cli` (Claude Code), `auto` (prefer API) |
+| `ANTHROPIC_API_KEY` | Yes* | - | Anthropic API key (enables `/ask` with API backend) |
+| `CLAUDE_MODEL` | No | claude-sonnet-4-20250514 | Claude model for API backend |
+| `CLAUDE_CLI_PATH` | No | claude | Path to Claude CLI executable |
+| `CLAUDE_CLI_MODEL` | No | sonnet | Model alias for CLI backend (sonnet/opus/haiku) |
 | `CLAUDE_ALLOWED_DIRS` | No | - | Directories Claude can read files from |
 | `CLAUDE_CONTEXT_DIR` | No | - | Infrastructure context directory |
+| `CLAUDE_CONTEXT_OPTIONS` | No | - | Comma-separated alias:path pairs for context switching |
 | `CLAUDE_MAX_TOKENS` | No | 2048 | Max tokens per response |
-| `CLAUDE_MAX_TOOL_CALLS` | No | 10 | Max tool calls per turn |
-| `CLAUDE_DAILY_TOKEN_LIMIT` | No | 100000 | Daily token budget |
+| `CLAUDE_MAX_TOOL_CALLS` | No | 40 | Max tool calls per turn |
+| `CLAUDE_MAX_ITERATIONS` | No | 50 | Max agentic loop iterations |
+| `CLAUDE_RATE_LIMIT_MAX` | No | 5 | Claude requests per user per window |
+| `CLAUDE_DAILY_TOKEN_LIMIT` | No | 100000 | Daily token budget (API backend only) |
+| `CLAUDE_CONVERSATION_TTL_HOURS` | No | 24 | Conversation history retention |
 | `CLAUDE_DB_PATH` | No | ./data/claude.db | SQLite database path |
 
-*Required only if you want to use the `/ask` command.
+*Required only for API backend. CLI backend uses Claude Code subscription instead.
 
 ## Security Architecture
 
@@ -277,7 +299,7 @@ Set `CLAUDE_CONTEXT_DIR` to provide Claude with infrastructure documentation:
 - **System path blocking** - Context directory cannot be under `/etc`, `/var`, etc.
 - **Output scrubbing** - All tool outputs scrubbed for secrets
 - **Token budgets** - Daily limits prevent runaway API costs
-- **Tool call limits** - Prevents infinite loops (max 10 per turn)
+- **Tool call limits** - Prevents infinite loops (max 40 per turn)
 
 ## License
 

@@ -28,6 +28,7 @@ const ALLOWED_COMMANDS = new Map<string, string>([
   ['stat', '/usr/bin/stat'],
   ['uptime', '/usr/bin/uptime'],
   ['cat', '/usr/bin/cat'],
+  ['ls', '/usr/bin/ls'],
 ]);
 
 /**
@@ -53,6 +54,37 @@ const ALLOWED_AWS_SUBCOMMANDS = new Set(['s3']);
  * SECURITY: AWS S3 subcommands that are allowed (read-only only)
  */
 const ALLOWED_S3_SUBCOMMANDS = new Set(['ls']);
+
+/**
+ * SECURITY: Allowed path prefixes for file commands (cat, ls)
+ * Only allow reading from safe directories
+ */
+const ALLOWED_FILE_PATH_PREFIXES = [
+  '/opt',
+  '/tmp',
+  '/var/log',
+  '/var/lib/docker',
+];
+
+/**
+ * SECURITY: Unsafe path prefixes that should never be accessible
+ * These are checked even if a path starts with an allowed prefix (e.g., /opt/../etc)
+ */
+const UNSAFE_PATH_PREFIXES = [
+  '/etc',
+  '/root',
+  '/home',
+  '/bin',
+  '/sbin',
+  '/usr',
+  '/lib',
+  '/sys',
+  '/proc',
+  '/dev',
+  '/boot',
+  '/mnt',
+  '/media',
+];
 
 /**
  * SECURITY: fail2ban-client subcommands that are allowed (read-only only)
@@ -85,7 +117,7 @@ function validateDockerCommand(args: readonly string[]): void {
 
   const subcommand = args[0];
   if (!subcommand || !ALLOWED_DOCKER_SUBCOMMANDS.has(subcommand)) {
-    throw new ShellSecurityError(`Docker subcommand not allowed: ${subcommand}`);
+    throw new ShellSecurityError(`Docker subcommand not allowed: ${subcommand ?? 'undefined'}`);
   }
 }
 
@@ -99,13 +131,13 @@ function validateAwsCommand(args: readonly string[]): void {
 
   const service = args[0];
   if (!service || !ALLOWED_AWS_SUBCOMMANDS.has(service)) {
-    throw new ShellSecurityError(`AWS service not allowed: ${service}`);
+    throw new ShellSecurityError(`AWS service not allowed: ${service ?? 'undefined'}`);
   }
 
   if (service === 's3' && args.length > 1) {
     const s3Command = args[1];
     if (!s3Command || !ALLOWED_S3_SUBCOMMANDS.has(s3Command)) {
-      throw new ShellSecurityError(`AWS S3 subcommand not allowed: ${s3Command}`);
+      throw new ShellSecurityError(`AWS S3 subcommand not allowed: ${s3Command ?? 'undefined'}`);
     }
   }
 }
@@ -120,7 +152,73 @@ function validateFail2banCommand(args: readonly string[]): void {
 
   const subcommand = args[0];
   if (!subcommand || !ALLOWED_FAIL2BAN_SUBCOMMANDS.has(subcommand)) {
-    throw new ShellSecurityError(`fail2ban-client subcommand not allowed: ${subcommand}`);
+    throw new ShellSecurityError(`fail2ban-client subcommand not allowed: ${subcommand ?? 'undefined'}`);
+  }
+}
+
+/**
+ * SECURITY: Normalize and validate a file path
+ * Resolves path traversal attempts and checks against allowed/unsafe prefixes
+ */
+function normalizePath(filePath: string): string {
+  // Handle empty paths
+  if (!filePath) {
+    return filePath;
+  }
+
+  // Split into segments and resolve . and ..
+  const segments: string[] = [];
+  const parts = filePath.split('/');
+
+  for (const part of parts) {
+    if (part === '' || part === '.') {
+      continue;
+    } else if (part === '..') {
+      segments.pop(); // Go up one directory
+    } else {
+      segments.push(part);
+    }
+  }
+
+  // Reconstruct as absolute path
+  return '/' + segments.join('/');
+}
+
+/**
+ * SECURITY: Validate file command (cat, ls) arguments
+ * Ensures paths are within allowed directories and blocks path traversal attacks
+ */
+function validateFileCommand(command: string, args: readonly string[]): void {
+  // Extract paths from arguments (skip flags that start with -)
+  const paths = args.filter(arg => !arg.startsWith('-'));
+
+  if (paths.length === 0) {
+    // ls without path is allowed (lists current directory)
+    if (command === 'ls') {
+      return;
+    }
+    throw new ShellSecurityError(`${command} command requires a file path`);
+  }
+
+  for (const rawPath of paths) {
+    // Normalize path to resolve traversal attempts
+    const normalizedPath = normalizePath(rawPath);
+
+    // Check against unsafe prefixes first (blocks /opt/../etc attacks)
+    for (const unsafePrefix of UNSAFE_PATH_PREFIXES) {
+      if (normalizedPath === unsafePrefix || normalizedPath.startsWith(`${unsafePrefix}/`)) {
+        throw new ShellSecurityError(`Path not allowed: ${rawPath}`);
+      }
+    }
+
+    // Check if path starts with an allowed prefix
+    const isAllowed = ALLOWED_FILE_PATH_PREFIXES.some(
+      prefix => normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`)
+    );
+
+    if (!isAllowed) {
+      throw new ShellSecurityError(`Path not allowed: ${rawPath}`);
+    }
   }
 }
 
@@ -172,6 +270,8 @@ export async function executeCommand(
     validateAwsCommand(args);
   } else if (command === 'fail2ban-client') {
     validateFail2banCommand(args);
+  } else if (command === 'cat' || command === 'ls') {
+    validateFileCommand(command, args);
   }
 
   // 4. Configure execution options

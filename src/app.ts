@@ -47,11 +47,12 @@ app.use(rateLimitMiddleware);
 app.use(auditLogMiddleware);
 
 // Handle errors
-app.error(async (error) => {
+app.error((error): Promise<void> => {
   logger.error('Unhandled error in Bolt app', {
     error: error.message,
     stack: error.stack,
   });
+  return Promise.resolve();
 });
 
 // Graceful shutdown handler
