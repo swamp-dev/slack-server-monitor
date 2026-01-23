@@ -9,6 +9,7 @@ A **read-only** Slack bot for home server monitoring and diagnostics using Socke
 - **Secure by Design** - Command allowlists, input sanitization, log scrubbing.
 - **Docker Integration** - Monitor containers, logs, networks.
 - **System Monitoring** - CPU, memory, disk, swap usage.
+- **Claude AI Integration** - Optional AI-powered diagnostics with `/ask` command.
 
 ## Security Notice
 
@@ -32,6 +33,7 @@ A **read-only** Slack bot for home server monitoring and diagnostics using Socke
 | `/resources` | CPU, memory, swap overview |
 | `/disk` | Disk usage per mount point |
 | `/network` | Docker networks and port mappings |
+| `/ask <question>` | Ask Claude AI about your server (requires `ANTHROPIC_API_KEY`) |
 
 ## Quick Start
 
@@ -173,6 +175,21 @@ sudo systemctl start slack-monitor
 | `LOG_LEVEL` | No | info | debug/info/warn/error |
 | `AUDIT_LOG_PATH` | No | - | File path for audit logs |
 
+### Claude AI Configuration
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | Yes* | - | Anthropic API key (enables `/ask`) |
+| `CLAUDE_MODEL` | No | claude-sonnet-4-20250514 | Claude model to use |
+| `CLAUDE_ALLOWED_DIRS` | No | - | Directories Claude can read files from |
+| `CLAUDE_CONTEXT_DIR` | No | - | Infrastructure context directory |
+| `CLAUDE_MAX_TOKENS` | No | 2048 | Max tokens per response |
+| `CLAUDE_MAX_TOOL_CALLS` | No | 10 | Max tool calls per turn |
+| `CLAUDE_DAILY_TOKEN_LIMIT` | No | 100000 | Daily token budget |
+| `CLAUDE_DB_PATH` | No | ./data/claude.db | SQLite database path |
+
+*Required only if you want to use the `/ask` command.
+
 ## Security Architecture
 
 ### Read-Only Enforcement
@@ -214,6 +231,53 @@ Before logs are sent to Slack, sensitive data is automatically redacted:
 - **Channel restrictions** - Optionally limit to specific channels
 - **Rate limiting** - Default 10 commands per minute per user
 - **Audit logging** - All commands are logged with user and timestamp
+
+## Claude AI Integration
+
+The optional `/ask` command provides AI-powered server diagnostics. Claude has access to tools that query server state on-demand, enabling intelligent troubleshooting.
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_container_status` | Check container states and details |
+| `get_container_logs` | View recent logs (auto-scrubbed) |
+| `get_system_resources` | CPU, memory, swap, load average |
+| `get_disk_usage` | Disk space per mount point |
+| `get_network_info` | Docker networks |
+| `read_file` | Read config files from allowed directories |
+
+### Example Usage
+
+```
+/ask Why is nginx restarting frequently?
+/ask What's using the most disk space?
+/ask Check if the database container is healthy
+```
+
+Thread replies continue the conversation with context preserved.
+
+### Context Directory
+
+Set `CLAUDE_CONTEXT_DIR` to provide Claude with infrastructure documentation:
+
+```
+/opt/infrastructure/
+├── CLAUDE.md              # Main context about your infrastructure
+└── .claude/
+    └── context/
+        ├── services.md    # Service configurations
+        └── runbooks.md    # Common procedures
+```
+
+### Security
+
+- **Read-only tools** - Same security model as direct commands
+- **Path validation** - File reading restricted to `CLAUDE_ALLOWED_DIRS` (symlink-safe)
+- **System path blocking** - Context directory cannot be under `/etc`, `/var`, etc.
+- **Output scrubbing** - All tool outputs scrubbed for secrets
+- **Token budgets** - Daily limits prevent runaway API costs
+- **Tool call limits** - Prevents infinite loops (max 10 per turn)
 
 ## License
 
