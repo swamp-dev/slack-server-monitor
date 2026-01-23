@@ -56,6 +56,35 @@ export const ConfigSchema = z.object({
     /** Path for audit log file */
     auditLogPath: z.string().optional(),
   }),
+
+  claude: z.object({
+    /** Anthropic API key */
+    apiKey: z.string().min(1, 'Anthropic API key is required'),
+    /** Claude model to use */
+    model: z.string().default('claude-sonnet-4-20250514'),
+    /** Maximum tokens for response */
+    maxTokens: z.number().int().positive().default(2048),
+    /** Maximum tool calls per turn to prevent runaway loops */
+    maxToolCalls: z.number().int().positive().max(25).default(10),
+    /** Rate limit: max requests per window */
+    rateLimitMax: z.number().int().positive().default(5),
+    /** Rate limit: window size in seconds */
+    rateLimitWindowSeconds: z.number().int().positive().default(60),
+    /** Daily token budget */
+    dailyTokenLimit: z.number().int().positive().default(100000),
+    /** Conversation TTL in hours */
+    conversationTtlHours: z.number().int().positive().default(24),
+    /** SQLite database path for conversations */
+    dbPath: z.string().default('./data/claude.db'),
+    /** Directories Claude is allowed to read files from */
+    allowedDirs: z.array(z.string()).default([]),
+    /** Maximum file size to read in KB */
+    maxFileSizeKb: z.number().int().positive().default(100),
+    /** Maximum log lines Claude can request */
+    maxLogLines: z.number().int().positive().max(100).default(50),
+    /** Context directory - Claude reads CLAUDE.md and .claude/context/ from here */
+    contextDir: z.string().optional(),
+  }).optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

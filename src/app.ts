@@ -3,6 +3,7 @@ import { config } from './config/index.js';
 import { authorizeMiddleware, rateLimitMiddleware, auditLogMiddleware } from './middleware/index.js';
 import { registerCommands } from './commands/index.js';
 import { logger } from './utils/logger.js';
+import { closeConversationStore, getConversationStore } from './services/conversation-store.js';
 
 /**
  * Slack Server Monitor
@@ -45,9 +46,6 @@ app.use(rateLimitMiddleware);
 // 3. Audit logging - log all authorized commands
 app.use(auditLogMiddleware);
 
-// Register slash commands
-registerCommands(app);
-
 // Handle errors
 app.error(async (error) => {
   logger.error('Unhandled error in Bolt app', {
@@ -62,6 +60,7 @@ async function shutdown(signal: string): Promise<void> {
 
   try {
     await app.stop();
+    closeConversationStore();
     logger.info('App stopped successfully');
     process.exit(0);
   } catch (error) {
@@ -79,11 +78,24 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 // Start the app
 async function main(): Promise<void> {
   try {
+    // Clean up expired conversations on startup (if Claude is configured)
+    if (config.claude) {
+      const store = getConversationStore(config.claude.dbPath, config.claude.conversationTtlHours);
+      const cleaned = store.cleanupExpired();
+      if (cleaned > 0) {
+        logger.info('Cleaned up expired conversations on startup', { count: cleaned });
+      }
+    }
+
+    // Register slash commands (async to load context)
+    await registerCommands(app);
+
     await app.start();
     logger.info('Slack Server Monitor is running!', {
       socketMode: true,
       authorizedUsers: config.authorization.userIds.length,
-      rateLimit: `${config.rateLimit.max} per ${config.rateLimit.windowSeconds}s`,
+      rateLimit: `${String(config.rateLimit.max)} per ${String(config.rateLimit.windowSeconds)}s`,
+      claudeEnabled: !!config.claude,
     });
   } catch (error) {
     logger.error('Failed to start app', {

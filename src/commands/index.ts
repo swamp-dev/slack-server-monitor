@@ -3,12 +3,13 @@ import { registerStatusCommand } from './status.js';
 import { registerLogsCommand } from './logs.js';
 import { registerResourcesCommand, registerDiskCommand } from './resources.js';
 import { registerNetworkCommand } from './network.js';
+import { registerAskCommand, registerThreadHandler } from './ask.js';
 import { logger } from '../utils/logger.js';
 
 /**
  * Register all slash commands with the Bolt app
  */
-export function registerCommands(app: App): void {
+export async function registerCommands(app: App): Promise<void> {
   logger.info('Registering commands');
 
   // Container commands
@@ -19,6 +20,10 @@ export function registerCommands(app: App): void {
   // System commands
   registerResourcesCommand(app);
   registerDiskCommand(app);
+
+  // Claude AI commands (if configured)
+  await registerAskCommand(app);
+  registerThreadHandler(app);
 
   // Note: Additional commands can be added here:
   // - registerSecurityCommand(app);   // fail2ban status

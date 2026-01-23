@@ -25,6 +25,11 @@ export default tseslint.config(
     },
   },
   {
+    // Disable type-aware rules for test files (not in tsconfig.json)
+    files: ['tests/**/*.ts'],
+    ...tseslint.configs.disableTypeChecked,
+  },
+  {
     ignores: ['dist/', 'node_modules/', '*.config.js', '*.config.cjs'],
   }
 );

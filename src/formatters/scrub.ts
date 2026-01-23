@@ -12,7 +12,7 @@
  * Patterns for common sensitive data formats
  * Each pattern replaces the matched sensitive value while keeping context
  */
-const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
+const SENSITIVE_PATTERNS: { pattern: RegExp; replacement: string }[] = [
   // Passwords in various formats
   { pattern: /password[=:]\s*["']?([^"'\s]+)["']?/gi, replacement: 'password=[REDACTED]' },
   { pattern: /passwd[=:]\s*["']?([^"'\s]+)["']?/gi, replacement: 'passwd=[REDACTED]' },

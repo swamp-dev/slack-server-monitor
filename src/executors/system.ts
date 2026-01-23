@@ -172,11 +172,11 @@ export async function getUptimeInfo(): Promise<{ uptime: string; loadAverage: [n
   const output = result.stdout.trim();
 
   // Extract uptime part
-  const upMatch = output.match(/up\s+([^,]+(?:,\s*\d+:\d+)?)/);
+  const upMatch = /up\s+([^,]+(?:,\s*\d+:\d+)?)/.exec(output);
   const uptime = upMatch?.[1]?.trim() ?? 'unknown';
 
   // Extract load average
-  const loadMatch = output.match(/load average:\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)/);
+  const loadMatch = /load average:\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)/.exec(output);
   const loadAverage: [number, number, number] = loadMatch
     ? [
         parseFloat(loadMatch[1] ?? '0'),

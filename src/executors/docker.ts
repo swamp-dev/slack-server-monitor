@@ -29,11 +29,11 @@ export interface ContainerDetails {
   };
   restartCount: number;
   platform: string;
-  mounts: Array<{
+  mounts: {
     source: string;
     destination: string;
     mode: string;
-  }>;
+  }[];
   networks: string[];
   ports: Record<string, string>;
   // SECURITY: Environment variables intentionally excluded - they often contain secrets
@@ -115,14 +115,14 @@ export async function getContainerDetails(containerName: string): Promise<Contai
     }
 
     const container = data[0] as Record<string, unknown>;
-    const containerState = container['State'] as Record<string, unknown> | undefined;
-    const hostConfig = container['HostConfig'] as Record<string, unknown> | undefined;
-    const networkSettings = container['NetworkSettings'] as Record<string, unknown> | undefined;
-    const containerConfig = container['Config'] as Record<string, unknown> | undefined;
-    const mounts = container['Mounts'] as Array<Record<string, unknown>> | undefined;
+    const containerState = container.State as Record<string, unknown> | undefined;
+    const hostConfig = container.HostConfig as Record<string, unknown> | undefined;
+    const networkSettings = container.NetworkSettings as Record<string, unknown> | undefined;
+    const containerConfig = container.Config as Record<string, unknown> | undefined;
+    const mounts = container.Mounts as Record<string, unknown>[] | undefined;
 
     // Extract port bindings
-    const portBindings = hostConfig?.['PortBindings'] as Record<string, Array<{ HostPort: string }>> | undefined;
+    const portBindings = hostConfig?.PortBindings as Record<string, { HostPort: string }[]> | undefined;
     const ports: Record<string, string> = {};
     if (portBindings) {
       for (const [containerPort, bindings] of Object.entries(portBindings)) {
@@ -133,25 +133,25 @@ export async function getContainerDetails(containerName: string): Promise<Contai
     }
 
     // Extract network names
-    const networks = networkSettings?.['Networks'] as Record<string, unknown> | undefined;
+    const networks = networkSettings?.Networks as Record<string, unknown> | undefined;
     const networkNames = networks ? Object.keys(networks) : [];
 
     return {
-      id: String(container['Id'] ?? ''),
-      name: String(container['Name'] ?? '').replace(/^\//, ''),
-      image: String(containerConfig?.['Image'] ?? ''),
+      id: String(container.Id ?? ''),
+      name: String(container.Name ?? '').replace(/^\//, ''),
+      image: String(containerConfig?.Image ?? ''),
       state: {
-        status: String(containerState?.['Status'] ?? ''),
-        running: Boolean(containerState?.['Running']),
-        startedAt: String(containerState?.['StartedAt'] ?? ''),
-        finishedAt: String(containerState?.['FinishedAt'] ?? ''),
+        status: String(containerState?.Status ?? ''),
+        running: Boolean(containerState?.Running),
+        startedAt: String(containerState?.StartedAt ?? ''),
+        finishedAt: String(containerState?.FinishedAt ?? ''),
       },
-      restartCount: Number(containerState?.['RestartCount'] ?? 0),
-      platform: String(container['Platform'] ?? 'linux'),
+      restartCount: Number(containerState?.RestartCount ?? 0),
+      platform: String(container.Platform ?? 'linux'),
       mounts: (mounts ?? []).map((m) => ({
-        source: String(m['Source'] ?? ''),
-        destination: String(m['Destination'] ?? ''),
-        mode: String(m['Mode'] ?? ''),
+        source: String(m.Source ?? ''),
+        destination: String(m.Destination ?? ''),
+        mode: String(m.Mode ?? ''),
       })),
       networks: networkNames,
       ports,

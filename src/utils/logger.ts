@@ -23,11 +23,11 @@ const prodFormat = combine(timestamp(), json());
  * Determine log level from environment
  */
 function getLogLevel(): string {
-  const level = process.env['LOG_LEVEL']?.toLowerCase();
+  const level = process.env.LOG_LEVEL?.toLowerCase();
   if (level && ['debug', 'info', 'warn', 'error'].includes(level)) {
     return level;
   }
-  return process.env['NODE_ENV'] === 'production' ? 'info' : 'debug';
+  return process.env.NODE_ENV === 'production' ? 'info' : 'debug';
 }
 
 /**
@@ -37,7 +37,7 @@ function getTransports(): winston.transport[] {
   const transports: winston.transport[] = [new winston.transports.Console()];
 
   // Add file transport for audit logging if configured
-  const auditLogPath = process.env['AUDIT_LOG_PATH'];
+  const auditLogPath = process.env.AUDIT_LOG_PATH;
   if (auditLogPath) {
     transports.push(
       new winston.transports.File({
@@ -55,7 +55,7 @@ function getTransports(): winston.transport[] {
  */
 export const logger = winston.createLogger({
   level: getLogLevel(),
-  format: process.env['NODE_ENV'] === 'production' ? prodFormat : devFormat,
+  format: process.env.NODE_ENV === 'production' ? prodFormat : devFormat,
   transports: getTransports(),
   defaultMeta: { service: 'slack-server-monitor' },
 });
