@@ -6,6 +6,7 @@ import { getContextStore } from '../services/context-store.js';
 import { loadUserConfig } from '../services/user-config.js';
 import { getContext, getContextByAlias, type LoadedContext } from '../services/context-loader.js';
 import { logger } from '../utils/logger.js';
+import { parseSlackError } from '../utils/slack-errors.js';
 import { section, context as contextBlock, error as errorBlock } from '../formatters/blocks.js';
 
 /**
@@ -256,11 +257,19 @@ export async function registerAskCommand(app: App): Promise<void> {
         tokens: totalTokens,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'An unexpected error occurred';
-      logger.error('Ask command failed', { error: message, userId, question });
+      const rawMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
+      const parsed = parseSlackError(err instanceof Error ? err : new Error(rawMessage));
+      const displayMessage = parsed.type !== 'unknown' ? parsed.format() : rawMessage;
+
+      logger.error('Ask command failed', {
+        error: rawMessage,
+        errorType: parsed.type,
+        userId,
+        question,
+      });
 
       await respond({
-        blocks: [errorBlock(`Failed to get response: ${message}`)],
+        blocks: [errorBlock(`Failed to get response: ${displayMessage}`)],
         response_type: 'ephemeral',
       });
     }
@@ -425,13 +434,21 @@ export function registerThreadHandler(app: App): void {
         tokens: totalTokens,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'An unexpected error occurred';
-      logger.error('Thread handler failed', { error: message, userId, threadTs });
+      const rawMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
+      const parsed = parseSlackError(err instanceof Error ? err : new Error(rawMessage));
+      const displayMessage = parsed.type !== 'unknown' ? parsed.format() : rawMessage;
+
+      logger.error('Thread handler failed', {
+        error: rawMessage,
+        errorType: parsed.type,
+        userId,
+        threadTs,
+      });
 
       await client.chat.postMessage({
         channel: channelId,
         thread_ts: threadTs,
-        text: `Sorry, I encountered an error: ${message}`,
+        text: `Sorry, I encountered an error: ${displayMessage}`,
       });
     }
   });
