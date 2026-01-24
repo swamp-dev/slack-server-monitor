@@ -310,6 +310,9 @@ ${JSON.stringify(tools, null, 2)}
         timeout: 120000, // 2 minute timeout
       });
 
+      // Close stdin to signal EOF - Claude CLI waits for EOF before processing
+      proc.stdin.end();
+
       let stdout = '';
       let stderr = '';
 

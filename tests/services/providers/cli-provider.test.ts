@@ -244,4 +244,38 @@ But I continue anyway.`;
       expect(result).toBe('');
     });
   });
+
+  describe('callCli implementation requirements', () => {
+    // NOTE: Behavioral mocking of spawn() is complex in vitest due to module sealing.
+    // These tests verify critical implementation requirements via source inspection.
+    // See git commit for full bug analysis: CLI hangs without stdin.end().
+
+    it('must close stdin immediately after spawn to prevent CLI hang', () => {
+      const fs = require('fs');
+      const path = require('path');
+      const sourceFile = path.join(__dirname, '../../../src/services/providers/cli-provider.ts');
+      const source = fs.readFileSync(sourceFile, 'utf-8');
+
+      // CRITICAL: stdin.end() must be called after spawn, before event handlers
+      // Without this, CLI waits for EOF indefinitely (exit code 143 after timeout)
+      expect(source).toContain('proc.stdin.end()');
+
+      const spawnIndex = source.indexOf('spawn(this.config.cliPath');
+      const stdinEndIndex = source.indexOf('proc.stdin.end()');
+      const onDataIndex = source.indexOf("proc.stdout.on('data'");
+
+      expect(spawnIndex).toBeGreaterThan(0);
+      expect(stdinEndIndex).toBeGreaterThan(spawnIndex);
+      expect(onDataIndex).toBeGreaterThan(stdinEndIndex);
+    });
+
+    it('must have timeout configured as safety net', () => {
+      const fs = require('fs');
+      const path = require('path');
+      const sourceFile = path.join(__dirname, '../../../src/services/providers/cli-provider.ts');
+      const source = fs.readFileSync(sourceFile, 'utf-8');
+
+      expect(source).toMatch(/timeout:\s*\d+/);
+    });
+  });
 });
