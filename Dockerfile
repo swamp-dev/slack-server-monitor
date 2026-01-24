@@ -21,6 +21,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Install Docker CLI for container management commands (uses mounted docker.sock)
+RUN apk add --no-cache docker-cli
+
 # Install production dependencies only
 COPY package*.json ./
 RUN npm ci --only=production && npm cache clean --force

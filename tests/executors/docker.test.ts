@@ -114,6 +114,17 @@ describe('docker executor', () => {
       await expect(getContainerStatus()).rejects.toThrow('Failed to get container status');
     });
 
+    it('should throw on command failure with empty stderr', async () => {
+      // Simulates docker binary not found - no stderr output
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 127,
+        stdout: '',
+        stderr: '',
+      });
+
+      await expect(getContainerStatus()).rejects.toThrow('Failed to get container status');
+    });
+
     it('should skip malformed lines', async () => {
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
@@ -384,6 +395,17 @@ describe('docker executor', () => {
         exitCode: 1,
         stdout: '',
         stderr: 'Permission denied',
+      });
+
+      await expect(getNetworkList()).rejects.toThrow('Failed to list networks');
+    });
+
+    it('should throw on command failure with empty stderr', async () => {
+      // Simulates docker binary not found - no stderr output
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 127,
+        stdout: '',
+        stderr: '',
       });
 
       await expect(getNetworkList()).rejects.toThrow('Failed to list networks');
