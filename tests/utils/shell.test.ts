@@ -111,21 +111,6 @@ describe('shell security', () => {
         );
       });
 
-      it('should reject curly braces', async () => {
-        await expect(executeCommand('docker', ['ps', '{malicious}'])).rejects.toThrow(
-          ShellSecurityError
-        );
-      });
-
-      it('should reject redirects', async () => {
-        await expect(executeCommand('docker', ['ps', '>', '/tmp/file'])).rejects.toThrow(
-          ShellSecurityError
-        );
-        await expect(executeCommand('docker', ['ps', '<', '/etc/passwd'])).rejects.toThrow(
-          ShellSecurityError
-        );
-      });
-
       it('should reject newlines (command injection)', async () => {
         await expect(executeCommand('docker', ['ps', '\nrm -rf /'])).rejects.toThrow(
           ShellSecurityError
@@ -135,18 +120,9 @@ describe('shell security', () => {
         );
       });
 
-      it('should reject quotes (escape attempts)', async () => {
-        await expect(executeCommand('docker', ['ps', "'; rm -rf /"])).rejects.toThrow(
-          ShellSecurityError
-        );
-        await expect(executeCommand('docker', ['ps', '"; rm -rf /'])).rejects.toThrow(
-          ShellSecurityError
-        );
-      });
-
-      it('should reject backslash (escape sequences)', async () => {
-        await expect(executeCommand('docker', ['ps', '\\n'])).rejects.toThrow(ShellSecurityError);
-      });
+      // Note: curly braces, redirects, quotes, and backslashes are now allowed
+      // because we use execFile() with shell: false, making them harmless.
+      // This enables Docker --format templates like {{.Names}}
 
       it('should allow safe arguments', async () => {
         // These should not throw (though may fail at execution if command not found)

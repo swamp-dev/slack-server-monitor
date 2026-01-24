@@ -104,16 +104,13 @@ describe('context-loader', () => {
       );
     });
 
-    it('should reject /home directory', async () => {
-      await expect(loadContextFromDirectory('/home')).rejects.toThrow(
-        'cannot be under system path'
-      );
-      await expect(loadContextFromDirectory('/home/user')).rejects.toThrow(
-        'cannot be under system path'
-      );
-      await expect(loadContextFromDirectory('/home/user/.config')).rejects.toThrow(
-        'cannot be under system path'
-      );
+    // Note: /home is explicitly allowed for user context directories
+    // The UNSAFE_PATH_PREFIXES in context-loader.ts no longer includes /home
+    it('should allow /home directory for user context', async () => {
+      // This should not throw - /home is allowed for context directories
+      // It will return empty context since the directory doesn't exist in tests
+      const result = await loadContextFromDirectory('/home/testuser/ansible');
+      expect(result).toBeDefined();
     });
 
     it('should build combined context with sections', async () => {

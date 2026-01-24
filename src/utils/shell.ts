@@ -1,5 +1,6 @@
 import { execFile, type ExecFileOptions } from 'child_process';
 import { promisify } from 'util';
+import { realpathSync, existsSync } from 'node:fs';
 
 const execFileAsync = promisify(execFile);
 
@@ -195,8 +196,11 @@ const BLOCKED_CURL_FLAGS = new Set([
 
 /**
  * SECURITY: Pattern to detect shell metacharacters that could be used for injection
+ * Note: Since we use execFile() with shell: false, most shell metacharacters are safe.
+ * We still block the most dangerous ones that could affect argument parsing.
+ * Curly braces {} are allowed for Docker --format templates.
  */
-const SHELL_METACHARACTERS = /[;&|`$(){}[\]<>!\n\r\\'"]/;
+const SHELL_METACHARACTERS = /[;&|`$\n\r]/;
 
 /**
  * SECURITY: Validate that arguments don't contain shell metacharacters
@@ -332,40 +336,83 @@ function containsSensitivePattern(normalizedPath: string): boolean {
 }
 
 /**
+ * SECURITY: Resolve symlinks to get the real path
+ * Returns the resolved path, or the normalized path if the file doesn't exist yet
+ */
+function resolveSymlinks(filePath: string): string {
+  try {
+    // Only resolve if the path exists (realpathSync throws on non-existent paths)
+    if (existsSync(filePath)) {
+      return realpathSync(filePath);
+    }
+    // For non-existent paths, just normalize (e.g., for find command)
+    return normalizePath(filePath);
+  } catch {
+    // If realpath fails for any reason, fall back to normalized path
+    return normalizePath(filePath);
+  }
+}
+
+/**
+ * SECURITY: Check if an argument looks like a file path
+ * Filters out flags, numeric arguments, and patterns
+ */
+function isFilePath(arg: string): boolean {
+  // Skip flags
+  if (arg.startsWith('-')) return false;
+  // Skip pure numeric arguments (e.g., line counts for head/tail)
+  if (/^\d+$/.test(arg)) return false;
+  // Skip grep/find patterns (don't start with /)
+  // Paths we care about should be absolute
+  if (!arg.startsWith('/')) return false;
+  return true;
+}
+
+/**
  * SECURITY: Validate file command (cat, ls, head, tail, find, grep, etc.) arguments
  * Ensures paths are within allowed directories and blocks path traversal attacks
+ * Resolves symlinks to prevent symlink-based bypasses
  */
 function validateFileCommand(command: string, args: readonly string[]): void {
-  // Extract paths from arguments (skip flags that start with -)
-  const paths = args.filter(arg => !arg.startsWith('-'));
+  // Extract paths from arguments (skip flags, numbers, and non-path arguments)
+  const paths = args.filter(isFilePath);
 
   if (paths.length === 0) {
     // ls without path is allowed (lists current directory)
     if (command === 'ls') {
       return;
     }
+    // grep and find can work without explicit paths in some cases
+    if (command === 'grep' || command === 'find') {
+      return;
+    }
     throw new ShellSecurityError(`${command} command requires a file path`);
   }
 
   for (const rawPath of paths) {
-    // Normalize path to resolve traversal attempts
+    // First normalize to resolve .. and . traversal attempts
     const normalizedPath = normalizePath(rawPath);
 
-    // Check against unsafe prefixes first (blocks /opt/../etc attacks)
+    // SECURITY: Resolve symlinks to get the real target path
+    // This prevents symlink attacks like: /opt/link -> /root/.ssh
+    const resolvedPath = resolveSymlinks(normalizedPath);
+
+    // Check against unsafe prefixes (using resolved path to catch symlink bypasses)
     for (const unsafePrefix of UNSAFE_PATH_PREFIXES) {
-      if (normalizedPath === unsafePrefix || normalizedPath.startsWith(`${unsafePrefix}/`)) {
+      if (resolvedPath === unsafePrefix || resolvedPath.startsWith(`${unsafePrefix}/`)) {
         throw new ShellSecurityError(`Path not allowed: ${rawPath}`);
       }
     }
 
     // SECURITY: Check for sensitive path patterns (SSH keys, credentials, etc.)
-    if (containsSensitivePattern(normalizedPath)) {
+    // Check both normalized and resolved paths
+    if (containsSensitivePattern(normalizedPath) || containsSensitivePattern(resolvedPath)) {
       throw new ShellSecurityError(`Path contains sensitive data: ${rawPath}`);
     }
 
-    // Check if path starts with an allowed prefix
+    // Check if resolved path starts with an allowed prefix
     const isAllowed = ALLOWED_FILE_PATH_PREFIXES.some(
-      prefix => normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`)
+      prefix => resolvedPath === prefix || resolvedPath.startsWith(`${prefix}/`)
     );
 
     if (!isAllowed) {
