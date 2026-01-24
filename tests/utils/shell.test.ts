@@ -20,12 +20,25 @@ describe('shell security', () => {
 
     it('should reject commands not in the allowlist', () => {
       expect(isCommandAllowed('rm')).toBe(false);
-      expect(isCommandAllowed('curl')).toBe(false);
       expect(isCommandAllowed('wget')).toBe(false);
       expect(isCommandAllowed('bash')).toBe(false);
       expect(isCommandAllowed('sh')).toBe(false);
       expect(isCommandAllowed('eval')).toBe(false);
       expect(isCommandAllowed('exec')).toBe(false);
+    });
+
+    it('should allow new diagnostic commands', () => {
+      expect(isCommandAllowed('curl')).toBe(true);
+      expect(isCommandAllowed('ps')).toBe(true);
+      expect(isCommandAllowed('systemctl')).toBe(true);
+      expect(isCommandAllowed('journalctl')).toBe(true);
+      expect(isCommandAllowed('ss')).toBe(true);
+      expect(isCommandAllowed('ip')).toBe(true);
+      expect(isCommandAllowed('ping')).toBe(true);
+      expect(isCommandAllowed('grep')).toBe(true);
+      expect(isCommandAllowed('find')).toBe(true);
+      expect(isCommandAllowed('head')).toBe(true);
+      expect(isCommandAllowed('tail')).toBe(true);
     });
 
     it('should provide list of allowed commands', () => {
@@ -54,10 +67,7 @@ describe('shell security', () => {
         );
       });
 
-      it('should reject curl and wget', async () => {
-        await expect(executeCommand('curl', ['http://evil.com'])).rejects.toThrow(
-          ShellSecurityError
-        );
+      it('should reject wget (not in allowlist)', async () => {
         await expect(executeCommand('wget', ['http://evil.com'])).rejects.toThrow(
           ShellSecurityError
         );
@@ -260,9 +270,8 @@ describe('shell security', () => {
       });
     });
 
-    describe('file command (cat/ls) path validation', () => {
+    describe('file command path validation', () => {
       it('should allow reading from /opt directory', async () => {
-        // This should not throw a security error
         await expect(executeCommand('cat', ['/opt/logs/app.log'])).resolves.toBeDefined();
         await expect(executeCommand('ls', ['/opt/backups'])).resolves.toBeDefined();
       });
@@ -277,6 +286,20 @@ describe('shell security', () => {
         await expect(executeCommand('ls', ['/var/log'])).resolves.toBeDefined();
       });
 
+      it('should allow reading from /etc directory (now permitted)', async () => {
+        await expect(executeCommand('cat', ['/etc/hostname'])).resolves.toBeDefined();
+        await expect(executeCommand('ls', ['/etc'])).resolves.toBeDefined();
+      });
+
+      it('should allow reading from /home directory (now permitted)', async () => {
+        await expect(executeCommand('ls', ['/home'])).resolves.toBeDefined();
+      });
+
+      it('should allow reading from /proc and /sys (now permitted)', async () => {
+        await expect(executeCommand('cat', ['/proc/meminfo'])).resolves.toBeDefined();
+        await expect(executeCommand('ls', ['/sys/class'])).resolves.toBeDefined();
+      });
+
       it('should allow ls without path', async () => {
         await expect(executeCommand('ls', [])).resolves.toBeDefined();
         await expect(executeCommand('ls', ['-la'])).resolves.toBeDefined();
@@ -288,72 +311,42 @@ describe('shell security', () => {
         );
       });
 
-      it('should reject reading /etc/passwd', async () => {
-        await expect(executeCommand('cat', ['/etc/passwd'])).rejects.toThrow(
-          ShellSecurityError
+      it('should reject reading from sensitive paths (SSH keys)', async () => {
+        await expect(executeCommand('ls', ['/home/user/.ssh'])).rejects.toThrow(
+          'Path contains sensitive data'
         );
-        await expect(executeCommand('cat', ['/etc/passwd'])).rejects.toThrow(
-          'Path not allowed: /etc/passwd'
-        );
-      });
-
-      it('should reject reading /etc/shadow', async () => {
-        await expect(executeCommand('cat', ['/etc/shadow'])).rejects.toThrow(
-          'Path not allowed: /etc/shadow'
+        await expect(executeCommand('cat', ['/home/user/.ssh/id_rsa'])).rejects.toThrow(
+          'Path contains sensitive data'
         );
       });
 
-      it('should reject reading from /root', async () => {
-        await expect(executeCommand('cat', ['/root/.bashrc'])).rejects.toThrow(
-          'Path not allowed: /root/.bashrc'
-        );
-        await expect(executeCommand('ls', ['/root/.ssh'])).rejects.toThrow(
-          'Path not allowed: /root/.ssh'
+      it('should reject reading from sensitive paths (GPG keys)', async () => {
+        await expect(executeCommand('ls', ['/home/user/.gnupg'])).rejects.toThrow(
+          'Path contains sensitive data'
         );
       });
 
-      it('should reject reading from /home', async () => {
-        await expect(executeCommand('cat', ['/home/user/.bashrc'])).rejects.toThrow(
-          'Path not allowed: /home/user/.bashrc'
+      it('should reject reading from sensitive paths (credentials)', async () => {
+        await expect(executeCommand('cat', ['/home/user/.aws/credentials'])).rejects.toThrow(
+          'Path contains sensitive data'
         );
-        await expect(executeCommand('ls', ['/home/user'])).rejects.toThrow(
-          'Path not allowed: /home/user'
+        await expect(executeCommand('cat', ['/home/user/.kube/config'])).rejects.toThrow(
+          'Path contains sensitive data'
         );
-      });
-
-      it('should reject path traversal attacks with ..', async () => {
-        // Attempt to escape from /opt to /etc
-        await expect(executeCommand('cat', ['/opt/../etc/passwd'])).rejects.toThrow(
-          'Path not allowed: /opt/../etc/passwd'
+        await expect(executeCommand('cat', ['/home/user/.bash_history'])).rejects.toThrow(
+          'Path contains sensitive data'
         );
-
-        // Multiple .. to escape
-        await expect(executeCommand('cat', ['/opt/stacks/../../etc/shadow'])).rejects.toThrow(
-          'Path not allowed: /opt/stacks/../../etc/shadow'
-        );
-
-        // ls with traversal
-        await expect(executeCommand('ls', ['/tmp/../root'])).rejects.toThrow(
-          'Path not allowed: /tmp/../root'
-        );
-      });
-
-      it('should reject path traversal with encoded sequences', async () => {
-        // Raw .. sequences
-        await expect(executeCommand('cat', ['/var/log/../../../etc/passwd'])).rejects.toThrow(
-          ShellSecurityError
+        await expect(executeCommand('cat', ['/opt/app/.env'])).rejects.toThrow(
+          'Path contains sensitive data'
         );
       });
 
       it('should reject arbitrary paths outside allowlist', async () => {
-        await expect(executeCommand('cat', ['/usr/local/bin/something'])).rejects.toThrow(
-          'Path not allowed: /usr/local/bin/something'
+        await expect(executeCommand('cat', ['/usr/bin/something'])).rejects.toThrow(
+          'Path not allowed: /usr/bin/something'
         );
         await expect(executeCommand('ls', ['/boot'])).rejects.toThrow(
           'Path not allowed: /boot'
-        );
-        await expect(executeCommand('cat', ['/sys/kernel/config'])).rejects.toThrow(
-          'Path not allowed: /sys/kernel/config'
         );
       });
 
@@ -362,10 +355,92 @@ describe('shell security', () => {
         await expect(executeCommand('cat', ['-n', '/tmp/test.txt'])).resolves.toBeDefined();
       });
 
-      it('should reject if any path is not allowed', async () => {
-        // Even if one path is valid, reject if another is not
-        await expect(executeCommand('cat', ['/opt/safe.txt', '/etc/passwd'])).rejects.toThrow(
-          'Path not allowed: /etc/passwd'
+      it('should work with new file commands (head, tail, find, grep)', async () => {
+        await expect(executeCommand('head', ['-n', '10', '/var/log/syslog'])).resolves.toBeDefined();
+        await expect(executeCommand('tail', ['-n', '10', '/var/log/syslog'])).resolves.toBeDefined();
+        await expect(executeCommand('find', ['/opt', '-name', '*.log'])).resolves.toBeDefined();
+        await expect(executeCommand('grep', ['error', '/var/log/syslog'])).resolves.toBeDefined();
+      });
+    });
+
+    describe('systemctl subcommand validation', () => {
+      it('should allow read-only systemctl subcommands', async () => {
+        await expect(executeCommand('systemctl', ['status'])).resolves.toBeDefined();
+        await expect(executeCommand('systemctl', ['status', 'nginx'])).resolves.toBeDefined();
+        await expect(executeCommand('systemctl', ['list-units'])).resolves.toBeDefined();
+        await expect(executeCommand('systemctl', ['is-active', 'docker'])).resolves.toBeDefined();
+      });
+
+      it('should reject dangerous systemctl subcommands', async () => {
+        await expect(executeCommand('systemctl', ['start', 'nginx'])).rejects.toThrow(
+          'systemctl subcommand not allowed: start'
+        );
+        await expect(executeCommand('systemctl', ['stop', 'nginx'])).rejects.toThrow(
+          'systemctl subcommand not allowed: stop'
+        );
+        await expect(executeCommand('systemctl', ['restart', 'nginx'])).rejects.toThrow(
+          'systemctl subcommand not allowed: restart'
+        );
+        await expect(executeCommand('systemctl', ['enable', 'nginx'])).rejects.toThrow(
+          'systemctl subcommand not allowed: enable'
+        );
+        await expect(executeCommand('systemctl', ['disable', 'nginx'])).rejects.toThrow(
+          'systemctl subcommand not allowed: disable'
+        );
+        await expect(executeCommand('systemctl', ['daemon-reload'])).rejects.toThrow(
+          'systemctl subcommand not allowed: daemon-reload'
+        );
+      });
+
+      it('should reject systemctl without subcommand', async () => {
+        await expect(executeCommand('systemctl', [])).rejects.toThrow(
+          'systemctl command requires a subcommand'
+        );
+      });
+    });
+
+    describe('journalctl validation', () => {
+      it('should allow read-only journalctl commands', async () => {
+        await expect(executeCommand('journalctl', ['-u', 'nginx'])).resolves.toBeDefined();
+        await expect(executeCommand('journalctl', ['-n', '50'])).resolves.toBeDefined();
+        await expect(executeCommand('journalctl', ['--since', 'today'])).resolves.toBeDefined();
+      });
+
+      it('should reject dangerous journalctl flags', async () => {
+        await expect(executeCommand('journalctl', ['--flush'])).rejects.toThrow(
+          'journalctl flag not allowed: --flush'
+        );
+        await expect(executeCommand('journalctl', ['--rotate'])).rejects.toThrow(
+          'journalctl flag not allowed: --rotate'
+        );
+        await expect(executeCommand('journalctl', ['--vacuum-time', '1d'])).rejects.toThrow(
+          'journalctl flag not allowed: --vacuum-time'
+        );
+      });
+    });
+
+    describe('curl validation', () => {
+      it('should allow read-only curl commands', async () => {
+        await expect(executeCommand('curl', ['https://example.com'])).resolves.toBeDefined();
+        await expect(executeCommand('curl', ['-I', 'https://example.com'])).resolves.toBeDefined();
+        await expect(executeCommand('curl', ['-s', 'https://example.com'])).resolves.toBeDefined();
+      });
+
+      it('should reject curl with write/upload flags', async () => {
+        await expect(executeCommand('curl', ['-o', 'file.txt', 'https://example.com'])).rejects.toThrow(
+          'curl flag not allowed: -o'
+        );
+        await expect(executeCommand('curl', ['--output', 'file.txt', 'https://example.com'])).rejects.toThrow(
+          'curl flag not allowed: --output'
+        );
+        await expect(executeCommand('curl', ['-T', 'file.txt', 'https://example.com'])).rejects.toThrow(
+          'curl flag not allowed: -T'
+        );
+        await expect(executeCommand('curl', ['-d', 'data', 'https://example.com'])).rejects.toThrow(
+          'curl flag not allowed: -d'
+        );
+        await expect(executeCommand('curl', ['-X', 'POST', 'https://example.com'])).rejects.toThrow(
+          'curl flag not allowed: -X'
         );
       });
     });

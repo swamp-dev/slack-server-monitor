@@ -10,6 +10,7 @@ import {
   getDiskUsage,
 } from '../../executors/system.js';
 import { scrubSensitiveData } from '../../formatters/scrub.js';
+import { executeCommand, getAllowedCommands } from '../../utils/shell.js';
 
 /**
  * Tool: get_container_status
@@ -223,6 +224,62 @@ export const networkInfoTool: ToolDefinition = {
 };
 
 /**
+ * Tool: run_command
+ * Execute a shell command from the allowlist
+ */
+export const runCommandTool: ToolDefinition = {
+  spec: {
+    name: 'run_command',
+    description: `Execute a read-only shell command for system diagnostics. Available commands: ${getAllowedCommands().join(', ')}.
+Commands have security restrictions:
+- docker: only ps, inspect, logs, network, images, version, info
+- systemctl: only status, show, list-units, list-unit-files, is-active, is-enabled, cat
+- journalctl: read-only (no flush/rotate/vacuum)
+- curl: GET only (no POST/PUT/upload)
+- File commands (cat, ls, head, tail, find, grep): restricted to allowed directories`,
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        command: {
+          type: 'string',
+          description: 'The command to run (e.g., "ps", "systemctl", "journalctl")',
+        },
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Command arguments as an array (e.g., ["aux"] for ps aux, ["-u", "nginx", "-n", "50"] for journalctl)',
+        },
+      },
+      required: ['command'],
+    },
+  },
+  async execute(input: Record<string, unknown>): Promise<string> {
+    try {
+      const command = input.command as string;
+      const args = (input.args as string[]) ?? [];
+
+      if (!command) {
+        return 'Error: command is required';
+      }
+
+      const result = await executeCommand(command, args);
+
+      // Scrub sensitive data from output
+      const scrubbedOutput = scrubSensitiveData(result.stdout);
+
+      if (result.exitCode !== 0) {
+        return `Command exited with code ${result.exitCode}\n\nSTDOUT:\n${scrubbedOutput}\n\nSTDERR:\n${scrubSensitiveData(result.stderr)}`;
+      }
+
+      return scrubbedOutput || '(no output)';
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return `Error: ${message}`;
+    }
+  },
+};
+
+/**
  * All server monitoring tools
  */
 export const serverTools: ToolDefinition[] = [
@@ -231,4 +288,5 @@ export const serverTools: ToolDefinition[] = [
   systemResourcesTool,
   diskUsageTool,
   networkInfoTool,
+  runCommandTool,
 ];

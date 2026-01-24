@@ -14,21 +14,52 @@ export interface ShellResult {
 
 /**
  * SECURITY: Allowlist of permitted commands with their absolute paths
- * Only read-only commands are allowed - no write, exec, or modification operations
+ * Read-only and diagnostic commands - no write, exec, or modification operations
  */
 const ALLOWED_COMMANDS = new Map<string, string>([
+  // Docker
   ['docker', '/usr/bin/docker'],
+  // System info
   ['free', '/usr/bin/free'],
   ['df', '/usr/bin/df'],
   ['top', '/usr/bin/top'],
-  ['fail2ban-client', '/usr/bin/fail2ban-client'],
-  ['openssl', '/usr/bin/openssl'],
-  ['pm2', '/usr/local/bin/pm2'],
-  ['aws', '/usr/local/bin/aws'],
   ['stat', '/usr/bin/stat'],
   ['uptime', '/usr/bin/uptime'],
+  ['hostname', '/usr/bin/hostname'],
+  ['uname', '/usr/bin/uname'],
+  ['whoami', '/usr/bin/whoami'],
+  ['date', '/usr/bin/date'],
+  ['id', '/usr/bin/id'],
+  // Process inspection
+  ['ps', '/usr/bin/ps'],
+  ['pgrep', '/usr/bin/pgrep'],
+  // Systemd
+  ['systemctl', '/usr/bin/systemctl'],
+  ['journalctl', '/usr/bin/journalctl'],
+  // Network diagnostics
+  ['ss', '/usr/bin/ss'],
+  ['ip', '/usr/sbin/ip'],
+  ['ping', '/usr/bin/ping'],
+  ['curl', '/usr/bin/curl'],
+  ['dig', '/usr/bin/dig'],
+  ['host', '/usr/bin/host'],
+  ['netstat', '/usr/bin/netstat'],
+  // File inspection
   ['cat', '/usr/bin/cat'],
   ['ls', '/usr/bin/ls'],
+  ['head', '/usr/bin/head'],
+  ['tail', '/usr/bin/tail'],
+  ['find', '/usr/bin/find'],
+  ['grep', '/usr/bin/grep'],
+  ['wc', '/usr/bin/wc'],
+  ['file', '/usr/bin/file'],
+  ['du', '/usr/bin/du'],
+  // Security tools
+  ['fail2ban-client', '/usr/bin/fail2ban-client'],
+  ['openssl', '/usr/bin/openssl'],
+  // Other
+  ['pm2', '/usr/local/bin/pm2'],
+  ['aws', '/usr/local/bin/aws'],
 ]);
 
 /**
@@ -56,40 +87,111 @@ const ALLOWED_AWS_SUBCOMMANDS = new Set(['s3']);
 const ALLOWED_S3_SUBCOMMANDS = new Set(['ls']);
 
 /**
- * SECURITY: Allowed path prefixes for file commands (cat, ls)
- * Only allow reading from safe directories
+ * SECURITY: Allowed path prefixes for file commands (cat, ls, head, tail, find, grep, etc.)
+ * Expanded to allow reading from mounted directories for debugging
  */
 const ALLOWED_FILE_PATH_PREFIXES = [
   '/opt',
   '/tmp',
   '/var/log',
-  '/var/lib/docker',
+  '/var/lib',
+  '/etc',
+  '/proc',
+  '/sys',
+  '/home',
+  '/mnt',
+  '/app',
 ];
 
 /**
  * SECURITY: Unsafe path prefixes that should never be accessible
- * These are checked even if a path starts with an allowed prefix (e.g., /opt/../etc)
+ * Restricted to truly sensitive system directories
  */
 const UNSAFE_PATH_PREFIXES = [
-  '/etc',
-  '/root',
-  '/home',
   '/bin',
   '/sbin',
-  '/usr',
+  '/usr/bin',
+  '/usr/sbin',
   '/lib',
-  '/sys',
-  '/proc',
   '/dev',
   '/boot',
-  '/mnt',
-  '/media',
+];
+
+/**
+ * SECURITY: Sensitive path patterns that should never be accessible
+ * These are checked dynamically because they can appear in any user's home directory
+ */
+const SENSITIVE_PATH_PATTERNS = [
+  '/.ssh',
+  '/.gnupg',
+  '/.aws',
+  '/.docker/config.json',
+  '/.kube/config',
+  '/.bash_history',
+  '/.zsh_history',
+  '/.netrc',
+  '/.npmrc',
+  '/.pypirc',
+  '/id_rsa',
+  '/id_ed25519',
+  '/id_ecdsa',
+  '/id_dsa',
+  '/.env',  // Block .env files
+  '/credentials',
+  '/secrets',
+  '/password',
+  '/token',
 ];
 
 /**
  * SECURITY: fail2ban-client subcommands that are allowed (read-only only)
  */
 const ALLOWED_FAIL2BAN_SUBCOMMANDS = new Set(['status', 'banned']);
+
+/**
+ * SECURITY: systemctl subcommands that are allowed (read-only only)
+ * Blocks: start, stop, restart, enable, disable, mask, daemon-reload, etc.
+ */
+const ALLOWED_SYSTEMCTL_SUBCOMMANDS = new Set([
+  'status',
+  'show',
+  'list-units',
+  'list-unit-files',
+  'list-sockets',
+  'list-timers',
+  'list-dependencies',
+  'is-active',
+  'is-enabled',
+  'is-failed',
+  'cat',
+]);
+
+/**
+ * SECURITY: journalctl is read-only by nature, but we limit some flags
+ * Block flags that could cause issues: --flush, --rotate, --vacuum-*
+ */
+const BLOCKED_JOURNALCTL_FLAGS = new Set([
+  '--flush',
+  '--rotate',
+  '--vacuum-size',
+  '--vacuum-time',
+  '--vacuum-files',
+  '--sync',
+]);
+
+/**
+ * SECURITY: curl flags that are blocked (write operations, dangerous features)
+ */
+const BLOCKED_CURL_FLAGS = new Set([
+  '-o', '--output',
+  '-O', '--remote-name',
+  '-T', '--upload-file',
+  '-X', '--request', // Could allow POST/PUT/DELETE - block for safety
+  '-d', '--data',
+  '--data-raw',
+  '--data-binary',
+  '-F', '--form',
+]);
 
 /**
  * SECURITY: Pattern to detect shell metacharacters that could be used for injection
@@ -157,6 +259,42 @@ function validateFail2banCommand(args: readonly string[]): void {
 }
 
 /**
+ * SECURITY: Validate systemctl command has allowed subcommands
+ */
+function validateSystemctlCommand(args: readonly string[]): void {
+  if (args.length === 0) {
+    throw new ShellSecurityError('systemctl command requires a subcommand');
+  }
+
+  const subcommand = args[0];
+  if (!subcommand || !ALLOWED_SYSTEMCTL_SUBCOMMANDS.has(subcommand)) {
+    throw new ShellSecurityError(`systemctl subcommand not allowed: ${subcommand ?? 'undefined'}. Allowed: ${Array.from(ALLOWED_SYSTEMCTL_SUBCOMMANDS).join(', ')}`);
+  }
+}
+
+/**
+ * SECURITY: Validate journalctl doesn't have dangerous flags
+ */
+function validateJournalctlCommand(args: readonly string[]): void {
+  for (const arg of args) {
+    if (BLOCKED_JOURNALCTL_FLAGS.has(arg)) {
+      throw new ShellSecurityError(`journalctl flag not allowed: ${arg}`);
+    }
+  }
+}
+
+/**
+ * SECURITY: Validate curl doesn't have write/dangerous flags
+ */
+function validateCurlCommand(args: readonly string[]): void {
+  for (const arg of args) {
+    if (BLOCKED_CURL_FLAGS.has(arg)) {
+      throw new ShellSecurityError(`curl flag not allowed: ${arg}`);
+    }
+  }
+}
+
+/**
  * SECURITY: Normalize and validate a file path
  * Resolves path traversal attempts and checks against allowed/unsafe prefixes
  */
@@ -185,7 +323,16 @@ function normalizePath(filePath: string): string {
 }
 
 /**
- * SECURITY: Validate file command (cat, ls) arguments
+ * SECURITY: Check if a path contains sensitive patterns
+ * Returns true if the path contains any sensitive pattern (SSH keys, credentials, etc.)
+ */
+function containsSensitivePattern(normalizedPath: string): boolean {
+  const lowerPath = normalizedPath.toLowerCase();
+  return SENSITIVE_PATH_PATTERNS.some(pattern => lowerPath.includes(pattern.toLowerCase()));
+}
+
+/**
+ * SECURITY: Validate file command (cat, ls, head, tail, find, grep, etc.) arguments
  * Ensures paths are within allowed directories and blocks path traversal attacks
  */
 function validateFileCommand(command: string, args: readonly string[]): void {
@@ -209,6 +356,11 @@ function validateFileCommand(command: string, args: readonly string[]): void {
       if (normalizedPath === unsafePrefix || normalizedPath.startsWith(`${unsafePrefix}/`)) {
         throw new ShellSecurityError(`Path not allowed: ${rawPath}`);
       }
+    }
+
+    // SECURITY: Check for sensitive path patterns (SSH keys, credentials, etc.)
+    if (containsSensitivePattern(normalizedPath)) {
+      throw new ShellSecurityError(`Path contains sensitive data: ${rawPath}`);
     }
 
     // Check if path starts with an allowed prefix
@@ -270,7 +422,13 @@ export async function executeCommand(
     validateAwsCommand(args);
   } else if (command === 'fail2ban-client') {
     validateFail2banCommand(args);
-  } else if (command === 'cat' || command === 'ls') {
+  } else if (command === 'systemctl') {
+    validateSystemctlCommand(args);
+  } else if (command === 'journalctl') {
+    validateJournalctlCommand(args);
+  } else if (command === 'curl') {
+    validateCurlCommand(args);
+  } else if (['cat', 'ls', 'head', 'tail', 'find', 'grep', 'du', 'file', 'wc'].includes(command)) {
     validateFileCommand(command, args);
   }
 

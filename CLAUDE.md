@@ -97,16 +97,37 @@ The `/ask` command provides AI-powered server diagnostics. Claude has access to 
 - **get_disk_usage** - Disk space per mount point
 - **get_network_info** - Docker networks
 - **read_file** - Read config files from allowed directories
+- **run_command** - Execute read-only shell commands (see below)
 
 Thread replies continue the conversation with context preserved.
 
 **Security:** All tool outputs are scrubbed for secrets. File reading validates paths against `CLAUDE_ALLOWED_DIRS` and follows symlinks to prevent directory traversal.
 
+### run_command Tool
+
+The `run_command` tool allows Claude to execute read-only diagnostic commands:
+
+| Category | Commands |
+|----------|----------|
+| **Docker** | docker (ps, inspect, logs, network, images, version, info) |
+| **System** | free, df, top, stat, uptime, hostname, uname, date, id |
+| **Process** | ps, pgrep |
+| **Systemd** | systemctl (status, show, list-units, is-active), journalctl |
+| **Network** | ss, ip, ping, curl (GET only), dig, host, netstat |
+| **Files** | cat, ls, head, tail, find, grep, wc, file, du |
+| **Security** | fail2ban-client (status), openssl |
+
+**Restrictions:**
+- Systemctl: Only read-only subcommands (no start/stop/restart)
+- Curl: No POST/PUT/upload flags
+- File commands: Restricted to allowed directories, blocks sensitive paths (SSH keys, credentials, .env files)
+
 ## Security Architecture
 
 ### 1. Command Allowlist (`src/utils/shell.ts`)
-- Only specific commands can be executed (docker, free, df, etc.)
-- Docker subcommands are restricted to read-only (ps, inspect, logs)
+- Only specific commands can be executed
+- Subcommands are validated (docker, systemctl, curl, etc.)
+- Sensitive paths are blocked (/.ssh, /.gnupg, /.aws, .env, etc.)
 - No shell interpolation - uses `execFile()` with `shell: false`
 
 ### 2. Input Sanitization (`src/utils/sanitize.ts`)
