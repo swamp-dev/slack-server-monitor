@@ -203,7 +203,10 @@ export function compactList(items: string[], maxItems = 10, codeFormat = true): 
   if (items.length === 0) return '_None_';
 
   const displayed = items.slice(0, maxItems);
-  const formatted = codeFormat ? displayed.map((item) => `\`${item}\``) : displayed;
+  // Escape backticks to prevent markdown breaking
+  const formatted = codeFormat
+    ? displayed.map((item) => `\`${item.replace(/`/g, "'")}\``)
+    : displayed;
   const result = formatted.join(', ');
 
   if (items.length > maxItems) {
@@ -244,6 +247,9 @@ export function helpTip(tips: string[]): ContextBlock {
  * @param url - URL to link to
  * @param text - Link text
  * @param description - Optional description after the link
+ *
+ * @security Only use with trusted, hardcoded URLs and text.
+ * URLs/text containing `>` or `|` will break Slack markdown formatting.
  */
 export function link(url: string, text: string, description?: string): string {
   const linkPart = `<${url}|${text}>`;
@@ -275,9 +281,11 @@ export function compactStatusRow(
   maxItems = 5
 ): string[] {
   const rows: string[] = [];
+  // Cap at 200 items (40 rows * 5 items) to prevent Slack's 50 block limit overflow
+  const safeItems = items.slice(0, 200);
 
-  for (let i = 0; i < items.length; i += maxItems) {
-    const chunk = items.slice(i, i + maxItems);
+  for (let i = 0; i < safeItems.length; i += maxItems) {
+    const chunk = safeItems.slice(i, i + maxItems);
     const row = chunk.map(({ name, status }) => `${statusEmoji(status)} ${name}`).join('  ·  ');
     rows.push(row);
   }

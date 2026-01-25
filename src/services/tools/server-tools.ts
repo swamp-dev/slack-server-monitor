@@ -256,7 +256,7 @@ Commands have security restrictions:
   async execute(input: Record<string, unknown>): Promise<string> {
     try {
       const command = input.command as string;
-      const args = (input.args as string[]) ?? [];
+      const args = Array.isArray(input.args) ? (input.args as string[]) : [];
 
       if (!command) {
         return 'Error: command is required';
@@ -268,7 +268,7 @@ Commands have security restrictions:
       const scrubbedOutput = scrubSensitiveData(result.stdout);
 
       if (result.exitCode !== 0) {
-        return `Command exited with code ${result.exitCode}\n\nSTDOUT:\n${scrubbedOutput}\n\nSTDERR:\n${scrubSensitiveData(result.stderr)}`;
+        return `Command exited with code ${String(result.exitCode)}\n\nSTDOUT:\n${scrubbedOutput}\n\nSTDERR:\n${scrubSensitiveData(result.stderr)}`;
       }
 
       return scrubbedOutput || '(no output)';
