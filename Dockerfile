@@ -22,7 +22,8 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Install Docker CLI for container management commands (uses mounted docker.sock)
-RUN apk add --no-cache docker-cli
+# Install procps for system monitoring commands (ps, free, uptime)
+RUN apk add --no-cache docker-cli procps
 
 # Install production dependencies only
 COPY package*.json ./
