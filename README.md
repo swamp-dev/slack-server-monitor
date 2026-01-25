@@ -52,8 +52,16 @@ A **read-only** Slack bot for home server monitoring and diagnostics using Socke
 4. Add **Bot Token Scopes** under OAuth & Permissions:
    - `commands`
    - `chat:write`
-5. Install the app to your workspace
-6. Copy the **Bot User OAuth Token** (xoxb-...) and **App-Level Token** (xapp-...)
+5. **Enable Event Subscriptions** (required for `/ask` thread replies):
+   - Go to **Event Subscriptions** in the left sidebar
+   - Toggle **Enable Events** to ON
+   - Under **Subscribe to bot events**, add:
+     - `message.channels` - Messages in public channels
+     - `message.groups` - Messages in private channels
+     - `message.im` - Direct messages
+   - Click **Save Changes**
+6. Install the app to your workspace (reinstall if already installed)
+7. Copy the **Bot User OAuth Token** (xoxb-...) and **App-Level Token** (xapp-...)
 
 ### 2. Register Slash Commands
 
