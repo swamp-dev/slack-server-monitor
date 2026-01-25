@@ -10,8 +10,30 @@ import {
   progressBar,
   statusEmoji,
   error,
+  formatUptime,
 } from '../formatters/blocks.js';
 import { logger } from '../utils/logger.js';
+
+/**
+ * Format memory size in MB to human-readable string
+ */
+function formatMB(mb: number): string {
+  if (mb >= 1024) {
+    return `${(mb / 1024).toFixed(1)} GB`;
+  }
+  return `${mb} MB`;
+}
+
+/**
+ * Get load average status based on cores
+ * Load > cores means overloaded
+ */
+function getLoadStatus(load1m: number, cores: number): 'ok' | 'warn' | 'error' {
+  const loadPerCore = load1m / cores;
+  if (loadPerCore >= 1.0) return 'error';
+  if (loadPerCore >= 0.7) return 'warn';
+  return 'ok';
+}
 
 /**
  * Register the /resources command
@@ -27,30 +49,70 @@ export function registerResourcesCommand(app: App): void {
       const resources = await getSystemResources();
 
       // Determine status indicators
+      const cpuStatus = getUsageStatus(resources.cpu.usagePercent);
+      const loadStatus = getLoadStatus(resources.loadAverage[0], resources.cpu.cores);
       const memStatus = getUsageStatus(resources.memory.percentUsed);
       const swapStatus = getUsageStatus(resources.swap.percentUsed);
 
+      // Format uptime nicely
+      const uptimeFormatted = resources.uptimeSeconds > 0
+        ? formatUptime(resources.uptimeSeconds)
+        : resources.uptime;
+
       const blocks: KnownBlock[] = [
         header('System Resources'),
-        context(`Uptime: ${resources.uptime} | Load: ${resources.loadAverage.join(', ')}`),
         divider(),
 
-        // Memory
+        // System Overview - uptime, processes, load
+        sectionWithFields([
+          `*Uptime*\n:clock1: ${uptimeFormatted}`,
+          `*Processes*\n:gear: ${resources.processes.total} total (${resources.processes.running} running)`,
+        ]),
+
+        divider(),
+
+        // CPU Section
+        section(
+          `${statusEmoji(cpuStatus)} *CPU Usage*\n` +
+            `${progressBar(resources.cpu.usagePercent, 100)}\n` +
+            `\`${resources.cpu.model}\` (${resources.cpu.cores} cores)`
+        ),
+
+        // Load Average
+        section(
+          `${statusEmoji(loadStatus)} *Load Average*\n` +
+            `1m: \`${resources.loadAverage[0].toFixed(2)}\` · ` +
+            `5m: \`${resources.loadAverage[1].toFixed(2)}\` · ` +
+            `15m: \`${resources.loadAverage[2].toFixed(2)}\`\n` +
+            `_${resources.loadAverage[0] > resources.cpu.cores ? ':warning: Load exceeds core count' : `Load per core: ${(resources.loadAverage[0] / resources.cpu.cores).toFixed(2)}`}_`
+        ),
+
+        divider(),
+
+        // Memory Section
         section(
           `${statusEmoji(memStatus)} *Memory*\n` +
             `${progressBar(resources.memory.used, resources.memory.total)}\n` +
-            `${String(resources.memory.used)} MB / ${String(resources.memory.total)} MB used`
+            `Used: \`${formatMB(resources.memory.used)}\` / \`${formatMB(resources.memory.total)}\`\n` +
+            `Available: \`${formatMB(resources.memory.available)}\` · Buffer/Cache: \`${formatMB(resources.memory.bufferCache)}\``
         ),
 
-        // Swap
+        // Swap Section
         section(
           resources.swap.total > 0
             ? `${statusEmoji(swapStatus)} *Swap*\n` +
                 `${progressBar(resources.swap.used, resources.swap.total)}\n` +
-                `${String(resources.swap.used)} MB / ${String(resources.swap.total)} MB used`
-            : `${statusEmoji('unknown')} *Swap*\nNot configured`
+                `Used: \`${formatMB(resources.swap.used)}\` / \`${formatMB(resources.swap.total)}\``
+            : `${statusEmoji('unknown')} *Swap*\n_Not configured_`
         ),
       ];
+
+      // Add zombie warning if any
+      if (resources.processes.zombie > 0) {
+        blocks.push(
+          context(`:warning: ${resources.processes.zombie} zombie process${resources.processes.zombie > 1 ? 'es' : ''} detected`)
+        );
+      }
 
       await respond({ blocks, response_type: 'ephemeral' });
     } catch (err) {

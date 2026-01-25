@@ -186,3 +186,215 @@ export function buildChannelResponse(blocks: (Block | KnownBlock)[]): {
     response_type: 'in_channel',
   };
 }
+
+// =============================================================================
+// Enhanced Output Helpers - "Sweet" formatting for better UX
+// =============================================================================
+
+/**
+ * Create a compact inline list of items
+ * Shows items as `item1`, `item2`, `item3` with overflow indicator
+ *
+ * @param items - Array of items to display
+ * @param maxItems - Maximum items to show before truncating (default: 10)
+ * @param codeFormat - Wrap items in backticks (default: true)
+ */
+export function compactList(items: string[], maxItems = 10, codeFormat = true): string {
+  if (items.length === 0) return '_None_';
+
+  const displayed = items.slice(0, maxItems);
+  const formatted = codeFormat ? displayed.map((item) => `\`${item}\``) : displayed;
+  const result = formatted.join(', ');
+
+  if (items.length > maxItems) {
+    return `${result} _...and ${String(items.length - maxItems)} more_`;
+  }
+
+  return result;
+}
+
+/**
+ * Create a summary stats bar with multiple metrics
+ * Example: "🟢 5 running  ·  🟡 2 warning  ·  🔴 1 error"
+ *
+ * @param stats - Array of { count, label, status } objects
+ */
+export function statsBar(
+  stats: Array<{ count: number; label: string; status: 'ok' | 'warn' | 'error' | 'unknown' }>
+): string {
+  return stats
+    .map(({ count, label, status }) => `${statusEmoji(status)} ${String(count)} ${label}`)
+    .join('  ·  ');
+}
+
+/**
+ * Create a help tip context block with command hints
+ *
+ * @param tips - Array of tip strings to display
+ */
+export function helpTip(tips: string[]): ContextBlock {
+  const formatted = tips.map((tip) => `:bulb: ${tip}`).join('\n');
+  return context(formatted);
+}
+
+/**
+ * Create a link with optional description
+ * Example: "<https://example.com|View docs> - Full documentation"
+ *
+ * @param url - URL to link to
+ * @param text - Link text
+ * @param description - Optional description after the link
+ */
+export function link(url: string, text: string, description?: string): string {
+  const linkPart = `<${url}|${text}>`;
+  return description ? `${linkPart} - ${description}` : linkPart;
+}
+
+/**
+ * Create an expandable section header with item count
+ * Shows a collapsible-like header: "▸ Services (12 items)"
+ *
+ * @param title - Section title
+ * @param count - Item count
+ * @param expanded - Whether to show as expanded (default: false)
+ */
+export function expandableHeader(title: string, count: number, expanded = false): string {
+  const arrow = expanded ? '▾' : '▸';
+  return `${arrow} *${title}* (${String(count)})`;
+}
+
+/**
+ * Create a compact service/item row with status
+ * Example: "🟢 nginx  ·  🟢 postgres  ·  🔴 redis"
+ *
+ * @param items - Array of { name, status } objects
+ * @param maxItems - Maximum items per row (default: 5)
+ */
+export function compactStatusRow(
+  items: Array<{ name: string; status: 'ok' | 'warn' | 'error' | 'unknown' }>,
+  maxItems = 5
+): string[] {
+  const rows: string[] = [];
+
+  for (let i = 0; i < items.length; i += maxItems) {
+    const chunk = items.slice(i, i + maxItems);
+    const row = chunk.map(({ name, status }) => `${statusEmoji(status)} ${name}`).join('  ·  ');
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+/**
+ * Create a collapsible list section using Slack's native display
+ * Shows summary + context block with items
+ *
+ * @param title - Section title
+ * @param items - Items to display
+ * @param options - Formatting options
+ */
+export function collapsibleList(
+  title: string,
+  items: string[],
+  options: {
+    maxPreview?: number;
+    showCount?: boolean;
+    emptyMessage?: string;
+    detailCommand?: string;
+  } = {}
+): KnownBlock[] {
+  const { maxPreview = 5, showCount = true, emptyMessage = '_None_', detailCommand } = options;
+
+  const blocks: KnownBlock[] = [];
+
+  if (items.length === 0) {
+    blocks.push(section(`*${title}:* ${emptyMessage}`));
+    return blocks;
+  }
+
+  const countStr = showCount ? ` (${String(items.length)})` : '';
+  blocks.push(section(`*${title}${countStr}:*`));
+
+  // Show preview items
+  const preview = items.slice(0, maxPreview);
+  const previewText = preview.map((item) => `• ${item}`).join('\n');
+  blocks.push(context(previewText));
+
+  // Show overflow indicator with detail command hint
+  if (items.length > maxPreview) {
+    const overflow = items.length - maxPreview;
+    const hint = detailCommand
+      ? `_...${String(overflow)} more. Use \`${detailCommand}\` for details._`
+      : `_...and ${String(overflow)} more_`;
+    blocks.push(context(hint));
+  }
+
+  return blocks;
+}
+
+/**
+ * Create a metrics row with visual indicators
+ * Example: "CPU: 45% | Memory: 78% | Disk: 23%"
+ *
+ * @param metrics - Array of { label, value, max?, unit? } objects
+ */
+export function metricsRow(
+  metrics: Array<{ label: string; value: number; max?: number; unit?: string }>
+): string {
+  return metrics
+    .map(({ label, value, max, unit }) => {
+      const displayValue = max ? `${String(value)}/${String(max)}` : String(value);
+      const unitStr = unit || '';
+      return `*${label}:* ${displayValue}${unitStr}`;
+    })
+    .join('  |  ');
+}
+
+/**
+ * Create a section with an action hint
+ * Shows the main content with a small action suggestion
+ *
+ * @param mainText - Main section text
+ * @param actionHint - Small hint for next action
+ */
+export function sectionWithHint(mainText: string, actionHint: string): KnownBlock[] {
+  return [section(mainText), context(`:point_right: ${actionHint}`)];
+}
+
+/**
+ * Create a documentation link block
+ *
+ * @param links - Array of { url, text, description? } objects
+ */
+export function docLinks(
+  links: Array<{ url: string; text: string; description?: string }>
+): ContextBlock {
+  const formatted = links.map(({ url, text, description }) => link(url, text, description)).join('\n');
+  return context(`:books: *Resources:*\n${formatted}`);
+}
+
+/**
+ * Create a "show more" indicator with command hint
+ *
+ * @param remaining - Number of remaining items
+ * @param command - Command to run for full list
+ */
+export function showMoreHint(remaining: number, command: string): ContextBlock {
+  return context(`:arrow_down: _${String(remaining)} more items. Run \`${command}\` for the full list._`);
+}
+
+/**
+ * Create a timestamp footer
+ *
+ * @param date - Date to display (default: now)
+ */
+export function timestampFooter(date: Date = new Date()): ContextBlock {
+  const timeStr = date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+  return context(`:clock1: Last updated: ${timeStr}`);
+}

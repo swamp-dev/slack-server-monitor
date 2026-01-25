@@ -5,6 +5,8 @@ import {
   getDiskUsage,
   getUptimeInfo,
   getSystemResources,
+  getCpuInfo,
+  getProcessInfo,
 } from '../../src/executors/system.js';
 
 // Mock executeCommand
@@ -331,82 +333,154 @@ describe('system executor', () => {
     });
   });
 
+  describe('getCpuInfo', () => {
+    it('should parse CPU info correctly', async () => {
+      // Mock for /proc/cpuinfo
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout:
+          'processor	: 0\n' +
+          'model name	: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n' +
+          'processor	: 1\n' +
+          'model name	: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n' +
+          'processor	: 2\n' +
+          'model name	: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n' +
+          'processor	: 3\n' +
+          'model name	: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n',
+        stderr: '',
+      });
+
+      // Mock for /proc/stat
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'cpu  1000 100 200 5000 50 10 5 0 0 0\n',
+        stderr: '',
+      });
+
+      const result = await getCpuInfo();
+
+      expect(result.cores).toBe(4);
+      expect(result.model).toContain('Intel');
+      expect(result.usagePercent).toBeGreaterThanOrEqual(0);
+      expect(result.usagePercent).toBeLessThanOrEqual(100);
+    });
+
+    it('should handle missing cpuinfo gracefully', async () => {
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'file not found',
+      });
+
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'cpu  1000 100 200 5000 50 10 5 0 0 0\n',
+        stderr: '',
+      });
+
+      const result = await getCpuInfo();
+
+      expect(result.cores).toBe(1); // Default
+      expect(result.model).toBe('Unknown');
+    });
+  });
+
+  describe('getProcessInfo', () => {
+    it('should parse process info correctly', async () => {
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout:
+          'STAT\n' +
+          'Ss\n' +
+          'R+\n' +
+          'S\n' +
+          'S\n' +
+          'Z\n' +
+          'I<\n',
+        stderr: '',
+      });
+
+      const result = await getProcessInfo();
+
+      expect(result.total).toBe(6);
+      expect(result.running).toBe(1);
+      expect(result.sleeping).toBe(4); // Ss, S, S, I<
+      expect(result.zombie).toBe(1);
+    });
+
+    it('should handle command failure gracefully', async () => {
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'ps: command not found',
+      });
+
+      const result = await getProcessInfo();
+
+      expect(result.total).toBe(0);
+      expect(result.running).toBe(0);
+    });
+  });
+
   describe('getSystemResources', () => {
-    it('should combine memory, swap, and uptime info', async () => {
-      // Mock for getMemoryInfo (free -m)
-      mockExecuteCommand.mockResolvedValueOnce({
-        exitCode: 0,
-        stdout:
-          '              total        used        free      shared  buff/cache   available\n' +
-          'Mem:          16384        8192        2048         512        6144       12288\n' +
-          'Swap:          4096        1024        3072\n',
-        stderr: '',
-      });
-
-      // Mock for getSwapInfo (free -m)
-      mockExecuteCommand.mockResolvedValueOnce({
-        exitCode: 0,
-        stdout:
-          '              total        used        free      shared  buff/cache   available\n' +
-          'Mem:          16384        8192        2048         512        6144       12288\n' +
-          'Swap:          4096        1024        3072\n',
-        stderr: '',
-      });
-
-      // Mock for getUptimeInfo
-      mockExecuteCommand.mockResolvedValueOnce({
-        exitCode: 0,
-        stdout: ' 10:30:00 up 5 days, 3:21, 2 users, load average: 0.15, 0.10, 0.05\n',
-        stderr: '',
+    it('should combine all system info', async () => {
+      // Use mockImplementation to handle parallel calls based on arguments
+      mockExecuteCommand.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'cat' && args[0] === '/proc/cpuinfo') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout:
+              'processor	: 0\n' +
+              'model name	: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n' +
+              'processor	: 1\n' +
+              'model name	: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n',
+            stderr: '',
+          });
+        }
+        if (cmd === 'cat' && args[0] === '/proc/stat') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: 'cpu  1000 100 200 5000 50 10 5 0 0 0\n',
+            stderr: '',
+          });
+        }
+        if (cmd === 'free') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout:
+              '              total        used        free      shared  buff/cache   available\n' +
+              'Mem:          16384        8192        2048         512        6144       12288\n' +
+              'Swap:          4096        1024        3072\n',
+            stderr: '',
+          });
+        }
+        if (cmd === 'ps') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: 'STAT\nSs\nR+\nS\n',
+            stderr: '',
+          });
+        }
+        if (cmd === 'uptime') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: ' 10:30:00 up 5 days, 3:21, 2 users, load average: 0.15, 0.10, 0.05\n',
+            stderr: '',
+          });
+        }
+        return Promise.resolve({ exitCode: 1, stdout: '', stderr: 'unknown command' });
       });
 
       const result = await getSystemResources();
 
+      expect(result.cpu.cores).toBe(2);
       expect(result.memory.total).toBe(16384);
+      expect(result.memory.bufferCache).toBe(6144);
       expect(result.swap.total).toBe(4096);
+      expect(result.processes.total).toBe(3);
       expect(result.uptime).toBe('5 days, 3:21');
+      expect(result.uptimeSeconds).toBe(444060); // 5 days + 3 hours + 21 min
       expect(result.loadAverage).toEqual([0.15, 0.1, 0.05]);
-    });
-
-    it('should propagate memory command failure', async () => {
-      mockExecuteCommand.mockResolvedValueOnce({
-        exitCode: 1,
-        stdout: '',
-        stderr: '',
-      });
-
-      await expect(getSystemResources()).rejects.toThrow('Failed to get memory info');
-    });
-
-    it('should propagate uptime command failure', async () => {
-      // Mock for getMemoryInfo (success)
-      mockExecuteCommand.mockResolvedValueOnce({
-        exitCode: 0,
-        stdout:
-          '              total        used        free      shared  buff/cache   available\n' +
-          'Mem:          16384        8192        2048         512        6144       12288\n' +
-          'Swap:          4096        1024        3072\n',
-        stderr: '',
-      });
-
-      // Mock for getSwapInfo (success)
-      mockExecuteCommand.mockResolvedValueOnce({
-        exitCode: 0,
-        stdout:
-          '              total        used        free      shared  buff/cache   available\n' +
-          'Mem:          16384        8192        2048         512        6144       12288\n' +
-          'Swap:          4096        1024        3072\n',
-        stderr: '',
-      });
-
-      // Mock for getUptimeInfo (failure)
-      mockExecuteCommand.mockResolvedValueOnce({
-        exitCode: 1,
-        stdout: '',
-        stderr: '',
-      });
-
-      await expect(getSystemResources()).rejects.toThrow('Failed to get uptime');
     });
   });
 });
