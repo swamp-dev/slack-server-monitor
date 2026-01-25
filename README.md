@@ -39,7 +39,7 @@ A **read-only** Slack bot for home server monitoring and diagnostics using Socke
 | `/ssl <domain>` | Check specific domain SSL certificate |
 | `/backups` | Local and S3 backup status |
 | `/pm2` | PM2 process list with status and resource usage |
-| `/ask <question>` | Ask Claude AI about your server (requires `ANTHROPIC_API_KEY` or Claude CLI) |
+| `/ask <question>` | Ask Claude AI about your server (requires Claude CLI) |
 | `/context` | View/switch Claude context directory for this channel |
 
 ## Quick Start
@@ -202,11 +202,9 @@ sudo systemctl start slack-monitor
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `CLAUDE_BACKEND` | No | auto | Backend: `api` (SDK), `cli` (Claude Code), `auto` (prefer API) |
-| `ANTHROPIC_API_KEY` | Yes* | - | Anthropic API key (enables `/ask` with API backend) |
-| `CLAUDE_MODEL` | No | claude-sonnet-4-20250514 | Claude model for API backend |
+| `CLAUDE_ENABLED` | No | false | Set to "true" to enable Claude AI features |
 | `CLAUDE_CLI_PATH` | No | claude | Path to Claude CLI executable |
-| `CLAUDE_CLI_MODEL` | No | sonnet | Model alias for CLI backend (sonnet/opus/haiku) |
+| `CLAUDE_CLI_MODEL` | No | sonnet | Model alias for CLI (sonnet/opus/haiku) |
 | `CLAUDE_ALLOWED_DIRS` | No | - | Directories Claude can read files from |
 | `CLAUDE_CONTEXT_DIR` | No | - | Infrastructure context directory |
 | `CLAUDE_CONTEXT_OPTIONS` | No | - | Comma-separated alias:path pairs for context switching |
@@ -214,11 +212,10 @@ sudo systemctl start slack-monitor
 | `CLAUDE_MAX_TOOL_CALLS` | No | 40 | Max tool calls per turn |
 | `CLAUDE_MAX_ITERATIONS` | No | 50 | Max agentic loop iterations |
 | `CLAUDE_RATE_LIMIT_MAX` | No | 5 | Claude requests per user per window |
-| `CLAUDE_DAILY_TOKEN_LIMIT` | No | 100000 | Daily token budget (API backend only) |
 | `CLAUDE_CONVERSATION_TTL_HOURS` | No | 24 | Conversation history retention |
 | `CLAUDE_DB_PATH` | No | ./data/claude.db | SQLite database path |
 
-*Required only for API backend. CLI backend uses Claude Code subscription instead.
+Requires Claude CLI to be installed and authenticated.
 
 ## Security Architecture
 
@@ -306,7 +303,6 @@ Set `CLAUDE_CONTEXT_DIR` to provide Claude with infrastructure documentation:
 - **Path validation** - File reading restricted to `CLAUDE_ALLOWED_DIRS` (symlink-safe)
 - **System path blocking** - Context directory cannot be under `/etc`, `/var`, etc.
 - **Output scrubbing** - All tool outputs scrubbed for secrets
-- **Token budgets** - Daily limits prevent runaway API costs
 - **Tool call limits** - Prevents infinite loops (max 40 per turn)
 
 ## Troubleshooting
@@ -353,16 +349,6 @@ docker restart slack-server-monitor
 2. **Check channel restrictions** - If `AUTHORIZED_CHANNEL_IDS` is set, commands only work in those channels
 3. **Check rate limiting** - Default is 10 commands per minute per user
 4. **Check logs** - Set `LOG_LEVEL=debug` for verbose output
-
-### Daily Budget Exceeded
-
-The API backend tracks token usage and stops responding when `CLAUDE_DAILY_TOKEN_LIMIT` is reached. The CLI backend does not track tokens and is unaffected by this limit.
-
-**Fix:** Either wait until the next day, increase the limit, or switch to CLI backend:
-
-```bash
-CLAUDE_BACKEND=cli
-```
 
 ## License
 

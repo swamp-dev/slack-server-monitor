@@ -1,5 +1,4 @@
-import type { Tool } from '@anthropic-ai/sdk/resources/messages.js';
-import type { ToolDefinition, ToolConfig, ToolResult } from './types.js';
+import type { ToolDefinition, ToolConfig, ToolResult, ToolSpec } from './types.js';
 import { serverTools } from './server-tools.js';
 import { fileTools } from './file-tools.js';
 import { scrubSensitiveData } from '../../formatters/scrub.js';
@@ -18,9 +17,9 @@ const TOOL_MAP = new Map<string, ToolDefinition>(
 );
 
 /**
- * Get all tool specifications for Claude API
+ * Get all tool specifications for Claude
  */
-export function getToolSpecs(disabledTools: string[] = []): Tool[] {
+export function getToolSpecs(disabledTools: string[] = []): ToolSpec[] {
   return ALL_TOOLS
     .filter(tool => !disabledTools.includes(tool.spec.name))
     .map(tool => tool.spec);

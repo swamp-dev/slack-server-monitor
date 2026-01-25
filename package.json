@@ -28,7 +28,6 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.71.2",
     "@slack/bolt": "^4.1.0",
     "better-sqlite3": "^12.6.2",
     "winston": "^3.17.0",

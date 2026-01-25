@@ -54,14 +54,6 @@ export interface ToolCallLog {
 }
 
 /**
- * Token usage for a day
- */
-export interface TokenUsage {
-  date: string;
-  tokensUsed: number;
-}
-
-/**
  * SQLite-based conversation store
  */
 export class ConversationStore {
@@ -96,11 +88,6 @@ export class ConversationStore {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         UNIQUE(thread_ts, channel_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS token_usage (
-        date TEXT PRIMARY KEY,
-        tokens_used INTEGER NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS tool_calls (
@@ -280,40 +267,6 @@ export class ConversationStore {
         VALUES (?, ?, ?, ?, ?)
       `)
       .run(conversationId, toolName, JSON.stringify(input), truncated, now);
-  }
-
-  /**
-   * Get today's token usage
-   */
-  getTodayTokenUsage(): number {
-    const today = new Date().toISOString().split('T')[0];
-    const row = this.db
-      .prepare('SELECT tokens_used FROM token_usage WHERE date = ?')
-      .get(today) as { tokens_used: number } | undefined;
-
-    return row?.tokens_used ?? 0;
-  }
-
-  /**
-   * Add tokens to today's usage
-   */
-  addTokenUsage(tokens: number): void {
-    const today = new Date().toISOString().split('T')[0];
-
-    this.db
-      .prepare(`
-        INSERT INTO token_usage (date, tokens_used)
-        VALUES (?, ?)
-        ON CONFLICT(date) DO UPDATE SET tokens_used = tokens_used + ?
-      `)
-      .run(today, tokens, tokens);
-  }
-
-  /**
-   * Check if daily token budget is exceeded
-   */
-  isDailyBudgetExceeded(dailyLimit: number): boolean {
-    return this.getTodayTokenUsage() >= dailyLimit;
   }
 
   /**

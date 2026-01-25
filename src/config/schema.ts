@@ -127,12 +127,6 @@ export const ConfigSchema = z.object({
   }),
 
   claude: z.object({
-    /** Backend type: api (SDK), cli (Claude Code), or auto (try api first) */
-    backend: z.enum(['api', 'cli', 'auto']).default('auto'),
-    /** Anthropic API key (required for 'api' backend) */
-    apiKey: z.string().optional(),
-    /** Claude model to use with API backend */
-    model: SafeModelNameSchema.default('claude-sonnet-4-20250514'),
     /** Path to Claude CLI executable (validated to prevent command injection) */
     cliPath: SafeCliPathSchema.default('claude'),
     /** Model alias for CLI backend (e.g., 'sonnet', 'opus', 'haiku') */
@@ -147,8 +141,6 @@ export const ConfigSchema = z.object({
     rateLimitMax: z.number().int().positive().default(5),
     /** Rate limit: window size in seconds */
     rateLimitWindowSeconds: z.number().int().positive().default(60),
-    /** Daily token budget (only tracked for API backend) */
-    dailyTokenLimit: z.number().int().positive().default(100000),
     /** Conversation TTL in hours */
     conversationTtlHours: z.number().int().positive().default(24),
     /** SQLite database path for conversations */
@@ -163,18 +155,7 @@ export const ConfigSchema = z.object({
     contextDir: z.string().optional(),
     /** Available context directories that can be switched per-channel */
     contextOptions: z.array(ContextOptionSchema).default([]),
-  }).refine(
-    (data) => {
-      // API backend requires an API key
-      if (data.backend === 'api' && !data.apiKey) {
-        return false;
-      }
-      // Auto backend requires at least one of api key or cli
-      // (cli is always available if claude is installed)
-      return true;
-    },
-    { message: 'API backend requires ANTHROPIC_API_KEY to be set' }
-  ).optional(),
+  }).optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

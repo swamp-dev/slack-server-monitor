@@ -50,13 +50,6 @@ export interface BaseProviderConfig {
 }
 
 /**
- * Configuration for API provider (Anthropic SDK)
- */
-export interface ApiProviderConfig extends BaseProviderConfig {
-  apiKey: string;
-}
-
-/**
  * Configuration for CLI provider (claude command)
  */
 export interface CliProviderConfig extends BaseProviderConfig {
@@ -80,9 +73,4 @@ export interface ClaudeProvider {
    * Get the provider name (for logging)
    */
   readonly name: string;
-
-  /**
-   * Whether this provider tracks token usage
-   */
-  readonly tracksTokens: boolean;
 }

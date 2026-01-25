@@ -143,17 +143,8 @@ export async function registerAskCommand(app: App): Promise<void> {
       return;
     }
 
-    // Check daily token budget first (before consuming a rate limit slot)
-    const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
-    if (store.isDailyBudgetExceeded(claudeConfig.dailyTokenLimit)) {
-      await respond({
-        blocks: [errorBlock('Daily API budget exceeded. Please try again tomorrow.')],
-        response_type: 'ephemeral',
-      });
-      return;
-    }
-
     // Check and record rate limit atomically
+    const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
     if (!checkAndRecordClaudeRequest(userId)) {
       await respond({
         blocks: [errorBlock(`Rate limit exceeded. Please wait before asking another question.`)],
@@ -204,9 +195,6 @@ export async function registerAskCommand(app: App): Promise<void> {
 
       // Get Claude service and ask
       const claude = getClaudeService({
-        backend: claudeConfig.backend,
-        apiKey: claudeConfig.apiKey,
-        model: claudeConfig.model,
         cliPath: claudeConfig.cliPath,
         cliModel: claudeConfig.cliModel,
         maxTokens: claudeConfig.maxTokens,
@@ -229,9 +217,8 @@ export async function registerAskCommand(app: App): Promise<void> {
         );
       }
 
-      // Track token usage
+      // Track token usage (logged for diagnostics)
       const totalTokens = result.usage.inputTokens + result.usage.outputTokens;
-      store.addTokenUsage(totalTokens);
 
       // Update the message with the response
       await client.chat.update({
@@ -342,16 +329,6 @@ export function registerThreadHandler(app: App): void {
 
     logger.debug('Processing thread reply', { userId, threadTs, channelId, textLength: text.length });
 
-    // Check daily budget first (before consuming a rate limit slot)
-    if (store.isDailyBudgetExceeded(claudeConfig.dailyTokenLimit)) {
-      await client.chat.postMessage({
-        channel: channelId,
-        thread_ts: threadTs,
-        text: 'Daily API budget exceeded. Please try again tomorrow.',
-      });
-      return;
-    }
-
     // Check and record rate limit atomically
     if (!checkAndRecordClaudeRequest(userId)) {
       await client.chat.postMessage({
@@ -396,9 +373,6 @@ export function registerThreadHandler(app: App): void {
 
       // Get Claude service and ask
       const claude = getClaudeService({
-        backend: claudeConfig.backend,
-        apiKey: claudeConfig.apiKey,
-        model: claudeConfig.model,
         cliPath: claudeConfig.cliPath,
         cliModel: claudeConfig.cliModel,
         maxTokens: claudeConfig.maxTokens,
@@ -421,9 +395,8 @@ export function registerThreadHandler(app: App): void {
         );
       }
 
-      // Track token usage
+      // Track token usage (for diagnostics)
       const totalTokens = result.usage.inputTokens + result.usage.outputTokens;
-      store.addTokenUsage(totalTokens);
 
       // Update the thinking message with response
       if (thinkingMsg.ts) {
