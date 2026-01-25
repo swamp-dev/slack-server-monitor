@@ -15,11 +15,6 @@ describe('CliProvider', () => {
       const provider = new CliProvider(config);
       expect(provider.name).toBe('cli');
     });
-
-    it('should not track tokens', () => {
-      const provider = new CliProvider(config);
-      expect(provider.tracksTokens).toBe(false);
-    });
   });
 
   describe('parseResponse', () => {

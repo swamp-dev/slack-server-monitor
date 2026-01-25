@@ -2,22 +2,16 @@
  * Claude service - re-exports from providers for backward compatibility
  */
 
-import { createProvider, resetProvider, type BackendType, type ProviderFactoryConfig } from './providers/index.js';
+import { createProvider, resetProvider, type CliProviderConfig } from './providers/index.js';
 import type { ClaudeProvider, UserConfig, AskResult, ConversationMessage, ToolCallLog } from './providers/types.js';
 
 // Re-export types for backward compatibility
-export type { UserConfig, AskResult, ConversationMessage, ToolCallLog, BackendType };
+export type { UserConfig, AskResult, ConversationMessage, ToolCallLog };
 
 /**
  * Configuration for Claude service
  */
 export interface ClaudeConfig {
-  /** Backend type: api, cli, or auto */
-  backend: BackendType;
-  /** API key (required for api backend) */
-  apiKey?: string;
-  /** Model for API backend */
-  model: string;
   /** Path to CLI executable */
   cliPath: string;
   /** Model alias for CLI backend */
@@ -40,23 +34,7 @@ export class ClaudeService {
   private provider: ClaudeProvider;
 
   constructor(config: ClaudeConfig) {
-    const factoryConfig: ProviderFactoryConfig = {
-      backend: config.backend,
-    };
-
-    // Configure API provider if we have an API key
-    if (config.apiKey) {
-      factoryConfig.api = {
-        apiKey: config.apiKey,
-        model: config.model,
-        maxTokens: config.maxTokens,
-        maxToolCalls: config.maxToolCalls,
-        maxIterations: config.maxIterations,
-      };
-    }
-
-    // Configure CLI provider
-    factoryConfig.cli = {
+    const cliConfig: CliProviderConfig = {
       cliPath: config.cliPath,
       model: config.cliModel,
       maxTokens: config.maxTokens,
@@ -64,7 +42,7 @@ export class ClaudeService {
       maxIterations: config.maxIterations,
     };
 
-    this.provider = createProvider(factoryConfig);
+    this.provider = createProvider(cliConfig);
   }
 
   /**
@@ -83,13 +61,6 @@ export class ClaudeService {
    */
   get providerName(): string {
     return this.provider.name;
-  }
-
-  /**
-   * Whether this provider tracks token usage
-   */
-  get tracksTokens(): boolean {
-    return this.provider.tracksTokens;
   }
 }
 

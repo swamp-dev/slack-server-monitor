@@ -3,21 +3,18 @@ import { ConfigSchema, type Config } from './schema.js';
 
 /**
  * SECURITY: Validate that the Claude CLI binary exists and is executable
- * This prevents runtime failures when the CLI backend is selected
+ * This prevents runtime failures when Claude is enabled
  *
- * @throws Error if CLI is not found and backend is 'cli'
+ * @throws Error if CLI is not found
  */
-function validateCliBinary(cliPath: string, backend: string): void {
-  // Only validate if backend requires CLI
-  if (backend !== 'cli') return;
-
+function validateCliBinary(cliPath: string): void {
   try {
     // Use 'which' on Unix-like systems to check if command exists
     execSync(`which "${cliPath}"`, { stdio: 'ignore', timeout: 5000 });
   } catch {
     throw new Error(
       `Claude CLI not found at '${cliPath}'. ` +
-      `Install Claude CLI or set CLAUDE_BACKEND=api with an ANTHROPIC_API_KEY.`
+      `Install Claude CLI or disable Claude by removing CLAUDE_ENABLED.`
     );
   }
 }
@@ -95,12 +92,9 @@ function loadConfig(): Config {
       level: (process.env.LOG_LEVEL ?? 'info') as 'debug' | 'info' | 'warn' | 'error',
       auditLogPath: process.env.AUDIT_LOG_PATH ?? undefined,
     },
-    // Enable Claude if API key is set OR backend is explicitly 'cli'
-    claude: (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_BACKEND === 'cli')
+    // Enable Claude if CLAUDE_ENABLED is set to true
+    claude: process.env.CLAUDE_ENABLED === 'true'
       ? {
-          backend: (process.env.CLAUDE_BACKEND ?? 'auto') as 'api' | 'cli' | 'auto',
-          apiKey: process.env.ANTHROPIC_API_KEY ?? undefined,
-          model: process.env.CLAUDE_MODEL ?? 'claude-sonnet-4-20250514',
           cliPath: process.env.CLAUDE_CLI_PATH ?? 'claude',
           cliModel: process.env.CLAUDE_CLI_MODEL ?? 'sonnet',
           maxTokens: parseIntWithDefault(process.env.CLAUDE_MAX_TOKENS, 2048),
@@ -108,7 +102,6 @@ function loadConfig(): Config {
           maxIterations: parseIntWithDefault(process.env.CLAUDE_MAX_ITERATIONS, 50),
           rateLimitMax: parseIntWithDefault(process.env.CLAUDE_RATE_LIMIT_MAX, 5),
           rateLimitWindowSeconds: parseIntWithDefault(process.env.CLAUDE_RATE_LIMIT_WINDOW_SECONDS, 60),
-          dailyTokenLimit: parseIntWithDefault(process.env.CLAUDE_DAILY_TOKEN_LIMIT, 100000),
           conversationTtlHours: parseIntWithDefault(process.env.CLAUDE_CONVERSATION_TTL_HOURS, 24),
           dbPath: process.env.CLAUDE_DB_PATH ?? './data/claude.db',
           allowedDirs: parseCommaSeparated(process.env.CLAUDE_ALLOWED_DIRS),
@@ -129,9 +122,9 @@ function loadConfig(): Config {
     throw new Error(`Configuration validation failed:\n${errors}`);
   }
 
-  // Validate CLI binary exists at startup if CLI backend is selected
+  // Validate CLI binary exists at startup if Claude is enabled
   if (result.data.claude) {
-    validateCliBinary(result.data.claude.cliPath, result.data.claude.backend);
+    validateCliBinary(result.data.claude.cliPath);
   }
 
   return result.data;

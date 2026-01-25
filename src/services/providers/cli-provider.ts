@@ -36,7 +36,6 @@ interface ToolCallRequest {
  */
 export class CliProvider implements ClaudeProvider {
   readonly name = 'cli';
-  readonly tracksTokens = false;
 
   private config: CliProviderConfig;
 

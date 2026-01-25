@@ -48,7 +48,6 @@ src/
 │   ├── providers/
 │   │   ├── index.ts          # Provider factory
 │   │   ├── types.ts          # Provider type definitions
-│   │   ├── api-provider.ts   # Anthropic SDK backend
 │   │   └── cli-provider.ts   # Claude CLI backend
 │   └── tools/
 │       ├── index.ts          # Tool router
@@ -84,7 +83,7 @@ src/
 | `/ssl <domain>` | Check specific domain SSL certificate |
 | `/backups` | Local and S3 backup status |
 | `/pm2` | PM2 process list with status and resource usage |
-| `/ask <question>` | Ask Claude AI about your server (requires `ANTHROPIC_API_KEY` or Claude CLI) |
+| `/ask <question>` | Ask Claude AI about your server (requires Claude CLI) |
 | `/context` | View/switch Claude context directory for this channel |
 
 ### Claude AI Integration
@@ -186,53 +185,26 @@ MONITORED_SERVICES=wordpress,nginx,n8n
 SSL_DOMAINS=example.com,app.example.com
 
 # Claude AI (optional - enables /ask command)
-# Option 1: Use Anthropic API
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Option 2: Use Claude CLI (no API key needed)
-CLAUDE_BACKEND=cli
-
+# Requires Claude CLI installed and authenticated
+CLAUDE_ENABLED=true
 CLAUDE_ALLOWED_DIRS=/root/ansible,/opt/stacks,/etc/docker
-CLAUDE_DAILY_TOKEN_LIMIT=100000
 ```
 
 ### Claude Configuration Details
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAUDE_BACKEND` | auto | Backend: `api` (SDK), `cli` (Claude Code), `auto` (prefer API) |
-| `ANTHROPIC_API_KEY` | - | API key for `api` backend |
-| `CLAUDE_MODEL` | claude-sonnet-4-20250514 | Claude model for API backend |
+| `CLAUDE_ENABLED` | false | Set to "true" to enable Claude AI features |
 | `CLAUDE_CLI_PATH` | claude | Path to Claude CLI executable |
-| `CLAUDE_CLI_MODEL` | sonnet | Model alias for CLI backend (sonnet/opus/haiku) |
+| `CLAUDE_CLI_MODEL` | sonnet | Model alias for CLI (sonnet/opus/haiku) |
 | `CLAUDE_ALLOWED_DIRS` | - | Comma-separated paths Claude can read files from |
 | `CLAUDE_MAX_TOKENS` | 2048 | Max tokens per response |
 | `CLAUDE_MAX_TOOL_CALLS` | 40 | Max tool calls per turn (prevents loops) |
 | `CLAUDE_MAX_ITERATIONS` | 50 | Max agentic loop iterations (defense in depth) |
 | `CLAUDE_RATE_LIMIT_MAX` | 5 | Requests per window per user |
-| `CLAUDE_DAILY_TOKEN_LIMIT` | 100000 | Daily token budget (API backend only) |
 | `CLAUDE_DB_PATH` | ./data/claude.db | SQLite database for conversations |
 | `CLAUDE_CONTEXT_DIR` | - | Directory containing infrastructure context (see below) |
 | `CLAUDE_CONTEXT_OPTIONS` | - | Comma-separated alias:path pairs for context switching |
-
-### Backend Options
-
-**API Backend (`CLAUDE_BACKEND=api`)**
-- Uses Anthropic SDK with direct API calls
-- Requires `ANTHROPIC_API_KEY`
-- Tracks token usage for daily budgets
-- Recommended for production use
-
-**CLI Backend (`CLAUDE_BACKEND=cli`)**
-- Uses Claude Code CLI (`claude -p --print`)
-- Requires Claude CLI installed and authenticated
-- Does NOT track token usage (daily budgets don't apply)
-- Useful when you have Claude Code subscription but no API key
-- May be slower (subprocess spawning overhead)
-
-**Auto Backend (`CLAUDE_BACKEND=auto`, default)**
-- Uses API if `ANTHROPIC_API_KEY` is set
-- Falls back to CLI if no API key
 
 ### Context Directory
 
@@ -347,6 +319,4 @@ docker run -d --env-file .env -v /var/run/docker.sock:/var/run/docker.sock:ro sl
 6. **File reading is restricted** - only paths in `CLAUDE_ALLOWED_DIRS` (symlink-safe)
 7. **Tool outputs are scrubbed** - but scrubbing isn't perfect
 8. **Conversations stored in SQLite** - auto-cleaned after `CLAUDE_CONVERSATION_TTL_HOURS`
-9. **Daily token limits** - prevents runaway API costs (API backend only)
-10. **Tool call limits** - prevents infinite loops (default: max 40 tools per turn, max 50 iterations)
-11. **CLI backend limitations** - no token tracking, daily budgets don't apply
+9. **Tool call limits** - prevents infinite loops (default: max 40 tools per turn, max 50 iterations)

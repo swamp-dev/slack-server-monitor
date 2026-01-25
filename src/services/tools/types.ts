@@ -1,11 +1,22 @@
-import type { Tool } from '@anthropic-ai/sdk/resources/messages.js';
+/**
+ * Tool specification (compatible with Claude API format)
+ */
+export interface ToolSpec {
+  name: string;
+  description: string;
+  input_schema: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+}
 
 /**
  * Tool definition with execution handler
  */
 export interface ToolDefinition {
-  /** Anthropic tool specification */
-  spec: Tool;
+  /** Tool specification */
+  spec: ToolSpec;
   /** Execute the tool and return result as string */
   execute: (input: Record<string, unknown>, config: ToolConfig) => Promise<string>;
 }
