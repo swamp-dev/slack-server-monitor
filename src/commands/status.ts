@@ -13,7 +13,6 @@ import {
   statsBar,
   compactStatusRow,
   helpTip,
-  collapsibleList,
 } from '../formatters/blocks.js';
 import { logger } from '../utils/logger.js';
 

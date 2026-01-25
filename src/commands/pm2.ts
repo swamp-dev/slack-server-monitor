@@ -9,6 +9,9 @@ import {
   context,
   statusEmoji,
   error,
+  statsBar,
+  helpTip,
+  link,
 } from '../formatters/blocks.js';
 import { logger } from '../utils/logger.js';
 
@@ -91,14 +94,16 @@ export function registerPm2Command(app: App): void {
         (p) => !['online', 'stopped', 'errored'].includes(p.status)
       );
 
+      // Build summary stats bar
+      const stats = statsBar([
+        { count: online.length, label: 'online', status: 'ok' },
+        { count: stopped.length, label: 'stopped', status: 'warn' },
+        { count: errored.length, label: 'errored', status: 'error' },
+      ]);
+
       const blocks: KnownBlock[] = [
         header('PM2 Status'),
-        context(
-          `${String(processes.length)} process(es) | ` +
-          `${String(online.length)} online | ` +
-          `${String(stopped.length)} stopped | ` +
-          `${String(errored.length)} errored`
-        ),
+        context(stats),
         divider(),
       ];
 
@@ -136,6 +141,15 @@ export function registerPm2Command(app: App): void {
           )
         );
       }
+
+      // Add helpful tips and documentation link
+      blocks.push(divider());
+      blocks.push(
+        helpTip([
+          `Use \`pm2 logs <name>\` on the server for detailed logs`,
+          `${link('https://pm2.keymetrics.io/docs/usage/quick-start/', 'PM2 Docs')} for process management`,
+        ])
+      );
 
       await respond({ blocks, response_type: 'ephemeral' });
     } catch (err) {

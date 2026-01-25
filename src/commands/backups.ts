@@ -10,6 +10,8 @@ import {
   context,
   statusEmoji,
   error,
+  statsBar,
+  helpTip,
 } from '../formatters/blocks.js';
 import { logger } from '../utils/logger.js';
 
@@ -150,7 +152,7 @@ export function registerBackupsCommand(app: App): void {
         blocks.push(...buildS3BackupBlocks(status.s3));
       }
 
-      // Summary
+      // Summary using stats bar
       const allStatuses = [
         ...status.local.map((b) => b.status),
         ...(status.s3 ? [status.s3.status] : []),
@@ -163,10 +165,20 @@ export function registerBackupsCommand(app: App): void {
       blocks.push(divider());
       blocks.push(
         context(
-          `${statusEmoji('ok')} ${String(okCount)} OK | ` +
-          `${statusEmoji('warn')} ${String(warnCount)} stale (>24h) | ` +
-          `${statusEmoji('error')} ${String(errorCount)} issues (>48h or missing)`
+          statsBar([
+            { count: okCount, label: 'current', status: 'ok' },
+            { count: warnCount, label: 'stale (>24h)', status: 'warn' },
+            { count: errorCount, label: 'issues', status: 'error' },
+          ])
         )
+      );
+
+      // Add helpful tips
+      blocks.push(
+        helpTip([
+          'Stale = >24h since last backup',
+          'Issues = >48h or directory missing',
+        ])
       );
 
       await respond({ blocks, response_type: 'ephemeral' });

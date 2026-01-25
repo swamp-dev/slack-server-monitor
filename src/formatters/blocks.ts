@@ -220,7 +220,7 @@ export function compactList(items: string[], maxItems = 10, codeFormat = true): 
  * @param stats - Array of { count, label, status } objects
  */
 export function statsBar(
-  stats: Array<{ count: number; label: string; status: 'ok' | 'warn' | 'error' | 'unknown' }>
+  stats: { count: number; label: string; status: 'ok' | 'warn' | 'error' | 'unknown' }[]
 ): string {
   return stats
     .map(({ count, label, status }) => `${statusEmoji(status)} ${String(count)} ${label}`)
@@ -271,7 +271,7 @@ export function expandableHeader(title: string, count: number, expanded = false)
  * @param maxItems - Maximum items per row (default: 5)
  */
 export function compactStatusRow(
-  items: Array<{ name: string; status: 'ok' | 'warn' | 'error' | 'unknown' }>,
+  items: { name: string; status: 'ok' | 'warn' | 'error' | 'unknown' }[],
   maxItems = 5
 ): string[] {
   const rows: string[] = [];
@@ -339,12 +339,12 @@ export function collapsibleList(
  * @param metrics - Array of { label, value, max?, unit? } objects
  */
 export function metricsRow(
-  metrics: Array<{ label: string; value: number; max?: number; unit?: string }>
+  metrics: { label: string; value: number; max?: number; unit?: string }[]
 ): string {
   return metrics
     .map(({ label, value, max, unit }) => {
       const displayValue = max ? `${String(value)}/${String(max)}` : String(value);
-      const unitStr = unit || '';
+      const unitStr = unit ?? '';
       return `*${label}:* ${displayValue}${unitStr}`;
     })
     .join('  |  ');
@@ -367,7 +367,7 @@ export function sectionWithHint(mainText: string, actionHint: string): KnownBloc
  * @param links - Array of { url, text, description? } objects
  */
 export function docLinks(
-  links: Array<{ url: string; text: string; description?: string }>
+  links: { url: string; text: string; description?: string }[]
 ): ContextBlock {
   const formatted = links.map(({ url, text, description }) => link(url, text, description)).join('\n');
   return context(`:books: *Resources:*\n${formatted}`);

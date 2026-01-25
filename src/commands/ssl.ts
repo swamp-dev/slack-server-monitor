@@ -9,6 +9,9 @@ import {
   context,
   statusEmoji,
   error,
+  statsBar,
+  helpTip,
+  link,
 } from '../formatters/blocks.js';
 import { logger } from '../utils/logger.js';
 
@@ -173,7 +176,7 @@ export function registerSslCommand(app: App): void {
           }
         }
 
-        // Summary
+        // Summary using stats bar
         const errorCount = results.filter((r) => r.status === 'error').length;
         const warnCount = results.filter((r) => r.status === 'warn').length;
         const okCount = results.filter((r) => r.status === 'ok').length;
@@ -181,10 +184,20 @@ export function registerSslCommand(app: App): void {
         blocks.push(divider());
         blocks.push(
           context(
-            `${statusEmoji('ok')} ${String(okCount)} OK | ` +
-            `${statusEmoji('warn')} ${String(warnCount)} expiring soon | ` +
-            `${statusEmoji('error')} ${String(errorCount)} issues`
+            statsBar([
+              { count: okCount, label: 'valid', status: 'ok' },
+              { count: warnCount, label: 'expiring', status: 'warn' },
+              { count: errorCount, label: 'issues', status: 'error' },
+            ])
           )
+        );
+
+        // Add helpful tips
+        blocks.push(
+          helpTip([
+            `Use \`/ssl <domain>\` to check a specific domain`,
+            `${link('https://letsencrypt.org/docs/', "Let's Encrypt Docs")} for certificate renewal`,
+          ])
         );
 
         await respond({ blocks, response_type: 'ephemeral' });
