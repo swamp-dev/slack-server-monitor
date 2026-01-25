@@ -28,6 +28,8 @@ import {
   docLinks,
   showMoreHint,
   timestampFooter,
+  relativeTime,
+  threadLink,
 } from '../../src/formatters/blocks.js';
 
 describe('block utilities', () => {
@@ -515,6 +517,49 @@ describe('enhanced output helpers', () => {
       expect(result.type).toBe('context');
       const text = (result.elements[0] as { text: string }).text;
       expect(text).toContain('Last updated:');
+    });
+  });
+
+  describe('relativeTime', () => {
+    it('should return "just now" for timestamps less than 60 seconds ago', () => {
+      const now = Date.now();
+      expect(relativeTime(now)).toBe('just now');
+      expect(relativeTime(now - 30 * 1000)).toBe('just now'); // 30 seconds ago
+    });
+
+    it('should return "Xm ago" for timestamps less than 60 minutes ago', () => {
+      const now = Date.now();
+      expect(relativeTime(now - 2 * 60 * 1000)).toBe('2m ago');
+      expect(relativeTime(now - 45 * 60 * 1000)).toBe('45m ago');
+    });
+
+    it('should return "Xh ago" for timestamps less than 24 hours ago', () => {
+      const now = Date.now();
+      expect(relativeTime(now - 2 * 60 * 60 * 1000)).toBe('2h ago');
+      expect(relativeTime(now - 23 * 60 * 60 * 1000)).toBe('23h ago');
+    });
+
+    it('should return "Xd ago" for timestamps more than 24 hours ago', () => {
+      const now = Date.now();
+      expect(relativeTime(now - 2 * 24 * 60 * 60 * 1000)).toBe('2d ago');
+      expect(relativeTime(now - 30 * 24 * 60 * 60 * 1000)).toBe('30d ago');
+    });
+
+    it('should return "just now" for future timestamps', () => {
+      const future = Date.now() + 60 * 1000;
+      expect(relativeTime(future)).toBe('just now');
+    });
+  });
+
+  describe('threadLink', () => {
+    it('should create a Slack thread deep link', () => {
+      const result = threadLink('C123ABC', '1706234567.123456');
+      expect(result).toBe('slack://channel?team=&id=C123ABC&thread_ts=1706234567.123456');
+    });
+
+    it('should handle different channel and thread IDs', () => {
+      const result = threadLink('C999XYZ', '9999999999.999999');
+      expect(result).toBe('slack://channel?team=&id=C999XYZ&thread_ts=9999999999.999999');
     });
   });
 });

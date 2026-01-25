@@ -85,6 +85,10 @@ src/
 | `/pm2` | PM2 process list with status and resource usage |
 | `/ask <question>` | Ask Claude AI about your server (requires Claude CLI) |
 | `/context` | View/switch Claude context directory for this channel |
+| `/sessions` | List recent Claude AI sessions (last 24h) |
+| `/sessions <thread_ts>` | Detailed view of specific session |
+| `/sessions mine` | Sessions initiated by current user |
+| `/sessions stats` | Aggregate statistics |
 
 ### Claude AI Integration
 
