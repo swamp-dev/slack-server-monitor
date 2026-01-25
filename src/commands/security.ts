@@ -10,6 +10,10 @@ import {
   context,
   statusEmoji,
   error,
+  statsBar,
+  compactList,
+  helpTip,
+  link,
 } from '../formatters/blocks.js';
 import { logger } from '../utils/logger.js';
 
@@ -58,15 +62,11 @@ export function registerSecurityCommand(app: App): void {
           ]),
         ];
 
-        // Show banned IPs
+        // Show banned IPs using compact list
         if (details.bannedIps.length > 0) {
           blocks.push(divider());
-          blocks.push(section('*Banned IPs:*'));
-          const ipList = details.bannedIps.slice(0, 10).map((ip) => `\`${ip}\``).join(', ');
-          blocks.push(context(ipList));
-          if (details.bannedIps.length > 10) {
-            blocks.push(context(`_...and ${String(details.bannedIps.length - 10)} more_`));
-          }
+          blocks.push(section(`*Banned IPs (${String(details.bannedIps.length)}):*`));
+          blocks.push(context(compactList(details.bannedIps, 15)));
         }
 
         // Show monitored files
@@ -74,6 +74,15 @@ export function registerSecurityCommand(app: App): void {
           blocks.push(divider());
           blocks.push(context(`*Log files:* ${details.fileList.join(', ')}`));
         }
+
+        // Add helpful tips
+        blocks.push(divider());
+        blocks.push(
+          helpTip([
+            `Use \`fail2ban-client set ${details.name} unbanip <IP>\` to unban`,
+            link('https://www.fail2ban.org/wiki/index.php/Main_Page', 'Fail2ban Docs'),
+          ])
+        );
 
         await respond({ blocks, response_type: 'ephemeral' });
       } else {
@@ -85,39 +94,87 @@ export function registerSecurityCommand(app: App): void {
             blocks: [
               header('Security Status'),
               section(':information_source: No fail2ban jails configured.'),
+              helpTip([`Configure jails in \`/etc/fail2ban/jail.local\``]),
             ],
             response_type: 'ephemeral',
           });
           return;
         }
 
-        const blocks: KnownBlock[] = [
-          header('Security Status'),
-          context(`${String(status.jailCount)} jail(s) active`),
-          divider(),
-        ];
+        // Calculate totals for stats bar
+        let totalBanned = 0;
+        let totalFailed = 0;
+        const jailDetails: {
+          name: string;
+          banned: number;
+          failed: number;
+          totalBanned: number;
+        }[] = [];
 
-        // Get details for each jail
         for (const jail of status.jails) {
           try {
             const details = await getJailDetails(jail);
-            const bannedCount = details.currentlyBanned;
-            const emoji = bannedCount > 0 ? statusEmoji('warn') : statusEmoji('ok');
-
-            blocks.push(
-              section(
-                `${emoji} *${details.name}*\n` +
-                `Banned: ${String(bannedCount)} | Failed: ${String(details.currentlyFailed)} | Total banned: ${String(details.totalBanned)}`
-              )
-            );
+            totalBanned += details.currentlyBanned;
+            totalFailed += details.currentlyFailed;
+            jailDetails.push({
+              name: details.name,
+              banned: details.currentlyBanned,
+              failed: details.currentlyFailed,
+              totalBanned: details.totalBanned,
+            });
           } catch (err) {
             logger.error('Failed to get jail details', { jail, error: err });
-            blocks.push(section(`${statusEmoji('error')} *${jail}*\n_Failed to get details_`));
+            jailDetails.push({
+              name: jail,
+              banned: -1,
+              failed: -1,
+              totalBanned: 0,
+            });
           }
         }
 
+        // Build stats bar
+        // Note: banned === -1 indicates an error getting jail details
+        const healthyJails = jailDetails.filter((j) => j.banned === 0).length;
+        const activeJails = jailDetails.filter((j) => j.banned > 0).length;
+        const errorJails = jailDetails.filter((j) => j.banned < 0).length;
+
+        const stats = statsBar([
+          { count: healthyJails, label: 'quiet', status: 'ok' },
+          { count: activeJails, label: 'active', status: 'warn' },
+          { count: errorJails, label: 'error', status: 'error' },
+        ]);
+
+        const blocks: KnownBlock[] = [
+          header('Security Status'),
+          context(stats),
+          context(`:shield: ${String(totalBanned)} IPs currently banned  ·  ${String(totalFailed)} recent failures`),
+          divider(),
+        ];
+
+        // Show each jail
+        for (const jail of jailDetails) {
+          if (jail.banned < 0) {
+            blocks.push(section(`${statusEmoji('error')} *${jail.name}*\n_Failed to get details_`));
+            continue;
+          }
+
+          const emoji = jail.banned > 0 ? statusEmoji('warn') : statusEmoji('ok');
+          blocks.push(
+            section(
+              `${emoji} *${jail.name}*\n` +
+              `Banned: ${String(jail.banned)} | Failed: ${String(jail.failed)} | Total banned: ${String(jail.totalBanned)}`
+            )
+          );
+        }
+
         blocks.push(divider());
-        blocks.push(context('Use `/security <jail>` for detailed jail information'));
+        blocks.push(
+          helpTip([
+            'Use `/security <jail>` for details and banned IPs',
+            link('https://www.fail2ban.org/wiki/index.php/Main_Page', 'Fail2ban Docs'),
+          ])
+        );
 
         await respond({ blocks, response_type: 'ephemeral' });
       }

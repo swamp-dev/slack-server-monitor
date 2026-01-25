@@ -10,8 +10,32 @@ import {
   progressBar,
   statusEmoji,
   error,
+  formatUptime,
+  helpTip,
+  statsBar,
 } from '../formatters/blocks.js';
 import { logger } from '../utils/logger.js';
+
+/**
+ * Format memory size in MB to human-readable string
+ */
+function formatMB(mb: number): string {
+  if (mb >= 1024) {
+    return `${(mb / 1024).toFixed(1)} GB`;
+  }
+  return `${String(mb)} MB`;
+}
+
+/**
+ * Get load average status based on cores
+ * Load > cores means overloaded
+ */
+function getLoadStatus(load1m: number, cores: number): 'ok' | 'warn' | 'error' {
+  const loadPerCore = load1m / cores;
+  if (loadPerCore >= 1.0) return 'error';
+  if (loadPerCore >= 0.7) return 'warn';
+  return 'ok';
+}
 
 /**
  * Register the /resources command
@@ -27,30 +51,78 @@ export function registerResourcesCommand(app: App): void {
       const resources = await getSystemResources();
 
       // Determine status indicators
+      const loadStatus = getLoadStatus(resources.loadAverage[0], resources.cpu.cores);
       const memStatus = getUsageStatus(resources.memory.percentUsed);
       const swapStatus = getUsageStatus(resources.swap.percentUsed);
 
+      // Format uptime nicely
+      const uptimeFormatted = resources.uptimeSeconds > 0
+        ? formatUptime(resources.uptimeSeconds)
+        : resources.uptime;
+
+      // Calculate load as percentage of cores for progress bar
+      const loadPercent = Math.min(100, Math.round((resources.loadAverage[0] / resources.cpu.cores) * 100));
+
       const blocks: KnownBlock[] = [
         header('System Resources'),
-        context(`Uptime: ${resources.uptime} | Load: ${resources.loadAverage.join(', ')}`),
         divider(),
 
-        // Memory
+        // System Overview - uptime, processes
+        sectionWithFields([
+          `*Uptime*\n:clock1: ${uptimeFormatted}`,
+          `*Processes*\n:gear: ${String(resources.processes.total)} total (${String(resources.processes.running)} running)`,
+        ]),
+
+        divider(),
+
+        // CPU & Load Section
+        section(
+          `${statusEmoji(loadStatus)} *CPU Load*\n` +
+            `${progressBar(loadPercent, 100)}\n` +
+            `\`${resources.cpu.model}\` (${String(resources.cpu.cores)} cores)`
+        ),
+
+        // Load Average details
+        section(
+          `*Load Average*\n` +
+            `1m: \`${resources.loadAverage[0].toFixed(2)}\` · ` +
+            `5m: \`${resources.loadAverage[1].toFixed(2)}\` · ` +
+            `15m: \`${resources.loadAverage[2].toFixed(2)}\`\n` +
+            `_${resources.loadAverage[0] > resources.cpu.cores ? ':warning: Load exceeds core count!' : `Load per core: ${(resources.loadAverage[0] / resources.cpu.cores).toFixed(2)}`}_`
+        ),
+
+        divider(),
+
+        // Memory Section
         section(
           `${statusEmoji(memStatus)} *Memory*\n` +
             `${progressBar(resources.memory.used, resources.memory.total)}\n` +
-            `${String(resources.memory.used)} MB / ${String(resources.memory.total)} MB used`
+            `Used: \`${formatMB(resources.memory.used)}\` / \`${formatMB(resources.memory.total)}\`\n` +
+            `Available: \`${formatMB(resources.memory.available)}\` · Buffer/Cache: \`${formatMB(resources.memory.bufferCache)}\``
         ),
 
-        // Swap
+        // Swap Section
         section(
           resources.swap.total > 0
             ? `${statusEmoji(swapStatus)} *Swap*\n` +
                 `${progressBar(resources.swap.used, resources.swap.total)}\n` +
-                `${String(resources.swap.used)} MB / ${String(resources.swap.total)} MB used`
-            : `${statusEmoji('unknown')} *Swap*\nNot configured`
+                `Used: \`${formatMB(resources.swap.used)}\` / \`${formatMB(resources.swap.total)}\``
+            : `${statusEmoji('unknown')} *Swap*\n_Not configured_`
         ),
       ];
+
+      // Add zombie warning if any
+      if (resources.processes.zombie > 0) {
+        blocks.push(
+          context(`:warning: ${String(resources.processes.zombie)} zombie process${resources.processes.zombie > 1 ? 'es' : ''} detected`)
+        );
+      }
+
+      // Add helpful tips
+      blocks.push(divider());
+      blocks.push(
+        helpTip([`Use \`/disk\` for detailed disk usage per mount point`])
+      );
 
       await respond({ blocks, response_type: 'ephemeral' });
     } catch (err) {
@@ -92,6 +164,27 @@ export function registerDiskCommand(app: App): void {
 
       if (mounts.length === 0) {
         blocks.push(section('No disk mounts found.'));
+      }
+
+      // Add summary stats bar
+      const criticalMounts = mounts.filter((m) => m.percentUsed >= 90).length;
+      const warningMounts = mounts.filter((m) => m.percentUsed >= 75 && m.percentUsed < 90).length;
+      const healthyMounts = mounts.filter((m) => m.percentUsed < 75).length;
+
+      if (mounts.length > 0) {
+        blocks.push(divider());
+        blocks.push(
+          context(
+            statsBar([
+              { count: healthyMounts, label: 'healthy', status: 'ok' },
+              { count: warningMounts, label: 'warning', status: 'warn' },
+              { count: criticalMounts, label: 'critical', status: 'error' },
+            ])
+          )
+        );
+        blocks.push(
+          helpTip([`Use \`/resources\` for CPU, memory, and load average`])
+        );
       }
 
       await respond({ blocks, response_type: 'ephemeral' });

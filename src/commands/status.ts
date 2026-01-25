@@ -10,6 +10,9 @@ import {
   context,
   statusEmoji,
   error,
+  statsBar,
+  compactStatusRow,
+  helpTip,
 } from '../formatters/blocks.js';
 import { logger } from '../utils/logger.js';
 
@@ -88,7 +91,11 @@ export function registerServicesCommand(app: App): void {
 
         if (containers.length === 0) {
           await respond({
-            blocks: [header('Container Status'), section('No containers found.')],
+            blocks: [
+              header('Container Status'),
+              section(':package: No containers found.'),
+              helpTip(['Run `docker ps -a` to verify Docker is working']),
+            ],
             response_type: 'ephemeral',
           });
           return;
@@ -97,36 +104,82 @@ export function registerServicesCommand(app: App): void {
         // Group by status
         const running = containers.filter((c) => c.state === 'running');
         const stopped = containers.filter((c) => c.state !== 'running');
+        const unhealthy = containers.filter(
+          (c) => c.state === 'exited' || c.state === 'dead'
+        );
+
+        // Build summary stats
+        const stats = statsBar([
+          { count: running.length, label: 'running', status: 'ok' },
+          { count: stopped.length - unhealthy.length, label: 'stopped', status: 'warn' },
+          { count: unhealthy.length, label: 'unhealthy', status: 'error' },
+        ]);
 
         const blocks: KnownBlock[] = [
           header('Container Status'),
-          context(`${String(containers.length)} containers total | ${String(running.length)} running | ${String(stopped.length)} stopped`),
+          context(stats),
           divider(),
         ];
 
-        // Show running containers
-        if (running.length > 0) {
-          blocks.push(section('*Running*'));
-          for (const container of running) {
-            const emoji = getStatusEmoji(container.state);
-            blocks.push(
-              section(`${emoji} *${container.name}*\n\`${container.image}\`\n_${container.status}_`)
-            );
-          }
-        }
+        // Compact view threshold - use compact mode for 8+ containers
+        const useCompactView = containers.length >= 8;
 
-        // Show stopped containers
-        if (stopped.length > 0) {
+        if (useCompactView) {
+          // Compact view: show containers in rows with status indicators
           if (running.length > 0) {
-            blocks.push(divider());
+            blocks.push(section('*Running*'));
+            const runningItems = running.map((c) => ({
+              name: c.name,
+              status: 'ok' as const,
+            }));
+            for (const row of compactStatusRow(runningItems, 4)) {
+              blocks.push(context(row));
+            }
           }
-          blocks.push(section('*Stopped/Other*'));
-          for (const container of stopped) {
-            const emoji = getStatusEmoji(container.state);
-            blocks.push(
-              section(`${emoji} *${container.name}*\n\`${container.image}\`\n_${container.status}_`)
-            );
+
+          if (stopped.length > 0) {
+            if (running.length > 0) blocks.push(divider());
+            blocks.push(section('*Stopped/Other*'));
+            const stoppedItems = stopped.map((c) => ({
+              name: c.name,
+              status: getStatusType(c.state),
+            }));
+            for (const row of compactStatusRow(stoppedItems, 4)) {
+              blocks.push(context(row));
+            }
           }
+
+          blocks.push(divider());
+          blocks.push(
+            helpTip([`Use \`/services <name>\` for container details (ports, mounts, image)`])
+          );
+        } else {
+          // Detailed view for fewer containers
+          if (running.length > 0) {
+            blocks.push(section('*Running*'));
+            for (const container of running) {
+              const emoji = getStatusEmoji(container.state);
+              blocks.push(
+                section(`${emoji} *${container.name}*\n\`${container.image}\`\n_${container.status}_`)
+              );
+            }
+          }
+
+          if (stopped.length > 0) {
+            if (running.length > 0) blocks.push(divider());
+            blocks.push(section('*Stopped/Other*'));
+            for (const container of stopped) {
+              const emoji = getStatusEmoji(container.state);
+              blocks.push(
+                section(`${emoji} *${container.name}*\n\`${container.image}\`\n_${container.status}_`)
+              );
+            }
+          }
+
+          blocks.push(divider());
+          blocks.push(
+            helpTip([`Use \`/services <name>\` for details`, `Use \`/logs <name>\` for logs`])
+          );
         }
 
         await respond({ blocks, response_type: 'ephemeral' });
@@ -154,5 +207,23 @@ function getStatusEmoji(state: string): string {
       return statusEmoji('warn');
     default:
       return statusEmoji('unknown');
+  }
+}
+
+/**
+ * Get status type for container state (for compact status row)
+ */
+function getStatusType(state: string): 'ok' | 'warn' | 'error' | 'unknown' {
+  switch (state) {
+    case 'running':
+      return 'ok';
+    case 'exited':
+    case 'dead':
+      return 'error';
+    case 'paused':
+    case 'restarting':
+      return 'warn';
+    default:
+      return 'unknown';
   }
 }
