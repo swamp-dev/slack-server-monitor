@@ -11,6 +11,8 @@ import {
   statusEmoji,
   error,
   formatUptime,
+  helpTip,
+  statsBar,
 } from '../formatters/blocks.js';
 import { logger } from '../utils/logger.js';
 
@@ -21,7 +23,7 @@ function formatMB(mb: number): string {
   if (mb >= 1024) {
     return `${(mb / 1024).toFixed(1)} GB`;
   }
-  return `${mb} MB`;
+  return `${String(mb)} MB`;
 }
 
 /**
@@ -49,7 +51,6 @@ export function registerResourcesCommand(app: App): void {
       const resources = await getSystemResources();
 
       // Determine status indicators
-      const cpuStatus = getUsageStatus(resources.cpu.usagePercent);
       const loadStatus = getLoadStatus(resources.loadAverage[0], resources.cpu.cores);
       const memStatus = getUsageStatus(resources.memory.percentUsed);
       const swapStatus = getUsageStatus(resources.swap.percentUsed);
@@ -59,32 +60,35 @@ export function registerResourcesCommand(app: App): void {
         ? formatUptime(resources.uptimeSeconds)
         : resources.uptime;
 
+      // Calculate load as percentage of cores for progress bar
+      const loadPercent = Math.min(100, Math.round((resources.loadAverage[0] / resources.cpu.cores) * 100));
+
       const blocks: KnownBlock[] = [
         header('System Resources'),
         divider(),
 
-        // System Overview - uptime, processes, load
+        // System Overview - uptime, processes
         sectionWithFields([
           `*Uptime*\n:clock1: ${uptimeFormatted}`,
-          `*Processes*\n:gear: ${resources.processes.total} total (${resources.processes.running} running)`,
+          `*Processes*\n:gear: ${String(resources.processes.total)} total (${String(resources.processes.running)} running)`,
         ]),
 
         divider(),
 
-        // CPU Section
+        // CPU & Load Section
         section(
-          `${statusEmoji(cpuStatus)} *CPU Usage*\n` +
-            `${progressBar(resources.cpu.usagePercent, 100)}\n` +
-            `\`${resources.cpu.model}\` (${resources.cpu.cores} cores)`
+          `${statusEmoji(loadStatus)} *CPU Load*\n` +
+            `${progressBar(loadPercent, 100)}\n` +
+            `\`${resources.cpu.model}\` (${String(resources.cpu.cores)} cores)`
         ),
 
-        // Load Average
+        // Load Average details
         section(
-          `${statusEmoji(loadStatus)} *Load Average*\n` +
+          `*Load Average*\n` +
             `1m: \`${resources.loadAverage[0].toFixed(2)}\` · ` +
             `5m: \`${resources.loadAverage[1].toFixed(2)}\` · ` +
             `15m: \`${resources.loadAverage[2].toFixed(2)}\`\n` +
-            `_${resources.loadAverage[0] > resources.cpu.cores ? ':warning: Load exceeds core count' : `Load per core: ${(resources.loadAverage[0] / resources.cpu.cores).toFixed(2)}`}_`
+            `_${resources.loadAverage[0] > resources.cpu.cores ? ':warning: Load exceeds core count!' : `Load per core: ${(resources.loadAverage[0] / resources.cpu.cores).toFixed(2)}`}_`
         ),
 
         divider(),
@@ -110,9 +114,15 @@ export function registerResourcesCommand(app: App): void {
       // Add zombie warning if any
       if (resources.processes.zombie > 0) {
         blocks.push(
-          context(`:warning: ${resources.processes.zombie} zombie process${resources.processes.zombie > 1 ? 'es' : ''} detected`)
+          context(`:warning: ${String(resources.processes.zombie)} zombie process${resources.processes.zombie > 1 ? 'es' : ''} detected`)
         );
       }
+
+      // Add helpful tips
+      blocks.push(divider());
+      blocks.push(
+        helpTip([`Use \`/disk\` for detailed disk usage per mount point`])
+      );
 
       await respond({ blocks, response_type: 'ephemeral' });
     } catch (err) {
@@ -154,6 +164,27 @@ export function registerDiskCommand(app: App): void {
 
       if (mounts.length === 0) {
         blocks.push(section('No disk mounts found.'));
+      }
+
+      // Add summary stats bar
+      const criticalMounts = mounts.filter((m) => m.percentUsed >= 90).length;
+      const warningMounts = mounts.filter((m) => m.percentUsed >= 75 && m.percentUsed < 90).length;
+      const healthyMounts = mounts.filter((m) => m.percentUsed < 75).length;
+
+      if (mounts.length > 0) {
+        blocks.push(divider());
+        blocks.push(
+          context(
+            statsBar([
+              { count: healthyMounts, label: 'healthy', status: 'ok' },
+              { count: warningMounts, label: 'warning', status: 'warn' },
+              { count: criticalMounts, label: 'critical', status: 'error' },
+            ])
+          )
+        );
+        blocks.push(
+          helpTip([`Use \`/resources\` for CPU, memory, and load average`])
+        );
       }
 
       await respond({ blocks, response_type: 'ephemeral' });

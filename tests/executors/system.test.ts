@@ -7,6 +7,7 @@ import {
   getSystemResources,
   getCpuInfo,
   getProcessInfo,
+  formatUptimeString,
 } from '../../src/executors/system.js';
 
 // Mock executeCommand
@@ -262,7 +263,14 @@ describe('system executor', () => {
   });
 
   describe('getUptimeInfo', () => {
-    it('should parse uptime output correctly', async () => {
+    it('should parse uptime and load average correctly', async () => {
+      // First call: cat /proc/uptime
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: '444060.50 123456.78\n', // 5 days + 3 hours + 21 min
+        stderr: '',
+      });
+      // Second call: uptime (for load average)
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
         stdout: ' 10:30:00 up 5 days, 3:21, 2 users, load average: 0.15, 0.10, 0.05\n',
@@ -271,11 +279,18 @@ describe('system executor', () => {
 
       const result = await getUptimeInfo();
 
-      expect(result.uptime).toBe('5 days, 3:21');
+      expect(result.uptime).toBe('5d 3h 21m');
+      expect(result.uptimeSeconds).toBe(444060);
       expect(result.loadAverage).toEqual([0.15, 0.1, 0.05]);
     });
 
-    it('should parse uptime with hours only', async () => {
+    it('should format short uptime correctly', async () => {
+      // 3 hours + 45 minutes = 13500 seconds
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: '13500.00 5000.00\n',
+        stderr: '',
+      });
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
         stdout: ' 14:22:01 up  3:45,  1 user,  load average: 0.00, 0.01, 0.05\n',
@@ -284,11 +299,19 @@ describe('system executor', () => {
 
       const result = await getUptimeInfo();
 
-      expect(result.uptime).toBe('3:45');
+      expect(result.uptime).toBe('3h 45m');
+      expect(result.uptimeSeconds).toBe(13500);
       expect(result.loadAverage).toEqual([0.0, 0.01, 0.05]);
     });
 
-    it('should throw on command failure with error message', async () => {
+    it('should throw when uptime command fails', async () => {
+      // /proc/uptime succeeds
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: '444060.50 123456.78\n',
+        stderr: '',
+      });
+      // uptime command fails
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 1,
         stdout: '',
@@ -298,7 +321,12 @@ describe('system executor', () => {
       await expect(getUptimeInfo()).rejects.toThrow('Failed to get uptime');
     });
 
-    it('should throw on command failure with empty stderr', async () => {
+    it('should throw on uptime command failure with empty stderr', async () => {
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: '444060.50 123456.78\n',
+        stderr: '',
+      });
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 127,
         stdout: '',
@@ -308,22 +336,36 @@ describe('system executor', () => {
       await expect(getUptimeInfo()).rejects.toThrow('Failed to get uptime');
     });
 
-    it('should handle missing uptime pattern gracefully', async () => {
+    it('should handle /proc/uptime failure gracefully', async () => {
+      // /proc/uptime fails
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'No such file',
+      });
+      // uptime command succeeds with load average
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
-        stdout: 'malformed output that lacks the expected pattern',
+        stdout: ' 10:30:00 up 5 days, 3:21, 2 users, load average: 0.15, 0.10, 0.05\n',
         stderr: '',
       });
 
       const result = await getUptimeInfo();
 
-      expect(result.uptime).toBe('unknown');
+      expect(result.uptime).toBe('unknown'); // formatUptimeString(0)
+      expect(result.uptimeSeconds).toBe(0);
+      expect(result.loadAverage).toEqual([0.15, 0.1, 0.05]);
     });
 
     it('should handle missing load average gracefully', async () => {
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
-        stdout: ' 10:30:00 up 5 days, 3:21, 2 users\n',
+        stdout: '444060.50 123456.78\n',
+        stderr: '',
+      });
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: ' 10:30:00 up 5 days, 3:21, 2 users\n', // No load average
         stderr: '',
       });
 
@@ -335,25 +377,18 @@ describe('system executor', () => {
 
   describe('getCpuInfo', () => {
     it('should parse CPU info correctly', async () => {
-      // Mock for /proc/cpuinfo
+      // Mock for /proc/cpuinfo (only file read by getCpuInfo)
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
         stdout:
-          'processor	: 0\n' +
-          'model name	: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n' +
-          'processor	: 1\n' +
-          'model name	: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n' +
-          'processor	: 2\n' +
-          'model name	: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n' +
-          'processor	: 3\n' +
-          'model name	: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n',
-        stderr: '',
-      });
-
-      // Mock for /proc/stat
-      mockExecuteCommand.mockResolvedValueOnce({
-        exitCode: 0,
-        stdout: 'cpu  1000 100 200 5000 50 10 5 0 0 0\n',
+          'processor\t: 0\n' +
+          'model name\t: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n' +
+          'processor\t: 1\n' +
+          'model name\t: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n' +
+          'processor\t: 2\n' +
+          'model name\t: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n' +
+          'processor\t: 3\n' +
+          'model name\t: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\n',
         stderr: '',
       });
 
@@ -361,8 +396,6 @@ describe('system executor', () => {
 
       expect(result.cores).toBe(4);
       expect(result.model).toContain('Intel');
-      expect(result.usagePercent).toBeGreaterThanOrEqual(0);
-      expect(result.usagePercent).toBeLessThanOrEqual(100);
     });
 
     it('should handle missing cpuinfo gracefully', async () => {
@@ -370,12 +403,6 @@ describe('system executor', () => {
         exitCode: 1,
         stdout: '',
         stderr: 'file not found',
-      });
-
-      mockExecuteCommand.mockResolvedValueOnce({
-        exitCode: 0,
-        stdout: 'cpu  1000 100 200 5000 50 10 5 0 0 0\n',
-        stderr: '',
       });
 
       const result = await getCpuInfo();
@@ -422,6 +449,48 @@ describe('system executor', () => {
     });
   });
 
+  describe('formatUptimeString', () => {
+    it('should format days, hours, and minutes', () => {
+      // 5 days, 3 hours, 21 minutes = 444060 seconds
+      expect(formatUptimeString(444060)).toBe('5d 3h 21m');
+    });
+
+    it('should format hours and minutes only', () => {
+      // 3 hours, 45 minutes = 13500 seconds
+      expect(formatUptimeString(13500)).toBe('3h 45m');
+    });
+
+    it('should format minutes only', () => {
+      // 25 minutes = 1500 seconds
+      expect(formatUptimeString(1500)).toBe('25m');
+    });
+
+    it('should format seconds when less than a minute', () => {
+      expect(formatUptimeString(45)).toBe('45s');
+    });
+
+    it('should return unknown for zero seconds', () => {
+      expect(formatUptimeString(0)).toBe('unknown');
+    });
+
+    it('should return unknown for negative seconds', () => {
+      expect(formatUptimeString(-100)).toBe('unknown');
+    });
+
+    it('should handle exactly one day', () => {
+      expect(formatUptimeString(86400)).toBe('1d');
+    });
+
+    it('should handle exactly one hour', () => {
+      expect(formatUptimeString(3600)).toBe('1h');
+    });
+
+    it('should handle days and minutes without hours', () => {
+      // 2 days, 0 hours, 30 minutes = 172800 + 1800 = 174600
+      expect(formatUptimeString(174600)).toBe('2d 30m');
+    });
+  });
+
   describe('getSystemResources', () => {
     it('should combine all system info', async () => {
       // Use mockImplementation to handle parallel calls based on arguments
@@ -437,10 +506,12 @@ describe('system executor', () => {
             stderr: '',
           });
         }
-        if (cmd === 'cat' && args[0] === '/proc/stat') {
+        if (cmd === 'cat' && args[0] === '/proc/uptime') {
+          // Format: "uptime_seconds.centiseconds idle_seconds"
+          // 444060 = 5 days + 3 hours + 21 minutes
           return Promise.resolve({
             exitCode: 0,
-            stdout: 'cpu  1000 100 200 5000 50 10 5 0 0 0\n',
+            stdout: '444060.50 123456.78\n',
             stderr: '',
           });
         }
@@ -478,7 +549,7 @@ describe('system executor', () => {
       expect(result.memory.bufferCache).toBe(6144);
       expect(result.swap.total).toBe(4096);
       expect(result.processes.total).toBe(3);
-      expect(result.uptime).toBe('5 days, 3:21');
+      expect(result.uptime).toBe('5d 3h 21m'); // Now formatted by formatUptimeString
       expect(result.uptimeSeconds).toBe(444060); // 5 days + 3 hours + 21 min
       expect(result.loadAverage).toEqual([0.15, 0.1, 0.05]);
     });

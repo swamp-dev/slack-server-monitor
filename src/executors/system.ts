@@ -6,7 +6,6 @@ import { executeCommand } from '../utils/shell.js';
 export interface CpuInfo {
   cores: number;
   model: string;
-  usagePercent: number; // Current CPU usage percentage
 }
 
 /**
@@ -184,21 +183,26 @@ export async function getDiskUsage(): Promise<DiskMount[]> {
 
 /**
  * Get system uptime and load average
+ * Uses /proc/uptime for precise uptime seconds, uptime command for load average
  */
 export async function getUptimeInfo(): Promise<{ uptime: string; uptimeSeconds: number; loadAverage: [number, number, number] }> {
-  const result = await executeCommand('uptime', []);
+  // Get precise uptime from /proc/uptime (format: "seconds.centiseconds idle_seconds")
+  const procUptimeResult = await executeCommand('cat', ['/proc/uptime']);
+  let uptimeSeconds = 0;
 
-  if (result.exitCode !== 0) {
-    throw new Error(`Failed to get uptime: ${result.stderr}`);
+  if (procUptimeResult.exitCode === 0) {
+    const firstValue = procUptimeResult.stdout.trim().split(' ')[0];
+    uptimeSeconds = Math.floor(parseFloat(firstValue ?? '0'));
   }
 
-  // Parse uptime output:
-  // 12:34:56 up 5 days, 3:21, 1 user, load average: 0.15, 0.10, 0.09
-  const output = result.stdout.trim();
+  // Get load average from uptime command (more reliable than parsing /proc/loadavg)
+  const uptimeResult = await executeCommand('uptime', []);
 
-  // Extract uptime part
-  const upMatch = /up\s+([^,]+(?:,\s*\d+:\d+)?)/.exec(output);
-  const uptime = upMatch?.[1]?.trim() ?? 'unknown';
+  if (uptimeResult.exitCode !== 0) {
+    throw new Error(`Failed to get uptime: ${uptimeResult.stderr}`);
+  }
+
+  const output = uptimeResult.stdout.trim();
 
   // Extract load average
   const loadMatch = /load average:\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)/.exec(output);
@@ -210,43 +214,37 @@ export async function getUptimeInfo(): Promise<{ uptime: string; uptimeSeconds: 
       ]
     : [0, 0, 0];
 
-  // Calculate uptime in seconds from the string
-  const uptimeSeconds = parseUptimeToSeconds(uptime);
+  // Format uptime as human-readable string from seconds
+  const uptime = formatUptimeString(uptimeSeconds);
 
   return { uptime, uptimeSeconds, loadAverage };
 }
 
 /**
- * Parse uptime string to seconds
- * Examples: "5 days, 3:21" -> 450060, "3:45" -> 13500, "5 min" -> 300
+ * Format uptime seconds to human-readable string
+ * Examples: 444060 -> "5d 3h 21m", 3660 -> "1h 1m", 45 -> "45s"
  */
-function parseUptimeToSeconds(uptime: string): number {
-  let seconds = 0;
+export function formatUptimeString(seconds: number): string {
+  if (seconds <= 0) return 'unknown';
 
-  // Extract days
-  const daysMatch = /(\d+)\s*days?/.exec(uptime);
-  if (daysMatch) {
-    seconds += parseInt(daysMatch[1] ?? '0', 10) * 86400;
-  }
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
 
-  // Extract hours:minutes
-  const timeMatch = /(\d+):(\d+)/.exec(uptime);
-  if (timeMatch) {
-    seconds += parseInt(timeMatch[1] ?? '0', 10) * 3600;
-    seconds += parseInt(timeMatch[2] ?? '0', 10) * 60;
-  }
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${String(days)}d`);
+  if (hours > 0) parts.push(`${String(hours)}h`);
+  if (minutes > 0) parts.push(`${String(minutes)}m`);
+  if (parts.length === 0) parts.push(`${String(secs)}s`);
 
-  // Extract minutes only (e.g., "5 min")
-  const minMatch = /(\d+)\s*min/.exec(uptime);
-  if (minMatch && !timeMatch) {
-    seconds += parseInt(minMatch[1] ?? '0', 10) * 60;
-  }
-
-  return seconds;
+  return parts.join(' ');
 }
 
 /**
  * Get CPU information
+ * Note: Does not include real-time CPU usage as that requires delta calculations.
+ * Use load average for CPU pressure indication instead.
  */
 export async function getCpuInfo(): Promise<CpuInfo> {
   // Get CPU model and core count from /proc/cpuinfo
@@ -267,36 +265,25 @@ export async function getCpuInfo(): Promise<CpuInfo> {
     }
   }
 
-  // Get CPU usage from top (one iteration, batch mode)
-  // Use stat instead for more reliable CPU usage
-  const statResult = await executeCommand('cat', ['/proc/stat']);
-
-  let usagePercent = 0;
-  if (statResult.exitCode === 0) {
-    const cpuLine = statResult.stdout.split('\n').find(l => l.startsWith('cpu '));
-    if (cpuLine) {
-      // cpu user nice system idle iowait irq softirq steal guest guest_nice
-      const parts = cpuLine.split(/\s+/).slice(1).map(n => parseInt(n, 10));
-      const idle = parts[3] ?? 0;
-      const iowait = parts[4] ?? 0;
-      const total = parts.reduce((a, b) => a + b, 0);
-      const idleTotal = idle + iowait;
-      usagePercent = total > 0 ? Math.round(((total - idleTotal) / total) * 100) : 0;
-    }
+  // Clean up model name: normalize whitespace, truncate with ellipsis if needed
+  let cleanModel = model.replace(/\s+/g, ' ');
+  if (cleanModel.length > 60) {
+    cleanModel = cleanModel.slice(0, 57) + '...';
   }
 
   return {
-    cores: cores || 1,
-    model: model.replace(/\s+/g, ' ').slice(0, 50), // Truncate long model names
-    usagePercent,
+    cores: cores || 1, // Default to 1 if parsing fails
+    model: cleanModel,
   };
 }
 
 /**
  * Get process information
+ * Process states: R=running, S=sleeping, D=disk sleep, I=idle,
+ *                 Z=zombie, T=stopped, t=tracing stop
  */
 export async function getProcessInfo(): Promise<ProcessInfo> {
-  const result = await executeCommand('ps', ['ax', '-o', 'stat']);
+  const result = await executeCommand('ps', ['-eo', 'stat']);
 
   if (result.exitCode !== 0) {
     return { total: 0, running: 0, sleeping: 0, zombie: 0 };
@@ -313,14 +300,18 @@ export async function getProcessInfo(): Promise<ProcessInfo> {
       case 'R':
         running++;
         break;
-      case 'S':
-      case 'D':
-      case 'I':
+      case 'S': // Interruptible sleep
+      case 'D': // Uninterruptible disk sleep
+      case 'I': // Idle kernel thread
+      case 'T': // Stopped by job control
+      case 't': // Stopped by debugger
         sleeping++;
         break;
-      case 'Z':
+      case 'Z': // Zombie
+      case 'X': // Dead (should never be seen)
         zombie++;
         break;
+      // Other states (W=paging) are rare and can be ignored
     }
   }
 
