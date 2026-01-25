@@ -289,6 +289,16 @@ export function registerThreadHandler(app: App): void {
   const claudeConfig = config.claude;
 
   app.event('message', async ({ event, client }) => {
+    // Debug logging: Log all message events to diagnose threading issues
+    logger.debug('Message event received', {
+      hasThreadTs: 'thread_ts' in event,
+      threadTs: 'thread_ts' in event ? event.thread_ts : undefined,
+      channel: event.channel,
+      hasBotId: 'bot_id' in event,
+      hasSubtype: 'subtype' in event,
+      subtype: 'subtype' in event ? event.subtype : undefined,
+    });
+
     // Only handle thread replies (messages with thread_ts different from ts)
     // Type guard for message event
     if (!('thread_ts' in event) || !event.thread_ts) {
@@ -320,13 +330,17 @@ export function registerThreadHandler(app: App): void {
 
     if (!conversation) {
       // Not a conversation we're tracking
+      logger.debug('Thread reply not in tracked conversation', { threadTs, channelId });
       return;
     }
 
     // Check authorization
     if (!config.authorization.userIds.includes(userId)) {
+      logger.debug('Thread reply from unauthorized user', { userId, threadTs });
       return;
     }
+
+    logger.debug('Processing thread reply', { userId, threadTs, channelId, textLength: text.length });
 
     // Check daily budget first (before consuming a rate limit slot)
     if (store.isDailyBudgetExceeded(claudeConfig.dailyTokenLimit)) {

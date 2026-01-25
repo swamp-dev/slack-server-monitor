@@ -301,6 +301,61 @@ Set `CLAUDE_CONTEXT_DIR` to provide Claude with infrastructure documentation:
 - **Token budgets** - Daily limits prevent runaway API costs
 - **Tool call limits** - Prevents infinite loops (max 40 per turn)
 
+## Troubleshooting
+
+### Thread Replies Not Working
+
+If the bot responds to `/ask` commands but ignores thread replies, check the Slack App event subscriptions:
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps)
+2. Select your Slack Server Monitor app
+3. Navigate to **Event Subscriptions** in the left sidebar
+4. Ensure **Enable Events** is ON
+5. Under **Subscribe to bot events**, add these events if missing:
+   - `message.channels` - Messages in public channels
+   - `message.groups` - Messages in private channels
+   - `message.im` - Direct messages
+6. Click **Save Changes**
+7. **Reinstall the app** if prompted (required for scope changes)
+
+To diagnose, set `LOG_LEVEL=debug` and check logs for "Message event received" entries.
+
+### `/context` Command Shows "dispatch_failed"
+
+This error occurs when the `/context` slash command is registered in Slack but the bot doesn't register a handler for it. The bot only registers the `/context` handler when `CLAUDE_CONTEXT_OPTIONS` is configured.
+
+**Fix:** Add context options to your `.env`:
+
+```bash
+CLAUDE_CONTEXT_OPTIONS=homelab:/opt/homelab,gdrive:/mnt/storage/shares/family/GoogleDrive-Business
+CLAUDE_ALLOWED_DIRS=/root/ansible,/opt/stacks,/mnt/storage/shares/family/GoogleDrive-Business
+```
+
+Then restart the bot:
+
+```bash
+pm2 restart slack-server-monitor
+# or
+docker restart slack-server-monitor
+```
+
+### Bot Not Responding to Commands
+
+1. **Check authorization** - Ensure your Slack user ID is in `AUTHORIZED_USER_IDS`
+2. **Check channel restrictions** - If `AUTHORIZED_CHANNEL_IDS` is set, commands only work in those channels
+3. **Check rate limiting** - Default is 10 commands per minute per user
+4. **Check logs** - Set `LOG_LEVEL=debug` for verbose output
+
+### Daily Budget Exceeded
+
+The API backend tracks token usage and stops responding when `CLAUDE_DAILY_TOKEN_LIMIT` is reached. The CLI backend does not track tokens and is unaffected by this limit.
+
+**Fix:** Either wait until the next day, increase the limit, or switch to CLI backend:
+
+```bash
+CLAUDE_BACKEND=cli
+```
+
 ## License
 
 MIT
