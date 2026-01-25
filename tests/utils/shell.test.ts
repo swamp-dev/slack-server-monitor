@@ -186,11 +186,19 @@ describe('shell security', () => {
 
     describe('aws subcommand validation', () => {
       it('should allow read-only aws s3 commands', async () => {
-        await expect(executeCommand('aws', ['s3', 'ls'])).resolves.toBeDefined();
-        await expect(
-          executeCommand('aws', ['s3', 'ls', 's3://bucket-name'])
-        ).resolves.toBeDefined();
-      });
+        // Note: These tests verify security validation passes, not that AWS executes successfully.
+        // The command may fail (aws not installed, no credentials, network issues) but
+        // should not throw ShellSecurityError.
+        const result1 = await executeCommand('aws', ['s3', 'ls']);
+        expect(result1).toBeDefined();
+        expect(result1).toHaveProperty('stdout');
+        expect(result1).toHaveProperty('stderr');
+        expect(result1).toHaveProperty('exitCode');
+
+        const result2 = await executeCommand('aws', ['s3', 'ls', 's3://bucket-name']);
+        expect(result2).toBeDefined();
+        expect(result2).toHaveProperty('exitCode');
+      }, 10000); // Longer timeout for potential network operations
 
       it('should reject dangerous aws commands', async () => {
         await expect(executeCommand('aws', ['s3', 'rm', 's3://bucket/file'])).rejects.toThrow(
