@@ -5,6 +5,7 @@ import { registerResourcesCommand, registerDiskCommand } from './resources.js';
 import { registerNetworkCommand } from './network.js';
 import { registerAskCommand, registerThreadHandler } from './ask.js';
 import { registerContextCommand } from './context.js';
+import { registerSessionsCommand } from './sessions.js';
 import { registerSecurityCommand } from './security.js';
 import { registerSslCommand } from './ssl.js';
 import { registerBackupsCommand } from './backups.js';
@@ -36,6 +37,7 @@ export async function registerCommands(app: App): Promise<void> {
   await registerAskCommand(app);
   registerThreadHandler(app);
   registerContextCommand(app);
+  registerSessionsCommand(app);
 
   logger.info('Commands registered successfully');
 }

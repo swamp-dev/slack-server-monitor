@@ -148,4 +148,159 @@ describe('ConversationStore', () => {
       expect(conversation).not.toBeNull();
     });
   });
+
+  describe('session queries', () => {
+    it('listRecentSessions returns sessions ordered by updated_at desc', () => {
+      // Create multiple conversations
+      store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [{ role: 'user', content: 'First' }]);
+      store.createConversation('2222.0002', 'C123ABC', 'U789GHI', [{ role: 'user', content: 'Second' }]);
+      store.createConversation('3333.0003', 'C123ABC', 'U456DEF', [{ role: 'user', content: 'Third' }]);
+
+      const sessions = store.listRecentSessions();
+
+      expect(sessions).toHaveLength(3);
+      // Most recent first
+      expect(sessions[0]?.threadTs).toBe('3333.0003');
+      expect(sessions[1]?.threadTs).toBe('2222.0002');
+      expect(sessions[2]?.threadTs).toBe('1111.0001');
+    });
+
+    it('listRecentSessions filters by userId', () => {
+      store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+      store.createConversation('3333.0003', 'C123ABC', 'U456DEF', []);
+
+      const sessions = store.listRecentSessions(20, 'U456DEF');
+
+      expect(sessions).toHaveLength(2);
+      expect(sessions.every((s) => s.userId === 'U456DEF')).toBe(true);
+    });
+
+    it('listRecentSessions includes tool call counts', () => {
+      const conversation = store.createConversation('1234.5678', 'C123ABC', 'U456DEF', []);
+      store.logToolCall(conversation.id, 'get_container_status', { name: 'nginx' }, 'output1');
+      store.logToolCall(conversation.id, 'get_container_logs', { name: 'nginx' }, 'output2');
+      store.logToolCall(conversation.id, 'get_system_resources', {}, 'output3');
+
+      const sessions = store.listRecentSessions();
+
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.toolCallCount).toBe(3);
+    });
+
+    it('listRecentSessions includes message counts', () => {
+      store.createConversation('1234.5678', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi' },
+        { role: 'user', content: 'Status?' },
+      ]);
+
+      const sessions = store.listRecentSessions();
+
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.messageCount).toBe(3);
+    });
+
+    it('listRecentSessions marks active sessions correctly', () => {
+      // Just-created sessions should be active (within 5 minutes)
+      store.createConversation('1234.5678', 'C123ABC', 'U456DEF', []);
+
+      const sessions = store.listRecentSessions();
+
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.isActive).toBe(true);
+    });
+
+    it('listRecentSessions returns empty array when no sessions', () => {
+      const sessions = store.listRecentSessions();
+
+      expect(sessions).toHaveLength(0);
+    });
+
+    it('getSessionDetail returns null for non-existent session', () => {
+      const detail = store.getSessionDetail('nonexistent', 'C123ABC');
+
+      expect(detail).toBeNull();
+    });
+
+    it('getSessionDetail includes tool call history', () => {
+      const conversation = store.createConversation('1234.5678', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Check nginx' },
+      ]);
+      store.logToolCall(conversation.id, 'get_container_status', { container_name: 'nginx' }, 'running');
+      store.logToolCall(conversation.id, 'get_container_logs', { container_name: 'nginx', lines: 50 }, 'log output');
+
+      const detail = store.getSessionDetail('1234.5678', 'C123ABC');
+
+      expect(detail).not.toBeNull();
+      expect(detail?.recentToolCalls).toHaveLength(2);
+      expect(detail?.recentToolCalls[0]?.toolName).toBe('get_container_logs'); // Most recent first
+      expect(detail?.recentToolCalls[1]?.toolName).toBe('get_container_status');
+    });
+
+    it('getSessionStats calculates aggregates correctly', () => {
+      // Create sessions with messages and tool calls
+      const conv1 = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi' },
+      ]);
+      store.logToolCall(conv1.id, 'get_container_status', {}, 'output');
+
+      const conv2 = store.createConversation('2222.0002', 'C123ABC', 'U789GHI', [
+        { role: 'user', content: 'Check logs' },
+      ]);
+      store.logToolCall(conv2.id, 'get_container_logs', {}, 'output');
+      store.logToolCall(conv2.id, 'get_container_logs', {}, 'output');
+
+      const stats = store.getSessionStats();
+
+      expect(stats.totalSessions).toBe(2);
+      expect(stats.activeSessions).toBe(2); // Both recently created
+      expect(stats.totalMessages).toBe(3); // 2 + 1
+      expect(stats.totalToolCalls).toBe(3); // 1 + 2
+    });
+
+    it('getSessionStats returns top tools used', () => {
+      const conv1 = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      store.logToolCall(conv1.id, 'get_container_logs', {}, 'out');
+      store.logToolCall(conv1.id, 'get_container_logs', {}, 'out');
+      store.logToolCall(conv1.id, 'get_container_logs', {}, 'out');
+      store.logToolCall(conv1.id, 'get_container_status', {}, 'out');
+      store.logToolCall(conv1.id, 'get_container_status', {}, 'out');
+      store.logToolCall(conv1.id, 'run_command', {}, 'out');
+
+      const stats = store.getSessionStats();
+
+      expect(stats.topTools).toHaveLength(3);
+      expect(stats.topTools[0]).toEqual({ name: 'get_container_logs', count: 3 });
+      expect(stats.topTools[1]).toEqual({ name: 'get_container_status', count: 2 });
+      expect(stats.topTools[2]).toEqual({ name: 'run_command', count: 1 });
+    });
+
+    it('getToolCalls retrieves tool calls for a conversation', () => {
+      const conversation = store.createConversation('1234.5678', 'C123ABC', 'U456DEF', []);
+      store.logToolCall(conversation.id, 'tool1', { arg: 'value1' }, 'output1');
+      store.logToolCall(conversation.id, 'tool2', { arg: 'value2' }, 'output2');
+
+      const toolCalls = store.getToolCalls(conversation.id);
+
+      expect(toolCalls).toHaveLength(2);
+      expect(toolCalls[0]?.toolName).toBe('tool2'); // Most recent first
+      expect(toolCalls[0]?.input).toEqual({ arg: 'value2' });
+      expect(toolCalls[1]?.toolName).toBe('tool1');
+    });
+
+    it('getToolCalls respects limit parameter', () => {
+      const conversation = store.createConversation('1234.5678', 'C123ABC', 'U456DEF', []);
+      store.logToolCall(conversation.id, 'tool1', {}, 'out');
+      store.logToolCall(conversation.id, 'tool2', {}, 'out');
+      store.logToolCall(conversation.id, 'tool3', {}, 'out');
+
+      const toolCalls = store.getToolCalls(conversation.id, 2);
+
+      expect(toolCalls).toHaveLength(2);
+      expect(toolCalls[0]?.toolName).toBe('tool3');
+      expect(toolCalls[1]?.toolName).toBe('tool2');
+    });
+  });
 });

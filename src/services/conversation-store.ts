@@ -54,11 +54,47 @@ export interface ToolCallLog {
 }
 
 /**
+ * Summary of a session for list views
+ */
+export interface SessionSummary {
+  id: number;
+  threadTs: string;
+  channelId: string;
+  userId: string;
+  messageCount: number;
+  toolCallCount: number;
+  createdAt: number;
+  updatedAt: number;
+  isActive: boolean; // updatedAt within last 5 minutes
+}
+
+/**
+ * Detailed view of a session
+ */
+export interface SessionDetail extends SessionSummary {
+  recentToolCalls: ToolCallLog[];
+}
+
+/**
+ * Aggregate statistics across sessions
+ */
+export interface SessionStats {
+  totalSessions: number;
+  activeSessions: number;
+  totalMessages: number;
+  totalToolCalls: number;
+  topTools: { name: string; count: number }[];
+}
+
+/**
  * SQLite-based conversation store
  */
 export class ConversationStore {
   private db: Database.Database;
   private ttlHours: number;
+
+  /** A session is considered "active" if updated within this time */
+  private static readonly ACTIVE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
   constructor(dbPath: string, ttlHours = 24) {
     this.ttlHours = ttlHours;
@@ -295,6 +331,194 @@ export class ConversationStore {
     }
 
     return result.changes;
+  }
+
+  /**
+   * List recent sessions with metrics
+   *
+   * @param limit - Maximum number of sessions to return (default: 20)
+   * @param userId - Filter to sessions started by this user (optional)
+   */
+  listRecentSessions(limit = 20, userId?: string): SessionSummary[] {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000; // Last 24 hours
+    const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
+
+    // Use LEFT JOIN instead of correlated subquery to avoid N+1 queries
+    const rows = this.db
+      .prepare(`
+        SELECT
+          c.id, c.thread_ts, c.channel_id, c.user_id,
+          c.messages, c.created_at, c.updated_at,
+          COUNT(tc.id) as tool_call_count
+        FROM conversations c
+        LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
+        WHERE ($userId IS NULL OR c.user_id = $userId)
+          AND c.updated_at > $cutoff
+        GROUP BY c.id
+        ORDER BY c.updated_at DESC, c.id DESC
+        LIMIT $limit
+      `)
+      .all({
+        userId: userId ?? null,
+        cutoff,
+        limit,
+      }) as {
+        id: number;
+        thread_ts: string;
+        channel_id: string;
+        user_id: string;
+        messages: string;
+        created_at: number;
+        updated_at: number;
+        tool_call_count: number;
+      }[];
+
+    return rows.map((row) => {
+      const messages = JSON.parse(row.messages) as ConversationMessage[];
+      return {
+        id: row.id,
+        threadTs: row.thread_ts,
+        channelId: row.channel_id,
+        userId: row.user_id,
+        messageCount: messages.length,
+        toolCallCount: row.tool_call_count,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        isActive: row.updated_at > activeThreshold,
+      };
+    });
+  }
+
+  /**
+   * Get detailed view of a session
+   *
+   * @param threadTs - Thread timestamp
+   * @param channelId - Channel ID
+   */
+  getSessionDetail(threadTs: string, channelId: string): SessionDetail | null {
+    const conversation = this.getConversation(threadTs, channelId);
+    if (!conversation) {
+      return null;
+    }
+
+    const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
+    const toolCalls = this.getToolCalls(conversation.id, 10);
+
+    // Get tool call count
+    const countRow = this.db
+      .prepare('SELECT COUNT(*) as count FROM tool_calls WHERE conversation_id = ?')
+      .get(conversation.id) as { count: number };
+
+    return {
+      id: conversation.id,
+      threadTs: conversation.threadTs,
+      channelId: conversation.channelId,
+      userId: conversation.userId,
+      messageCount: conversation.messages.length,
+      toolCallCount: countRow.count,
+      createdAt: conversation.createdAt,
+      updatedAt: conversation.updatedAt,
+      isActive: conversation.updatedAt > activeThreshold,
+      recentToolCalls: toolCalls,
+    };
+  }
+
+  /**
+   * Get aggregate statistics across sessions
+   *
+   * @param hours - Time window in hours (default: 24)
+   */
+  getSessionStats(hours = 24): SessionStats {
+    const cutoff = Date.now() - hours * 60 * 60 * 1000;
+    const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
+
+    // Get session counts and message totals
+    const sessionStats = this.db
+      .prepare(`
+        SELECT
+          COUNT(*) as total_sessions,
+          SUM(CASE WHEN updated_at > ? THEN 1 ELSE 0 END) as active_sessions
+        FROM conversations
+        WHERE updated_at > ?
+      `)
+      .get(activeThreshold, cutoff) as {
+        total_sessions: number;
+        active_sessions: number;
+      };
+
+    // Get total messages using SQLite's json_array_length (avoids fetching full JSON blobs)
+    const messageStats = this.db
+      .prepare(`
+        SELECT COALESCE(SUM(json_array_length(messages)), 0) as total_messages
+        FROM conversations
+        WHERE updated_at > ?
+      `)
+      .get(cutoff) as { total_messages: number };
+
+    const totalMessages = messageStats.total_messages;
+
+    // Get tool call count
+    const toolCallStats = this.db
+      .prepare(`
+        SELECT COUNT(*) as count
+        FROM tool_calls tc
+        INNER JOIN conversations c ON tc.conversation_id = c.id
+        WHERE c.updated_at > ?
+      `)
+      .get(cutoff) as { count: number };
+
+    // Get top tools
+    const topToolsRows = this.db
+      .prepare(`
+        SELECT tool_name as name, COUNT(*) as count
+        FROM tool_calls tc
+        INNER JOIN conversations c ON tc.conversation_id = c.id
+        WHERE c.updated_at > ?
+        GROUP BY tool_name
+        ORDER BY count DESC
+        LIMIT 5
+      `)
+      .all(cutoff) as { name: string; count: number }[];
+
+    return {
+      totalSessions: sessionStats.total_sessions,
+      activeSessions: sessionStats.active_sessions,
+      totalMessages,
+      totalToolCalls: toolCallStats.count,
+      topTools: topToolsRows,
+    };
+  }
+
+  /**
+   * Get tool calls for a conversation
+   *
+   * @param conversationId - Conversation ID
+   * @param limit - Maximum number of tool calls (default: all)
+   */
+  getToolCalls(conversationId: number, limit?: number): ToolCallLog[] {
+    const query = limit
+      ? 'SELECT * FROM tool_calls WHERE conversation_id = ? ORDER BY timestamp DESC, id DESC LIMIT ?'
+      : 'SELECT * FROM tool_calls WHERE conversation_id = ? ORDER BY timestamp DESC, id DESC';
+
+    const params = limit ? [conversationId, limit] : [conversationId];
+
+    const rows = this.db.prepare(query).all(...params) as {
+      id: number;
+      conversation_id: number;
+      tool_name: string;
+      input: string;
+      output_preview: string;
+      timestamp: number;
+    }[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      conversationId: row.conversation_id,
+      toolName: row.tool_name,
+      input: JSON.parse(row.input) as Record<string, unknown>,
+      outputPreview: row.output_preview,
+      timestamp: row.timestamp,
+    }));
   }
 
   /**

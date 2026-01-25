@@ -406,3 +406,36 @@ export function timestampFooter(date: Date = new Date()): ContextBlock {
   });
   return context(`:clock1: Last updated: ${timeStr}`);
 }
+
+/**
+ * Format relative time from a timestamp
+ * Examples: "2m ago", "1h ago", "3d ago", "just now"
+ *
+ * @param timestamp - Unix timestamp in milliseconds
+ */
+export function relativeTime(timestamp: number): string {
+  const now = Date.now();
+  const diffMs = now - timestamp;
+
+  if (diffMs < 0) return 'just now';
+
+  const diffSeconds = Math.floor(diffMs / 1000);
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSeconds < 60) return 'just now';
+  if (diffMinutes < 60) return `${String(diffMinutes)}m ago`;
+  if (diffHours < 24) return `${String(diffHours)}h ago`;
+  return `${String(diffDays)}d ago`;
+}
+
+/**
+ * Create a Slack thread deep link
+ *
+ * @param channelId - Slack channel ID
+ * @param threadTs - Thread timestamp
+ */
+export function threadLink(channelId: string, threadTs: string): string {
+  return `slack://channel?team=&id=${channelId}&thread_ts=${threadTs}`;
+}
