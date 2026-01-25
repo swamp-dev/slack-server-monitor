@@ -250,9 +250,9 @@ But I continue anyway.`;
     // These tests verify critical implementation requirements via source inspection.
     // See git commit for full bug analysis: CLI hangs without stdin.end().
 
-    it('must close stdin immediately after spawn to prevent CLI hang', () => {
-      const fs = require('fs');
-      const path = require('path');
+    it('must close stdin immediately after spawn to prevent CLI hang', async () => {
+      const fs = await import('fs');
+      const path = await import('path');
       const sourceFile = path.join(__dirname, '../../../src/services/providers/cli-provider.ts');
       const source = fs.readFileSync(sourceFile, 'utf-8');
 
@@ -269,9 +269,9 @@ But I continue anyway.`;
       expect(onDataIndex).toBeGreaterThan(stdinEndIndex);
     });
 
-    it('must have timeout configured as safety net', () => {
-      const fs = require('fs');
-      const path = require('path');
+    it('must have timeout configured as safety net', async () => {
+      const fs = await import('fs');
+      const path = await import('path');
       const sourceFile = path.join(__dirname, '../../../src/services/providers/cli-provider.ts');
       const source = fs.readFileSync(sourceFile, 'utf-8');
 

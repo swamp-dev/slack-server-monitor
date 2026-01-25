@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSlackError, type ParsedSlackError } from '../../src/utils/slack-errors.js';
+import { parseSlackError } from '../../src/utils/slack-errors.js';
 
 describe('parseSlackError', () => {
   describe('missing_scope errors', () => {

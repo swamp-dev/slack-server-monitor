@@ -264,6 +264,12 @@ describe('enhanced output helpers', () => {
       expect(result).toBe('`a`, `b`, `c`');
       expect(result).not.toContain('more');
     });
+
+    it('should escape backticks in items to prevent markdown breaking', () => {
+      const result = compactList(['item`with`backticks', 'normal']);
+      expect(result).toBe("`item'with'backticks`, `normal`");
+      expect(result).not.toContain('``');
+    });
   });
 
   describe('statsBar', () => {
@@ -366,6 +372,15 @@ describe('enhanced output helpers', () => {
     it('should handle empty array', () => {
       const rows = compactStatusRow([]);
       expect(rows).toHaveLength(0);
+    });
+
+    it('should cap items to prevent Slack block overflow', () => {
+      const items = Array(500)
+        .fill(null)
+        .map((_, i) => ({ name: `item${String(i)}`, status: 'ok' as const }));
+      const rows = compactStatusRow(items, 5);
+      // Should cap at 200 items = 40 rows (200/5)
+      expect(rows.length).toBeLessThanOrEqual(40);
     });
   });
 
