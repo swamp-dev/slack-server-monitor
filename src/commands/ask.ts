@@ -143,17 +143,18 @@ export async function registerAskCommand(app: App): Promise<void> {
       return;
     }
 
-    // Check and record rate limit atomically
-    const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
-    if (!checkAndRecordClaudeRequest(userId)) {
-      await respond({
-        blocks: [errorBlock(`Rate limit exceeded. Please wait before asking another question.`)],
-        response_type: 'ephemeral',
-      });
-      return;
-    }
-
     try {
+      // Initialize conversation store (can fail on DB issues)
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+
+      // Check and record rate limit atomically
+      if (!checkAndRecordClaudeRequest(userId)) {
+        await respond({
+          blocks: [errorBlock(`Rate limit exceeded. Please wait before asking another question.`)],
+          response_type: 'ephemeral',
+        });
+        return;
+      }
       // Post initial message (visible to user)
       const initialMessage = await client.chat.postMessage({
         channel: channelId,
@@ -255,10 +256,20 @@ export async function registerAskCommand(app: App): Promise<void> {
         question,
       });
 
-      await respond({
-        blocks: [errorBlock(`Failed to get response: ${displayMessage}`)],
-        response_type: 'ephemeral',
-      });
+      try {
+        await respond({
+          blocks: [errorBlock(`Failed to get response: ${displayMessage}`)],
+          response_type: 'ephemeral',
+        });
+      } catch (respondErr) {
+        // Log but don't rethrow - we've already logged the original error
+        logger.error('Failed to send error response to user', {
+          originalError: rawMessage,
+          respondError: respondErr instanceof Error ? respondErr.message : String(respondErr),
+          userId,
+          channelId,
+        });
+      }
     }
   });
 
@@ -311,35 +322,36 @@ export function registerThreadHandler(app: App): void {
       return;
     }
 
-    // Check if this thread has a conversation with us
-    const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
-    const conversation = store.getConversation(threadTs, channelId);
-
-    if (!conversation) {
-      // Not a conversation we're tracking
-      logger.debug('Thread reply not in tracked conversation', { threadTs, channelId });
-      return;
-    }
-
-    // Check authorization
+    // Check authorization first (doesn't need DB)
     if (!config.authorization.userIds.includes(userId)) {
       logger.debug('Thread reply from unauthorized user', { userId, threadTs });
       return;
     }
 
-    logger.debug('Processing thread reply', { userId, threadTs, channelId, textLength: text.length });
-
-    // Check and record rate limit atomically
-    if (!checkAndRecordClaudeRequest(userId)) {
-      await client.chat.postMessage({
-        channel: channelId,
-        thread_ts: threadTs,
-        text: 'Rate limit exceeded. Please wait before asking another question.',
-      });
-      return;
-    }
-
     try {
+      // Initialize conversation store (can fail on DB issues)
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+
+      // Check if this thread has a conversation with us
+      const conversation = store.getConversation(threadTs, channelId);
+
+      if (!conversation) {
+        // Not a conversation we're tracking
+        logger.debug('Thread reply not in tracked conversation', { threadTs, channelId });
+        return;
+      }
+
+      logger.debug('Processing thread reply', { userId, threadTs, channelId, textLength: text.length });
+
+      // Check and record rate limit atomically
+      if (!checkAndRecordClaudeRequest(userId)) {
+        await client.chat.postMessage({
+          channel: channelId,
+          thread_ts: threadTs,
+          text: 'Rate limit exceeded. Please wait before asking another question.',
+        });
+        return;
+      }
       // Post thinking message
       const thinkingMsg = await client.chat.postMessage({
         channel: channelId,
@@ -432,11 +444,22 @@ export function registerThreadHandler(app: App): void {
         threadTs,
       });
 
-      await client.chat.postMessage({
-        channel: channelId,
-        thread_ts: threadTs,
-        text: `Sorry, I encountered an error: ${displayMessage}`,
-      });
+      try {
+        await client.chat.postMessage({
+          channel: channelId,
+          thread_ts: threadTs,
+          text: `Sorry, I encountered an error: ${displayMessage}`,
+        });
+      } catch (postErr) {
+        // Log but don't rethrow - we've already logged the original error
+        logger.error('Failed to send error response in thread', {
+          originalError: rawMessage,
+          postError: postErr instanceof Error ? postErr.message : String(postErr),
+          userId,
+          channelId,
+          threadTs,
+        });
+      }
     }
   });
 
