@@ -65,17 +65,18 @@ describe('backups executor', () => {
       expect(['ok', 'warn', 'error']).toContain(result.status);
     });
 
-    it('should return warn status for backups older than 24h', async () => {
+    it('should return warn status for backups older than 24h but less than 48h', async () => {
+      // Fake time is June 15 12:00, so June 14 06:00 is 30 hours ago (between 24-48h = warn)
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
         stdout: `total 12345
--rw-r--r-- 1 root root 10485760 Jun 13 10:00 backup-2024-06-13.tar.gz`,
+-rw-r--r-- 1 root root 10485760 Jun 14 06:00 backup-2024-06-14.tar.gz`,
         stderr: '',
       });
 
       const result = await getLocalBackupStatus('/opt/backups');
 
-      expect(result.status).toBe('warn'); // 2+ days old
+      expect(result.status).toBe('warn'); // 30 hours old (24h < age < 48h)
     });
 
     it('should return error status for backups older than 48h', async () => {

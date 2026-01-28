@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { execFile } from 'child_process';
 import {
   executeCommand,
   isCommandAllowed,
@@ -6,7 +7,47 @@ import {
   ShellSecurityError,
 } from '../../src/utils/shell.js';
 
+// Mock child_process.execFile to avoid actually executing commands
+// This allows us to test security validation without side effects
+vi.mock('child_process', () => ({
+  execFile: vi.fn(),
+}));
+
+// Helper to setup mock for successful command execution
+function mockSuccessfulExecution() {
+  const mockExecFile = vi.mocked(execFile);
+  mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+    // Simulate successful execution
+    if (typeof callback === 'function') {
+      callback(null, 'mock stdout', 'mock stderr');
+    }
+    return {} as ReturnType<typeof execFile>;
+  });
+}
+
+// Helper to setup mock for command not found
+function mockCommandNotFound() {
+  const mockExecFile = vi.mocked(execFile);
+  mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+    const error = new Error('spawn ENOENT') as Error & { code: string };
+    error.code = 'ENOENT';
+    if (typeof callback === 'function') {
+      callback(error, '', '');
+    }
+    return {} as ReturnType<typeof execFile>;
+  });
+}
+
 describe('shell security', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSuccessfulExecution();
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
   describe('command allowlist', () => {
     it('should allow commands in the allowlist', () => {
       expect(isCommandAllowed('docker')).toBe(true);
@@ -125,7 +166,7 @@ describe('shell security', () => {
       // This enables Docker --format templates like {{.Names}}
 
       it('should allow safe arguments', async () => {
-        // These should not throw (though may fail at execution if command not found)
+        // These should not throw (mocked execution)
         await expect(executeCommand('docker', ['ps', '-a'])).resolves.toBeDefined();
         await expect(executeCommand('docker', ['ps', '--format', 'table'])).resolves.toBeDefined();
       });
@@ -133,7 +174,7 @@ describe('shell security', () => {
 
     describe('docker subcommand validation', () => {
       it('should allow read-only docker subcommands', async () => {
-        // These should not throw security errors
+        // These should not throw security errors (mocked execution)
         await expect(executeCommand('docker', ['ps'])).resolves.toBeDefined();
         await expect(executeCommand('docker', ['ps', '-a'])).resolves.toBeDefined();
         await expect(executeCommand('docker', ['inspect', 'container-name'])).resolves.toBeDefined();
@@ -186,10 +227,24 @@ describe('shell security', () => {
 
     describe('aws subcommand validation', () => {
       it('should allow read-only aws s3 commands', async () => {
-        await expect(executeCommand('aws', ['s3', 'ls'])).resolves.toBeDefined();
-        await expect(
-          executeCommand('aws', ['s3', 'ls', 's3://bucket-name'])
-        ).resolves.toBeDefined();
+        // Security validation passes, mocked execution succeeds
+        const result1 = await executeCommand('aws', ['s3', 'ls']);
+        expect(result1).toBeDefined();
+        expect(result1).toHaveProperty('stdout');
+        expect(result1).toHaveProperty('stderr');
+        expect(result1).toHaveProperty('exitCode');
+
+        const result2 = await executeCommand('aws', ['s3', 'ls', 's3://bucket-name']);
+        expect(result2).toBeDefined();
+        expect(result2).toHaveProperty('exitCode');
+      });
+
+      it('should handle command not found gracefully', async () => {
+        mockCommandNotFound();
+        // Even if aws isn't installed, security validation passes and we get a result
+        const result = await executeCommand('aws', ['s3', 'ls']);
+        expect(result).toBeDefined();
+        expect(result.exitCode).not.toBe(0);
       });
 
       it('should reject dangerous aws commands', async () => {
