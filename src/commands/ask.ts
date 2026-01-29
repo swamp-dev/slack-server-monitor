@@ -8,6 +8,7 @@ import { getContext, getContextByAlias, type LoadedContext } from '../services/c
 import { logger } from '../utils/logger.js';
 import { parseSlackError } from '../utils/slack-errors.js';
 import { section, context as contextBlock, error as errorBlock } from '../formatters/blocks.js';
+import { scrubSensitiveData } from '../formatters/scrub.js';
 
 /**
  * Rate limiter for Claude requests (separate from global rate limit)
@@ -147,22 +148,21 @@ export async function registerAskCommand(app: App): Promise<void> {
       return;
     }
 
+    // Check rate limit first (cheap in-memory check) before expensive DB operations
+    if (!checkAndRecordClaudeRequest(userId)) {
+      logger.info('Claude rate limit exceeded', { userId });
+      await respond({
+        blocks: [errorBlock(`Rate limit exceeded. Please wait before asking another question.`)],
+        response_type: 'ephemeral',
+      });
+      return;
+    }
+
     try {
       // Initialize conversation store (can fail on DB issues)
       logger.debug('Initializing conversation store', { dbPath: claudeConfig.dbPath });
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
       logger.debug('Conversation store initialized');
-
-      // Check and record rate limit atomically
-      if (!checkAndRecordClaudeRequest(userId)) {
-        logger.info('Claude rate limit exceeded', { userId });
-        await respond({
-          blocks: [errorBlock(`Rate limit exceeded. Please wait before asking another question.`)],
-          response_type: 'ephemeral',
-        });
-        return;
-      }
-      logger.debug('Rate limit check passed');
 
       // Post initial message (visible to user)
       logger.debug('Posting initial "thinking" message', { channelId });
@@ -265,7 +265,7 @@ export async function registerAskCommand(app: App): Promise<void> {
         errorType: parsed.type,
         userId,
         channelId,
-        question: question.slice(0, 100),
+        question: scrubSensitiveData(question.slice(0, 100)),
       });
 
       // Try multiple methods to ensure user sees the error
@@ -293,7 +293,7 @@ export async function registerAskCommand(app: App): Promise<void> {
             text: `Sorry, I encountered an error: ${displayMessage}`,
           });
           errorSent = true;
-          logger.debug('Error response sent via postMessage');
+          logger.info('Error sent via fallback method', { method: 'postMessage', userId, channelId });
         } catch (postErr) {
           logger.error('Failed to send error via postMessage', {
             postError: postErr instanceof Error ? postErr.message : String(postErr),
