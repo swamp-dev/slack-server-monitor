@@ -1,35 +1,88 @@
 import type { ToolDefinition, ToolConfig, ToolResult, ToolSpec } from './types.js';
 import { serverTools } from './server-tools.js';
 import { fileTools } from './file-tools.js';
+import { getPluginTools } from '../../plugins/index.js';
 import { scrubSensitiveData } from '../../formatters/scrub.js';
 import { logger } from '../../utils/logger.js';
+// Tool validation is handled by the plugin loader
+// See ../plugins/loader.ts for validation implementation
 
 /**
- * All available tools
+ * Built-in tools (always available)
  */
-const ALL_TOOLS: ToolDefinition[] = [...serverTools, ...fileTools];
+const BUILTIN_TOOLS: ToolDefinition[] = [...serverTools, ...fileTools];
 
 /**
- * Map tool name to definition
+ * Namespace a plugin tool name with the plugin prefix
+ * Format: pluginname:toolname
  */
-const TOOL_MAP = new Map<string, ToolDefinition>(
-  ALL_TOOLS.map(tool => [tool.spec.name, tool])
-);
+function namespaceToolName(toolName: string, pluginName: string): string {
+  return `${pluginName}:${toolName}`;
+}
+
+/**
+ * Get all available tools (built-in + namespaced plugins)
+ */
+function getAllTools(): ToolDefinition[] {
+  const pluginTools = getPluginTools();
+
+  // Namespace plugin tools to prevent collision with built-ins
+  const namespacedPluginTools = pluginTools.map((tool) => {
+    if (!tool._pluginName) {
+      throw new Error(`Plugin tool "${tool.spec.name}" missing _pluginName - this is a loader bug`);
+    }
+
+    // Create namespaced copy of the tool
+    return {
+      ...tool,
+      spec: {
+        ...tool.spec,
+        name: namespaceToolName(tool.spec.name, tool._pluginName),
+      },
+    };
+  });
+
+  return [...BUILTIN_TOOLS, ...namespacedPluginTools];
+}
+
+/**
+ * Lazy-initialized tool map (rebuilt when refreshed)
+ */
+let toolMap = new Map<string, ToolDefinition>();
+
+/**
+ * Get the tool map, building it if needed
+ */
+function getToolMap(): Map<string, ToolDefinition> {
+  if (toolMap.size === 0) {
+    toolMap = new Map<string, ToolDefinition>(getAllTools().map((tool) => [tool.spec.name, tool]));
+  }
+  return toolMap;
+}
+
+/**
+ * Refresh the tool map (call after plugins are loaded)
+ * Uses atomic reference swap to prevent race conditions
+ */
+export function refreshToolMap(): void {
+  const newMap = new Map(getAllTools().map((tool) => [tool.spec.name, tool]));
+  toolMap = newMap; // Atomic swap
+}
 
 /**
  * Get all tool specifications for Claude
  */
 export function getToolSpecs(disabledTools: string[] = []): ToolSpec[] {
-  return ALL_TOOLS
-    .filter(tool => !disabledTools.includes(tool.spec.name))
-    .map(tool => tool.spec);
+  return getAllTools()
+    .filter((tool) => !disabledTools.includes(tool.spec.name))
+    .map((tool) => tool.spec);
 }
 
 /**
  * Get list of available tool names
  */
 export function getToolNames(): string[] {
-  return ALL_TOOLS.map(tool => tool.spec.name);
+  return getAllTools().map((tool) => tool.spec.name);
 }
 
 /**
@@ -41,7 +94,7 @@ export async function executeTool(
   input: Record<string, unknown>,
   config: ToolConfig
 ): Promise<ToolResult> {
-  const tool = TOOL_MAP.get(toolName);
+  const tool = getToolMap().get(toolName);
 
   if (!tool) {
     logger.warn('Unknown tool requested', { toolName });

@@ -10,6 +10,8 @@ import { registerSecurityCommand } from './security.js';
 import { registerSslCommand } from './ssl.js';
 import { registerBackupsCommand } from './backups.js';
 import { registerPm2Command } from './pm2.js';
+import { registerPlugins } from '../plugins/index.js';
+import { refreshToolMap } from '../services/tools/index.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -38,6 +40,12 @@ export async function registerCommands(app: App): Promise<void> {
   registerThreadHandler(app);
   registerContextCommand(app);
   registerSessionsCommand(app);
+
+  // Load and register plugins
+  await registerPlugins(app);
+
+  // Refresh tool map to include plugin tools
+  refreshToolMap();
 
   logger.info('Commands registered successfully');
 }

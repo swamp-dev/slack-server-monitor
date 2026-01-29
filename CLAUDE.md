@@ -288,6 +288,134 @@ Users can customize Claude behavior via `~/.claude/`:
 }
 ```
 
+## Plugin System
+
+Extend the bot with custom slash commands and Claude AI tools via plugins.
+
+### Creating a Plugin
+
+1. Create `plugins.local/` directory (gitignored)
+2. Add a `.ts` or `.js` file with a default export implementing the `Plugin` interface
+
+```typescript
+import type { Plugin } from '../src/plugins/index.js';
+
+const myPlugin: Plugin = {
+  name: 'my-plugin',
+  version: '1.0.0',
+  description: 'My custom plugin',
+
+  // Register slash commands
+  registerCommands(app) {
+    app.command('/mycommand', async ({ ack, respond }) => {
+      await ack();
+      await respond('Hello from my plugin!');
+    });
+  },
+
+  // Optional: Provide Claude AI tools
+  tools: [
+    {
+      spec: {
+        name: 'my_tool',
+        description: 'Does something useful',
+        input_schema: { type: 'object', properties: {} },
+      },
+      execute: async (input) => 'Tool result',
+    },
+  ],
+
+  // Optional: Async initialization
+  init: async () => {},
+
+  // Optional: Cleanup on shutdown
+  destroy: async () => {},
+};
+
+export default myPlugin;
+```
+
+### Plugin Interface
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Unique identifier |
+| `version` | Yes | Semver version |
+| `description` | No | Help text |
+| `registerCommands` | No | Function to register Slack commands |
+| `tools` | No | Array of Claude AI tool definitions |
+| `init` | No | Async setup hook (10s timeout) |
+| `destroy` | No | Cleanup hook (5s timeout) |
+
+### Plugin Security
+
+**IMPORTANT:** Plugins run with full process privileges. Only install plugins from trusted sources.
+
+#### Trust Model
+
+Plugins can:
+- Access all environment variables
+- Execute arbitrary code
+- Make network requests
+- Access the filesystem
+
+The `PluginApp` wrapper provides defense-in-depth (validation, logging) but **not sandboxing**.
+
+#### Tool Namespacing
+
+Plugin tools are automatically namespaced to prevent collision with built-in tools:
+
+| Plugin Name | Tool Name | Final Tool Name |
+|-------------|-----------|-----------------|
+| `lift` | `calculate_powerlifting_score` | `lift:calculate_powerlifting_score` |
+| `weather` | `get_forecast` | `weather:get_forecast` |
+
+This means Claude will see and call tools with the `pluginname:toolname` format.
+
+#### Lifecycle Timeouts
+
+| Hook | Timeout | Behavior on Timeout |
+|------|---------|---------------------|
+| `init()` | 10 seconds | Plugin not loaded |
+| `destroy()` | 5 seconds | Warning logged, continues |
+
+#### Atomic Loading
+
+Plugin loading is atomic: if any step fails (validation, init, command registration), the entire plugin is skipped. This prevents partial registration issues.
+
+#### Tool Validation
+
+Before a plugin loads, its tools are validated:
+- Tool names must be lowercase, start with a letter, 3-50 characters
+- Tool names can only contain letters, numbers, and underscores
+- Must have `description` and `input_schema.properties`
+- Must have an `execute` function
+
+Invalid tools cause the entire plugin to be rejected.
+
+#### Writing Secure Plugins
+
+1. **Validate all input** - Use Zod schemas for tool inputs
+2. **Respect allowed directories** - Use `config.allowedDirs` for file access
+3. **Don't store secrets** - Use environment variables
+4. **Log appropriately** - Use `logger` from `../src/utils/logger.js`
+5. **Handle errors gracefully** - Don't leak stack traces
+6. **Test your plugin** - Write tests in `tests/plugins/`
+
+### Example Plugin
+
+See `plugins.example/lift.ts` for a complete example with:
+- Slash command (`/lift`) with subcommands
+- Claude AI tool integration
+- Using Block Kit formatters
+
+```bash
+# To test the example plugin:
+mkdir plugins.local
+cp plugins.example/lift.ts plugins.local/
+npm run dev
+```
+
 ## Testing Conventions
 
 - Tests in `tests/` directory, mirroring `src/` structure
