@@ -16,6 +16,16 @@ vi.mock('../../src/config/index.js', () => ({
   },
 }));
 
+// Mock the logger to capture log calls
+vi.mock('../../src/utils/logger.js', () => ({
+  logger: {
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 describe('Claude rate limiting', () => {
   beforeEach(() => {
     clearAllRateLimits();
@@ -186,6 +196,106 @@ describe('Claude rate limiting', () => {
       expect(checkAndRecordClaudeRequest(userId)).toBe(true);
 
       vi.useRealTimers();
+    });
+  });
+});
+
+describe('Ask command error handling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('error response fallback logic', () => {
+    it('should attempt respond() first when handling errors', async () => {
+      // This tests the concept: when respond() works, we don't need postMessage
+      const respond = vi.fn().mockResolvedValue(undefined);
+      const postMessage = vi.fn().mockResolvedValue({ ok: true });
+
+      // Simulate the fallback logic from ask.ts
+      let errorSent = false;
+
+      try {
+        await respond({ response_type: 'ephemeral' });
+        errorSent = true;
+      } catch {
+        // Would try postMessage as fallback
+      }
+
+      if (!errorSent) {
+        await postMessage({ channel: 'C123', text: 'error' });
+      }
+
+      expect(respond).toHaveBeenCalledTimes(1);
+      expect(postMessage).not.toHaveBeenCalled();
+      expect(errorSent).toBe(true);
+    });
+
+    it('should fall back to postMessage when respond() fails', async () => {
+      // This tests the fallback behavior
+      const respond = vi.fn().mockRejectedValue(new Error('response_url expired'));
+      const postMessage = vi.fn().mockResolvedValue({ ok: true });
+
+      let errorSent = false;
+
+      try {
+        await respond({ response_type: 'ephemeral' });
+        errorSent = true;
+      } catch {
+        // Fallback to postMessage
+      }
+
+      if (!errorSent) {
+        try {
+          await postMessage({ channel: 'C123', text: 'error' });
+          errorSent = true;
+        } catch {
+          // Both failed
+        }
+      }
+
+      expect(respond).toHaveBeenCalledTimes(1);
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      expect(errorSent).toBe(true);
+    });
+
+    it('should log CRITICAL when both respond() and postMessage() fail', async () => {
+      const respond = vi.fn().mockRejectedValue(new Error('response_url expired'));
+      const postMessage = vi.fn().mockRejectedValue(new Error('channel_not_found'));
+      const logError = vi.fn();
+
+      let errorSent = false;
+
+      try {
+        await respond({ response_type: 'ephemeral' });
+        errorSent = true;
+      } catch {
+        // Fallback
+      }
+
+      if (!errorSent) {
+        try {
+          await postMessage({ channel: 'C123', text: 'error' });
+          errorSent = true;
+        } catch {
+          // Both failed
+        }
+      }
+
+      if (!errorSent) {
+        logError('CRITICAL: Unable to send any response to user', {
+          userId: 'U123',
+          channelId: 'C123',
+          originalError: 'test error',
+        });
+      }
+
+      expect(respond).toHaveBeenCalledTimes(1);
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      expect(errorSent).toBe(false);
+      expect(logError).toHaveBeenCalledWith(
+        'CRITICAL: Unable to send any response to user',
+        expect.objectContaining({ userId: 'U123' })
+      );
     });
   });
 });

@@ -129,11 +129,15 @@ export async function registerAskCommand(app: App): Promise<void> {
   }
 
   app.command('/ask', async ({ command, ack, respond, client }: SlackCommandMiddlewareArgs & AllMiddlewareArgs) => {
-    await ack();
-
-    const question = command.text.trim();
     const userId = command.user_id;
     const channelId = command.channel_id;
+    const question = command.text.trim();
+
+    // Acknowledge immediately - this prevents Slack from showing a timeout error
+    await ack();
+
+    // Log that we received the command (helps diagnose authorization issues)
+    logger.info('Ask command received', { userId, channelId, questionLength: question.length });
 
     if (!question) {
       await respond({
@@ -145,17 +149,23 @@ export async function registerAskCommand(app: App): Promise<void> {
 
     try {
       // Initialize conversation store (can fail on DB issues)
+      logger.debug('Initializing conversation store', { dbPath: claudeConfig.dbPath });
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      logger.debug('Conversation store initialized');
 
       // Check and record rate limit atomically
       if (!checkAndRecordClaudeRequest(userId)) {
+        logger.info('Claude rate limit exceeded', { userId });
         await respond({
           blocks: [errorBlock(`Rate limit exceeded. Please wait before asking another question.`)],
           response_type: 'ephemeral',
         });
         return;
       }
+      logger.debug('Rate limit check passed');
+
       // Post initial message (visible to user)
+      logger.debug('Posting initial "thinking" message', { channelId });
       const initialMessage = await client.chat.postMessage({
         channel: channelId,
         text: `Thinking about: "${question.slice(0, 50)}${question.length > 50 ? '...' : ''}"`,
@@ -166,8 +176,9 @@ export async function registerAskCommand(app: App): Promise<void> {
       });
 
       if (!initialMessage.ts) {
-        throw new Error('Failed to post initial message');
+        throw new Error('Failed to post initial message - no timestamp returned');
       }
+      logger.debug('Initial message posted', { threadTs: initialMessage.ts });
 
       const threadTs = initialMessage.ts;
 
@@ -253,21 +264,49 @@ export async function registerAskCommand(app: App): Promise<void> {
         error: rawMessage,
         errorType: parsed.type,
         userId,
-        question,
+        channelId,
+        question: question.slice(0, 100),
       });
 
+      // Try multiple methods to ensure user sees the error
+      let errorSent = false;
+
+      // First attempt: use respond() for ephemeral message
       try {
         await respond({
           blocks: [errorBlock(`Failed to get response: ${displayMessage}`)],
           response_type: 'ephemeral',
         });
+        errorSent = true;
+        logger.debug('Error response sent via respond()');
       } catch (respondErr) {
-        // Log but don't rethrow - we've already logged the original error
-        logger.error('Failed to send error response to user', {
-          originalError: rawMessage,
+        logger.warn('respond() failed, trying postMessage', {
           respondError: respondErr instanceof Error ? respondErr.message : String(respondErr),
+        });
+      }
+
+      // Fallback: post a regular message if respond() failed
+      if (!errorSent) {
+        try {
+          await client.chat.postMessage({
+            channel: channelId,
+            text: `Sorry, I encountered an error: ${displayMessage}`,
+          });
+          errorSent = true;
+          logger.debug('Error response sent via postMessage');
+        } catch (postErr) {
+          logger.error('Failed to send error via postMessage', {
+            postError: postErr instanceof Error ? postErr.message : String(postErr),
+          });
+        }
+      }
+
+      // If all attempts failed, log prominently
+      if (!errorSent) {
+        logger.error('CRITICAL: Unable to send any response to user', {
           userId,
           channelId,
+          originalError: rawMessage,
         });
       }
     }
