@@ -1,10 +1,11 @@
 /**
- * Powerlifting Calculator Plugin
+ * Lift Plugin - Powerlifting Calculator & Macro Tracker
  *
  * Example plugin demonstrating:
  * - Slash command registration (/lift)
- * - Subcommands (wilks, dots, 1rm, warmup)
+ * - Subcommands (wilks, dots, 1rm, warmup, m/macros)
  * - Claude AI tool integration
+ * - Database access via PluginContext (see init() for schema setup)
  * - Using formatters (header, section, divider, context)
  *
  * Commands:
@@ -12,6 +13,11 @@
  * - /lift dots <total_kg> <bodyweight_kg> <m|f> - Calculate DOTS score
  * - /lift 1rm <weight> <reps> - Estimate 1 rep max
  * - /lift warmup <weight> [weight2] ... - Calculate warmup sets with plate loading
+ * - /lift m c20 p40 f15 - Log macros (carbs, protein, fat in grams)
+ * - /lift m - Show today's macro totals
+ * - /lift m -1 - Show yesterday's totals
+ * - /lift m 1/15 - Show specific date
+ * - /lift m 1/10-1/15 - Show date range
  *
  * SECURITY NOTE: Plugins run with full process privileges.
  * This example is safe - it only performs math calculations.
@@ -29,11 +35,71 @@
  *   npm run dev
  */
 
-import type { App } from '@slack/bolt';
-import type { Plugin, PluginApp } from '../src/plugins/index.js';
+import type { App, RespondFn } from '@slack/bolt';
+import type { Plugin, PluginApp, PluginContext } from '../src/plugins/index.js';
 import type { ToolDefinition } from '../src/services/tools/types.js';
+import type { PluginDatabase } from '../src/services/plugin-database.js';
 import { header, section, divider, context, buildResponse } from '../src/formatters/blocks.js';
 import { logger } from '../src/utils/logger.js';
+
+// =============================================================================
+// Module-level state
+// =============================================================================
+
+let pluginDb: PluginDatabase | null = null;
+
+// Cache user timezones to avoid repeated API calls (userId -> { tz, expires })
+const timezoneCache = new Map<string, { tz: string; expires: number }>();
+const TIMEZONE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+// =============================================================================
+// Database Types (example of plugin-managed schema)
+// =============================================================================
+
+/**
+ * Example workout record type
+ * This demonstrates the schema created in init() for workout tracking.
+ * In a real plugin, you'd use this type with prepared statements:
+ *
+ * ```typescript
+ * const stmt = ctx.db.prepare<[string, string], Workout>(
+ *   `SELECT * FROM ${ctx.db.prefix}workouts WHERE user_id = ? AND date = ?`
+ * );
+ * const workout = stmt.get(userId, date);
+ * ```
+ */
+export interface Workout {
+  id: number;
+  user_id: string;
+  date: string;
+  squat_kg: number | null;
+  bench_kg: number | null;
+  deadlift_kg: number | null;
+  bodyweight_kg: number | null;
+  notes: string | null;
+  created_at: number;
+}
+
+/**
+ * Macro totals for display
+ */
+export interface MacroTotals {
+  carbs: number;
+  protein: number;
+  fat: number;
+  entries: number;
+}
+
+/**
+ * Query specification for viewing macro data
+ */
+export interface QuerySpec {
+  type: 'today' | 'relative' | 'date' | 'range';
+  daysAgo?: number;
+  date?: Date;
+  startDate?: Date;
+  endDate?: Date;
+}
 
 // =============================================================================
 // Constants for Warmup Calculator
@@ -126,8 +192,8 @@ function calculatePlateConfig(targetWeight: number): string {
       pairCount++;
     }
     if (pairCount > 0) {
-      // Show as plates per side (e.g., "45x1" means one 45 on each side)
-      plates.push(`${plateSize}x${pairCount}`);
+      // Show total plate count (e.g., "45x2" means two 45s total, one per side)
+      plates.push(`${plateSize}x${pairCount * 2}`);
     }
   }
 
@@ -161,11 +227,473 @@ function formatWarmupTable(targetWeight: number): ReturnType<typeof header | typ
 }
 
 // =============================================================================
+// Timezone Utilities (exported for testing)
+// =============================================================================
+
+export interface SlackClient {
+  users: {
+    info: (params: { user: string }) => Promise<{
+      ok: boolean;
+      user?: { tz?: string; tz_offset?: number };
+    }>;
+  };
+}
+
+/**
+ * Get user's timezone from Slack API (cached for 1 hour)
+ * Returns IANA timezone string like "America/New_York" or null if unavailable
+ */
+export async function getUserTimezone(userId: string, client: SlackClient): Promise<string | null> {
+  // Check cache first
+  const cached = timezoneCache.get(userId);
+  if (cached && cached.expires > Date.now()) {
+    return cached.tz;
+  }
+
+  try {
+    const result = await client.users.info({ user: userId });
+    const tz = result.user?.tz || null;
+
+    if (tz) {
+      timezoneCache.set(userId, { tz, expires: Date.now() + TIMEZONE_CACHE_TTL });
+    }
+
+    return tz;
+  } catch (error) {
+    logger.warn('Failed to get user timezone, using server time', { userId, error });
+    return null;
+  }
+}
+
+/**
+ * Get start of day in a specific timezone
+ * @param tz IANA timezone string (e.g., "America/New_York")
+ * @param daysAgo Number of days ago (0 = today, 1 = yesterday)
+ */
+export function getStartOfDayInTimezone(tz: string | null, daysAgo: number = 0): number {
+  const now = new Date();
+
+  if (!tz) {
+    // Fallback to server timezone
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return start.getTime() - daysAgo * 24 * 60 * 60 * 1000;
+  }
+
+  // Get current date parts in user's timezone
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  // Parse the formatted date (YYYY-MM-DD format from en-CA locale)
+  const parts = formatter.format(now).split('-');
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1; // JS months are 0-indexed
+  const day = parseInt(parts[2], 10);
+
+  // Create a date at midnight in the user's timezone
+  // We use a different approach: find what UTC time corresponds to midnight in their tz
+  const midnightLocal = new Date(year, month, day - daysAgo);
+
+  // Get the UTC offset for that date in the target timezone
+  const tzFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    timeZoneName: 'shortOffset',
+  });
+  const tzParts = tzFormatter.formatToParts(midnightLocal);
+  const offsetPart = tzParts.find((p) => p.type === 'timeZoneName')?.value || '';
+
+  // Parse offset like "GMT-5" or "GMT+5:30"
+  const offsetMatch = offsetPart.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+  if (offsetMatch) {
+    const sign = offsetMatch[1] === '+' ? 1 : -1;
+    const hours = parseInt(offsetMatch[2], 10);
+    const minutes = parseInt(offsetMatch[3] || '0', 10);
+    const offsetMs = sign * (hours * 60 + minutes) * 60 * 1000;
+
+    // Midnight in user's tz = midnight local - offset
+    // Actually we need: when it's midnight in user's tz, what's the UTC time?
+    // If user is GMT-5, midnight their time = 5am UTC
+    return midnightLocal.getTime() - offsetMs;
+  }
+
+  // Fallback if offset parsing fails
+  return midnightLocal.getTime();
+}
+
+/**
+ * Convert a Date to start of day in user's timezone
+ */
+export function dateToStartOfDayInTimezone(date: Date, tz: string | null): number {
+  if (!tz) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  }
+
+  // Get the date parts in user's timezone
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  // Format the target date
+  const targetLocal = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12); // noon to avoid DST issues
+  const parts = formatter.format(targetLocal).split('-');
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const day = parseInt(parts[2], 10);
+
+  // Now find midnight in that timezone
+  const midnightLocal = new Date(year, month, day);
+
+  const tzFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    timeZoneName: 'shortOffset',
+  });
+  const tzParts = tzFormatter.formatToParts(midnightLocal);
+  const offsetPart = tzParts.find((p) => p.type === 'timeZoneName')?.value || '';
+
+  const offsetMatch = offsetPart.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+  if (offsetMatch) {
+    const sign = offsetMatch[1] === '+' ? 1 : -1;
+    const hours = parseInt(offsetMatch[2], 10);
+    const minutes = parseInt(offsetMatch[3] || '0', 10);
+    const offsetMs = sign * (hours * 60 + minutes) * 60 * 1000;
+    return midnightLocal.getTime() - offsetMs;
+  }
+
+  return midnightLocal.getTime();
+}
+
+// =============================================================================
+// Macros Tracking Functions
+// =============================================================================
+
+/**
+ * Parse macro arguments like "c20 p40 f15"
+ */
+export function parseMacroArgs(args: string[]): { carbs: number; fat: number; protein: number } | null {
+  const result = { carbs: 0, fat: 0, protein: 0 };
+  let found = false;
+
+  for (const arg of args) {
+    const match = arg.toLowerCase().match(/^([cpf])(\d+)$/);
+    if (!match) continue;
+
+    const [, type, value] = match;
+    const num = parseInt(value, 10);
+    if (isNaN(num) || num < 0) continue;
+
+    found = true;
+    if (type === 'c') result.carbs = num;
+    else if (type === 'p') result.protein = num;
+    else if (type === 'f') result.fat = num;
+  }
+
+  return found ? result : null;
+}
+
+/**
+ * Parse a date string in M/D format
+ * Uses heuristic: if date is >30 days in future, assume previous year
+ */
+export function parseDate(str: string): Date | null {
+  const match = str.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (!match) return null;
+  const [, monthStr, dayStr] = match;
+  const month = parseInt(monthStr, 10);
+  const day = parseInt(dayStr, 10);
+
+  // Validate month (1-12) and day (1-31)
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const now = new Date();
+  let year = now.getFullYear();
+  let date = new Date(year, month - 1, day);
+
+  // Check that the date didn't overflow (e.g., Feb 31 -> Mar 3)
+  if (date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null;
+  }
+
+  // If date is >30 days in future, assume previous year
+  // (e.g., querying "12/25" in January should return last December)
+  const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+  if (date.getTime() - now.getTime() > thirtyDaysMs) {
+    date = new Date(year - 1, month - 1, day);
+  }
+
+  return date;
+}
+
+/**
+ * Parse query arguments to determine what data to show
+ */
+export function parseQueryArgs(args: string[]): QuerySpec | null {
+  if (args.length === 0) return { type: 'today' };
+
+  const arg = args[0];
+
+  // Relative days: -1, -7 (max 365 days)
+  if (/^-\d+$/.test(arg)) {
+    const daysAgo = parseInt(arg, 10);
+    if (daysAgo < -365) return null; // Reject queries > 1 year
+    return { type: 'relative', daysAgo };
+  }
+
+  // Date range: 1/10-1/15 (use regex for robust parsing)
+  const rangeMatch = arg.match(/^(\d{1,2}\/\d{1,2})-(\d{1,2}\/\d{1,2})$/);
+  if (rangeMatch) {
+    const startDate = parseDate(rangeMatch[1]);
+    const endDate = parseDate(rangeMatch[2]);
+    // Validate chronological order (reject backwards ranges like 1/15-1/10)
+    if (startDate && endDate && startDate <= endDate) {
+      return { type: 'range', startDate, endDate };
+    }
+  }
+
+  // Single date: 1/15
+  if (arg.includes('/')) {
+    const date = parseDate(arg);
+    if (date) return { type: 'date', date };
+  }
+
+  return null; // Not a query, might be macro input
+}
+
+/**
+ * Log macros to the database
+ * @throws Error if userId is invalid or database operation fails
+ */
+function logMacros(
+  userId: string,
+  macros: { carbs: number; fat: number; protein: number },
+  db: PluginDatabase
+): void {
+  if (!userId || typeof userId !== 'string') {
+    throw new Error('Invalid user ID');
+  }
+
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO ${db.prefix}macros (user_id, carbs_g, fat_g, protein_g, logged_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(userId, macros.carbs, macros.fat, macros.protein, now, now);
+}
+
+/**
+ * Get daily totals for a user
+ * @param daysAgo 0 = today, -1 = yesterday only, -7 = last 7 days including today
+ * @param tz User's IANA timezone (e.g., "America/New_York") or null for server time
+ */
+function getDailyTotals(userId: string, daysAgo: number, db: PluginDatabase, tz: string | null): MacroTotals {
+  const startOfToday = getStartOfDayInTimezone(tz, 0);
+
+  let startTs: number;
+  let endTs: number;
+
+  if (daysAgo === 0) {
+    startTs = startOfToday;
+    endTs = Date.now();
+  } else {
+    // Negative daysAgo means going back
+    const daysBack = Math.abs(daysAgo);
+    startTs = getStartOfDayInTimezone(tz, daysBack);
+    // -1 = just yesterday, -7 = last 7 days including today
+    endTs = daysAgo === -1 ? startOfToday : Date.now();
+  }
+
+  const row = db
+    .prepare(
+      `SELECT
+        COALESCE(SUM(carbs_g), 0) as carbs,
+        COALESCE(SUM(protein_g), 0) as protein,
+        COALESCE(SUM(fat_g), 0) as fat,
+        COUNT(*) as entries
+      FROM ${db.prefix}macros
+      WHERE user_id = ? AND logged_at >= ? AND logged_at < ?`
+    )
+    .get(userId, startTs, endTs) as MacroTotals;
+
+  return row;
+}
+
+/**
+ * Get totals for a specific date
+ * @param tz User's IANA timezone or null for server time
+ */
+function getTotalsForDate(userId: string, date: Date, db: PluginDatabase, tz: string | null): MacroTotals {
+  const startTs = dateToStartOfDayInTimezone(date, tz);
+  const endTs = startTs + 24 * 60 * 60 * 1000;
+
+  return db
+    .prepare(
+      `SELECT
+        COALESCE(SUM(carbs_g), 0) as carbs,
+        COALESCE(SUM(protein_g), 0) as protein,
+        COALESCE(SUM(fat_g), 0) as fat,
+        COUNT(*) as entries
+      FROM ${db.prefix}macros
+      WHERE user_id = ? AND logged_at >= ? AND logged_at < ?`
+    )
+    .get(userId, startTs, endTs) as MacroTotals;
+}
+
+/**
+ * Get totals for a date range (inclusive)
+ * @param tz User's IANA timezone or null for server time
+ */
+function getTotalsForRange(userId: string, start: Date, end: Date, db: PluginDatabase, tz: string | null): MacroTotals {
+  const startTs = dateToStartOfDayInTimezone(start, tz);
+  const endTs = dateToStartOfDayInTimezone(end, tz) + 24 * 60 * 60 * 1000;
+
+  return db
+    .prepare(
+      `SELECT
+        COALESCE(SUM(carbs_g), 0) as carbs,
+        COALESCE(SUM(protein_g), 0) as protein,
+        COALESCE(SUM(fat_g), 0) as fat,
+        COUNT(*) as entries
+      FROM ${db.prefix}macros
+      WHERE user_id = ? AND logged_at >= ? AND logged_at < ?`
+    )
+    .get(userId, startTs, endTs) as MacroTotals;
+}
+
+/**
+ * Format date as M/D
+ */
+export function formatDateLabel(date: Date): string {
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+/**
+ * Format macro summary for Slack display
+ */
+function formatMacroSummary(
+  label: string,
+  totals: MacroTotals
+): ReturnType<typeof header | typeof section | typeof context>[] {
+  const calories = totals.carbs * 4 + totals.protein * 4 + totals.fat * 9;
+
+  return [
+    header(`Macros: ${label}`),
+    section(
+      '```\n' +
+        `Carbs:   ${String(totals.carbs).padStart(4)}g\n` +
+        `Protein: ${String(totals.protein).padStart(4)}g\n` +
+        `Fat:     ${String(totals.fat).padStart(4)}g\n` +
+        '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n' +
+        `Calories: ~${calories.toLocaleString()}\n` +
+        '```'
+    ),
+    context(`${totals.entries} entries`),
+  ];
+}
+
+/**
+ * Handle /lift m commands
+ * @param client Slack client for fetching user timezone
+ */
+async function handleMacros(
+  args: string[],
+  userId: string,
+  db: PluginDatabase,
+  respond: RespondFn,
+  client: SlackClient
+): Promise<void> {
+  // Get user's timezone for accurate day boundaries
+  const tz = await getUserTimezone(userId, client);
+
+  // 1. Try to parse as macro input (c20 p40 f15)
+  const macros = parseMacroArgs(args);
+  if (macros) {
+    // Log the entry with error handling
+    try {
+      logMacros(userId, macros, db);
+    } catch (error) {
+      logger.error('Failed to save macros', { error, userId });
+      await respond(buildResponse([section(':x: Failed to save macros. Please try again.')]));
+      return;
+    }
+
+    // Show confirmation + today's total
+    const totals = getDailyTotals(userId, 0, db, tz);
+    await respond(
+      buildResponse([
+        section(`:white_check_mark: +${macros.carbs}c ${macros.protein}p ${macros.fat}f`),
+        divider(),
+        ...formatMacroSummary('Today', totals),
+      ])
+    );
+    return;
+  }
+
+  // 2. Check for help
+  if (args.length === 1 && args[0].toLowerCase() === 'help') {
+    await respond(
+      buildResponse([
+        header('Macro Tracker'),
+        section(
+          '*Log:* `/lift m c20 p40 f15`\n' +
+            '*Today:* `/lift m`\n' +
+            '*Yesterday:* `/lift m -1`\n' +
+            '*Date:* `/lift m 1/15`\n' +
+            '*Range:* `/lift m 1/10-1/15`'
+        ),
+        context('c=carbs p=protein f=fat (grams)'),
+      ])
+    );
+    return;
+  }
+
+  // 3. Try to parse as query (date, range, or relative)
+  const query = parseQueryArgs(args);
+  if (query) {
+    switch (query.type) {
+      case 'today': {
+        const today = getDailyTotals(userId, 0, db, tz);
+        await respond(buildResponse(formatMacroSummary('Today', today)));
+        break;
+      }
+      case 'relative': {
+        const rel = getDailyTotals(userId, query.daysAgo!, db, tz);
+        const label = query.daysAgo === -1 ? 'Yesterday' : `Last ${-query.daysAgo!} days`;
+        await respond(buildResponse(formatMacroSummary(label, rel)));
+        break;
+      }
+      case 'date': {
+        const dateTotal = getTotalsForDate(userId, query.date!, db, tz);
+        await respond(buildResponse(formatMacroSummary(formatDateLabel(query.date!), dateTotal)));
+        break;
+      }
+      case 'range': {
+        const rangeTotal = getTotalsForRange(userId, query.startDate!, query.endDate!, db, tz);
+        const rangeLabel = `${formatDateLabel(query.startDate!)} - ${formatDateLabel(query.endDate!)}`;
+        await respond(buildResponse(formatMacroSummary(rangeLabel, rangeTotal)));
+        break;
+      }
+    }
+    return;
+  }
+
+  // 4. Invalid input - show usage hint
+  await respond(
+    buildResponse([section(':warning: Invalid input. Try `/lift m c20 p40` or `/lift m help`')])
+  );
+}
+
+// =============================================================================
 // Slack Command Handler
 // =============================================================================
 
 function registerLiftCommand(app: App | PluginApp): void {
-  app.command('/lift', async ({ command, ack, respond }) => {
+  app.command('/lift', async ({ command, ack, respond, client }) => {
     await ack();
 
     const args = command.text.trim().split(/\s+/);
@@ -279,6 +807,16 @@ function registerLiftCommand(app: App | PluginApp): void {
           break;
         }
 
+        case 'm':
+        case 'macros': {
+          if (!pluginDb) {
+            await respond(buildResponse([section(':x: Database not initialized')]));
+            return;
+          }
+          await handleMacros(args.slice(1), command.user_id, pluginDb, respond, client as unknown as SlackClient);
+          break;
+        }
+
         case 'warmup': {
           // /lift warmup <weight1> [weight2] ...
           const weights = args
@@ -312,7 +850,7 @@ function registerLiftCommand(app: App | PluginApp): void {
             if (blocks.length > 0) blocks.push(divider());
             blocks.push(...formatWarmupTable(targetWeight));
           }
-          blocks.push(context('Percentages: 40%, 60%, 80%, 100% | Bar = 45 lbs | Plates shown per side'));
+          blocks.push(context('Percentages: 40%, 60%, 80%, 100% | Bar = 45 lbs | Plate count is total (both sides)'));
 
           await respond(buildResponse(blocks));
           break;
@@ -322,16 +860,23 @@ function registerLiftCommand(app: App | PluginApp): void {
         default:
           await respond(
             buildResponse([
-              header('Powerlifting Calculator'),
-              section('Available commands:'),
+              header('Lift Plugin'),
+              section('*Calculators:*'),
               section(
-                '• `/lift wilks <total_kg> <bodyweight_kg> <m|f>` - Calculate Wilks score\n' +
-                  '• `/lift dots <total_kg> <bodyweight_kg> <m|f>` - Calculate DOTS score\n' +
-                  '• `/lift 1rm <weight> <reps>` - Estimate 1 rep max\n' +
-                  '• `/lift warmup <weight> [weight2] ...` - Calculate warmup sets with plate loading'
+                '`/lift wilks <total> <bw> <m|f>` - Wilks score\n' +
+                  '`/lift dots <total> <bw> <m|f>` - DOTS score\n' +
+                  '`/lift 1rm <weight> <reps>` - Estimate 1RM\n' +
+                  '`/lift warmup <weight>` - Warmup sets'
               ),
               divider(),
-              context('Tip: Ask Claude with `/ask what\'s my wilks for a 500kg total at 83kg?`'),
+              section('*Macro Tracking:*'),
+              section(
+                '`/lift m c20 p40 f15` - Log macros\n' +
+                  '`/lift m` - Today\'s totals\n' +
+                  '`/lift m -1` - Yesterday\n' +
+                  '`/lift m 1/15` - Specific date\n' +
+                  '`/lift m 1/10-1/15` - Date range'
+              ),
             ])
           );
       }
@@ -481,23 +1026,70 @@ const warmupTool: ToolDefinition = {
 
 const liftPlugin: Plugin = {
   name: 'lift',
-  version: '1.0.0',
-  description: 'Powerlifting calculator for Wilks, DOTS, 1RM estimates, and warmup plate loading',
+  version: '1.1.0',
+  description: 'Powerlifting calculator (Wilks, DOTS, 1RM, warmup) and macro tracker',
 
   registerCommands: registerLiftCommand,
 
   tools: [powerliftingTool, warmupTool],
 
-  init: async () => {
-    // Example async init - could load config, connect to DB, etc.
+  init: async (ctx: PluginContext) => {
+    // Store db reference for command handlers
+    pluginDb = ctx.db;
+
+    // Tables are automatically prefixed with "plugin_lift_" via ctx.db.prefix
     // Note: init() must complete within 10 seconds or plugin loading fails
-    logger.info('Lift plugin initialized');
+
+    // Workouts table (example schema)
+    ctx.db.exec(`
+      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}workouts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        squat_kg REAL,
+        bench_kg REAL,
+        deadlift_kg REAL,
+        bodyweight_kg REAL,
+        notes TEXT,
+        created_at INTEGER NOT NULL
+      )
+    `);
+
+    ctx.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}workouts_user
+        ON ${ctx.db.prefix}workouts(user_id, date)
+    `);
+
+    // Macros table for nutrition tracking
+    // Upper bounds prevent fat-finger errors (e.g., c20000 instead of c200)
+    ctx.db.exec(`
+      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}macros (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        carbs_g INTEGER NOT NULL DEFAULT 0 CHECK(carbs_g >= 0 AND carbs_g <= 5000),
+        fat_g INTEGER NOT NULL DEFAULT 0 CHECK(fat_g >= 0 AND fat_g <= 2000),
+        protein_g INTEGER NOT NULL DEFAULT 0 CHECK(protein_g >= 0 AND protein_g <= 2000),
+        logged_at INTEGER NOT NULL CHECK(logged_at > 0),
+        created_at INTEGER NOT NULL CHECK(created_at > 0)
+      )
+    `);
+
+    ctx.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}macros_user_date
+        ON ${ctx.db.prefix}macros(user_id, logged_at)
+    `);
+
+    logger.info('Lift plugin initialized', {
+      version: ctx.version,
+      tablePrefix: ctx.db.prefix,
+    });
   },
 
-  destroy: async () => {
-    // Example cleanup
+  destroy: async (ctx: PluginContext) => {
+    // Clear module-level db reference
+    pluginDb = null;
     // Note: destroy() must complete within 5 seconds
-    logger.info('Lift plugin destroyed');
+    logger.info('Lift plugin destroyed', { name: ctx.name });
   },
 };
 

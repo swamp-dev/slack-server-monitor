@@ -4,10 +4,11 @@ import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { createJiti } from 'jiti';
 import type { App } from '@slack/bolt';
-import type { Plugin, PluginToolDefinition } from './types.js';
+import type { Plugin, PluginToolDefinition, PluginContext } from './types.js';
 import { isValidPlugin } from './types.js';
 import { createPluginApp, clearRegisteredCommands } from './plugin-app.js';
 import { validatePluginTools } from '../services/tools/validation.js';
+import { getPluginDatabase, closePluginDatabases, removePluginDatabase } from '../services/plugin-database.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -31,11 +32,13 @@ const DESTROY_TIMEOUT_MS = 5_000; // 5 seconds for destroy()
 const PLUGINS_DIR = resolve(process.cwd(), 'plugins.local');
 
 /**
- * Loaded plugins registry (with tagged tools)
+ * Loaded plugins registry (with tagged tools and context)
  */
 interface LoadedPlugin extends Plugin {
   /** Tools with _pluginName tagged for namespacing */
   taggedTools?: PluginToolDefinition[];
+  /** Plugin context for destroy() hook */
+  _context?: PluginContext;
 }
 
 const loadedPlugins: LoadedPlugin[] = [];
@@ -107,7 +110,10 @@ async function loadPlugin(filePath: string): Promise<Plugin | null> {
     // Use jiti for TypeScript files to handle dynamic imports properly
     // This allows plugins to be written in TypeScript without pre-compilation
     if (filePath.endsWith('.ts')) {
-      module = await jiti.import(filePath, { default: true });
+      // jiti.import with { default: true } returns the default export directly,
+      // so we wrap it to match the expected { default: ... } structure
+      const imported = await jiti.import(filePath, { default: true });
+      module = { default: imported };
     } else {
       // For JavaScript files, use native ESM import
       const fileUrl = pathToFileURL(filePath).href;
@@ -180,10 +186,18 @@ export async function registerPlugins(app: App): Promise<void> {
         }
       }
 
+      // Create plugin context with scoped database accessor
+      const pluginDb = getPluginDatabase(plugin.name);
+      const ctx: PluginContext = {
+        db: pluginDb,
+        name: plugin.name,
+        version: plugin.version,
+      };
+
       // Run init hook with timeout
       if (plugin.init) {
         await withTimeout(
-          plugin.init(),
+          plugin.init(ctx),
           INIT_TIMEOUT_MS,
           `Plugin "${plugin.name}" init()`
         );
@@ -209,6 +223,7 @@ export async function registerPlugins(app: App): Promise<void> {
       loadedPlugins.push({
         ...plugin,
         taggedTools,
+        _context: ctx,
       });
 
       logger.info('Plugin loaded successfully', {
@@ -219,6 +234,9 @@ export async function registerPlugins(app: App): Promise<void> {
         toolCount: taggedTools.length,
       });
     } catch (error) {
+      // Clean up database accessor to prevent memory leak
+      removePluginDatabase(plugin.name);
+
       logger.error('Failed to initialize plugin', {
         name: plugin.name,
         error: error instanceof Error ? error.message : String(error),
@@ -247,10 +265,10 @@ export async function destroyPlugins(): Promise<void> {
   logger.debug('Cleaning up plugins', { count: loadedPlugins.length });
 
   for (const plugin of loadedPlugins) {
-    if (plugin.destroy) {
+    if (plugin.destroy && plugin._context) {
       try {
         await withTimeout(
-          plugin.destroy(),
+          plugin.destroy(plugin._context),
           DESTROY_TIMEOUT_MS,
           `Plugin "${plugin.name}" destroy()`
         );
@@ -268,6 +286,9 @@ export async function destroyPlugins(): Promise<void> {
   // Clear the registries
   loadedPlugins.length = 0;
   clearRegisteredCommands();
+
+  // Close all plugin database connections
+  closePluginDatabases();
 }
 
 /**
