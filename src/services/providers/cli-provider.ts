@@ -291,12 +291,15 @@ ${JSON.stringify(tools, null, 2)}
    */
   private callCli(prompt: string, systemPrompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      // Build args: claude -p "prompt" --model model --print --system-prompt "system"
+      // Build args: claude -p "prompt" --model model --print --system-prompt "system" --tools ""
+      // IMPORTANT: --tools "" disables all built-in Claude Code tools (Bash, Read, Edit, etc.)
+      // This forces Claude to use our custom text-based tool protocol instead
       const args = [
         '-p', prompt,
         '--model', this.config.model,
         '--print',
         '--system-prompt', systemPrompt,
+        '--tools', '',
       ];
 
       logger.debug('Spawning Claude CLI', {

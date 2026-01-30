@@ -80,6 +80,20 @@ const ContextOptionSchema = z.object({
 });
 
 /**
+ * Web server configuration schema for hosting long Claude responses
+ */
+const WebConfigSchema = z.object({
+  /** Enable the web server (default: false) */
+  enabled: z.boolean().default(false),
+  /** HTTP port to listen on (default: 8080) */
+  port: z.coerce.number().int().positive().default(8080),
+  /** Base URL for links posted to Slack (e.g., http://nautilus.local:8080) */
+  baseUrl: z.string().url('Web base URL must be a valid URL').optional(),
+  /** Authentication token for viewing conversations (min 16 chars for security) */
+  authToken: z.string().min(16, 'Web auth token must be at least 16 characters'),
+});
+
+/**
  * Configuration schema for the Slack Server Monitor
  */
 export const ConfigSchema = z.object({
@@ -156,6 +170,10 @@ export const ConfigSchema = z.object({
     /** Available context directories that can be switched per-channel */
     contextOptions: z.array(ContextOptionSchema).default([]),
   }).optional(),
+
+  /** Web server for hosting long Claude responses */
+  web: WebConfigSchema.optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+export type WebConfig = z.infer<typeof WebConfigSchema>;

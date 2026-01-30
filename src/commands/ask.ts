@@ -5,10 +5,17 @@ import { getConversationStore } from '../services/conversation-store.js';
 import { getContextStore } from '../services/context-store.js';
 import { loadUserConfig } from '../services/user-config.js';
 import { getContext, getContextByAlias, type LoadedContext } from '../services/context-loader.js';
+import { getConversationUrl } from '../web/index.js';
 import { logger } from '../utils/logger.js';
 import { parseSlackError } from '../utils/slack-errors.js';
 import { section, context as contextBlock, error as errorBlock } from '../formatters/blocks.js';
 import { scrubSensitiveData } from '../formatters/scrub.js';
+
+/**
+ * Slack text limit for section blocks (with buffer for safety)
+ * Actual limit is 3000, but we use 2900 for safety margin
+ */
+const SLACK_TEXT_LIMIT = 2900;
 
 /**
  * Rate limiter for Claude requests (separate from global rate limit)
@@ -236,29 +243,65 @@ export async function registerAskCommand(app: App): Promise<void> {
       // Track token usage (logged for diagnostics)
       const totalTokens = result.usage.inputTokens + result.usage.outputTokens;
 
-      // Update the message with the response
-      await client.chat.update({
-        channel: channelId,
-        ts: threadTs,
-        text: result.response.slice(0, 100),
-        blocks: [
-          section(`*Q:* ${question}`),
-          section(result.response),
-          contextBlock(
-            `_Tools used: ${String(result.toolCalls.length)} | ` +
-            `Tokens: ${totalTokens.toLocaleString()} | ` +
-            `Reply in thread to continue_`
-          ),
-        ],
-      });
+      // Check if response exceeds Slack's text limit and web UI is available
+      const isLongResponse = result.response.length > SLACK_TEXT_LIMIT;
+      const webConfig = config.web;
+      const webEnabled = webConfig && webConfig.enabled && webConfig.baseUrl;
 
-      logger.info('Claude response sent', {
-        userId,
-        channelId,
-        threadTs,
-        toolCalls: result.toolCalls.length,
-        tokens: totalTokens,
-      });
+      if (isLongResponse && webEnabled) {
+        // Post link to web UI instead of full response
+        const webUrl = getConversationUrl(threadTs, channelId, webConfig);
+        await client.chat.update({
+          channel: channelId,
+          ts: threadTs,
+          text: `Response: ${result.response.slice(0, 100)}...`,
+          blocks: [
+            section(`*Q:* ${question}`),
+            section(
+              `_Response is ${result.response.length.toLocaleString()} characters._\n\n` +
+              `<${webUrl}|View full response>`
+            ),
+            contextBlock(
+              `_Tools used: ${String(result.toolCalls.length)} | ` +
+              `Tokens: ${totalTokens.toLocaleString()} | ` +
+              `Reply in thread to continue_`
+            ),
+          ],
+        });
+
+        logger.info('Claude response sent via web link (long response)', {
+          userId,
+          channelId,
+          threadTs,
+          toolCalls: result.toolCalls.length,
+          tokens: totalTokens,
+          responseLength: result.response.length,
+        });
+      } else {
+        // Update the message with the response directly
+        await client.chat.update({
+          channel: channelId,
+          ts: threadTs,
+          text: result.response.slice(0, 100),
+          blocks: [
+            section(`*Q:* ${question}`),
+            section(result.response),
+            contextBlock(
+              `_Tools used: ${String(result.toolCalls.length)} | ` +
+              `Tokens: ${totalTokens.toLocaleString()} | ` +
+              `Reply in thread to continue_`
+            ),
+          ],
+        });
+
+        logger.info('Claude response sent', {
+          userId,
+          channelId,
+          threadTs,
+          toolCalls: result.toolCalls.length,
+          tokens: totalTokens,
+        });
+      }
     } catch (err) {
       const rawMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
       const parsed = parseSlackError(err instanceof Error ? err : new Error(rawMessage));
@@ -453,28 +496,61 @@ export function registerThreadHandler(app: App): void {
       // Track token usage (for diagnostics)
       const totalTokens = result.usage.inputTokens + result.usage.outputTokens;
 
+      // Check if response exceeds Slack's text limit and web UI is available
+      const isLongResponse = result.response.length > SLACK_TEXT_LIMIT;
+      const webConfig = config.web;
+      const webEnabled = webConfig && webConfig.enabled && webConfig.baseUrl;
+
       // Update the thinking message with response
       if (thinkingMsg.ts) {
-        await client.chat.update({
-          channel: channelId,
-          ts: thinkingMsg.ts,
-          text: result.response,
-          blocks: [
-            section(result.response),
-            contextBlock(
-              `_Tools used: ${String(result.toolCalls.length)} | Tokens: ${totalTokens.toLocaleString()}_`
-            ),
-          ],
-        });
-      }
+        if (isLongResponse && webEnabled) {
+          // Post link to web UI instead of full response
+          const webUrl = getConversationUrl(threadTs, channelId, webConfig);
+          await client.chat.update({
+            channel: channelId,
+            ts: thinkingMsg.ts,
+            text: `Response: ${result.response.slice(0, 100)}...`,
+            blocks: [
+              section(
+                `_Response is ${result.response.length.toLocaleString()} characters._\n\n` +
+                `<${webUrl}|View full response>`
+              ),
+              contextBlock(
+                `_Tools used: ${String(result.toolCalls.length)} | Tokens: ${totalTokens.toLocaleString()}_`
+              ),
+            ],
+          });
 
-      logger.info('Thread reply sent', {
-        userId,
-        channelId,
-        threadTs,
-        toolCalls: result.toolCalls.length,
-        tokens: totalTokens,
-      });
+          logger.info('Thread reply sent via web link (long response)', {
+            userId,
+            channelId,
+            threadTs,
+            toolCalls: result.toolCalls.length,
+            tokens: totalTokens,
+            responseLength: result.response.length,
+          });
+        } else {
+          await client.chat.update({
+            channel: channelId,
+            ts: thinkingMsg.ts,
+            text: result.response,
+            blocks: [
+              section(result.response),
+              contextBlock(
+                `_Tools used: ${String(result.toolCalls.length)} | Tokens: ${totalTokens.toLocaleString()}_`
+              ),
+            ],
+          });
+
+          logger.info('Thread reply sent', {
+            userId,
+            channelId,
+            threadTs,
+            toolCalls: result.toolCalls.length,
+            tokens: totalTokens,
+          });
+        }
+      }
     } catch (err) {
       const rawMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
       const parsed = parseSlackError(err instanceof Error ? err : new Error(rawMessage));
