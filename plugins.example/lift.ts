@@ -126,8 +126,8 @@ function calculatePlateConfig(targetWeight: number): string {
       pairCount++;
     }
     if (pairCount > 0) {
-      // Show as plates per side (e.g., "45x1" means one 45 on each side)
-      plates.push(`${plateSize}x${pairCount}`);
+      // Show total plate count (e.g., "45x2" means two 45s total, one per side)
+      plates.push(`${plateSize}x${pairCount * 2}`);
     }
   }
 
@@ -312,7 +312,7 @@ function registerLiftCommand(app: App | PluginApp): void {
             if (blocks.length > 0) blocks.push(divider());
             blocks.push(...formatWarmupTable(targetWeight));
           }
-          blocks.push(context('Percentages: 40%, 60%, 80%, 100% | Bar = 45 lbs | Plates shown per side'));
+          blocks.push(context('Percentages: 40%, 60%, 80%, 100% | Bar = 45 lbs | Plate count is total (both sides)'));
 
           await respond(buildResponse(blocks));
           break;
