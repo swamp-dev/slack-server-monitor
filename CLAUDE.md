@@ -59,6 +59,10 @@ src/
 ├── formatters/
 │   ├── blocks.ts             # Slack Block Kit builders
 │   └── scrub.ts              # Sensitive data scrubber
+├── web/
+│   ├── index.ts              # Web module exports
+│   ├── server.ts             # Express HTTP server for long responses
+│   └── templates.ts          # HTML templates for conversation pages
 ├── utils/
 │   ├── shell.ts              # SECURE shell execution
 │   ├── sanitize.ts           # Input sanitization
@@ -210,6 +214,29 @@ CLAUDE_ALLOWED_DIRS=/root/ansible,/opt/stacks,/etc/docker
 | `CLAUDE_CONTEXT_DIR` | - | Directory containing infrastructure context (see below) |
 | `CLAUDE_CONTEXT_OPTIONS` | - | Comma-separated alias:path pairs for context switching |
 
+### Web Server for Long Responses
+
+When Claude responses exceed Slack's text limit (3000 characters), the bot can host them on a local web server instead of truncating.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEB_ENABLED` | false | Set to "true" to enable web server |
+| `WEB_PORT` | 8080 | HTTP port to listen on |
+| `WEB_BASE_URL` | - | Base URL for links (e.g., `http://nautilus.local:8080`) |
+| `WEB_AUTH_TOKEN` | - | Required authentication token (min 16 characters) |
+
+**How it works:**
+1. When a Claude response exceeds 2900 characters, the bot posts a link instead
+2. Users click the link to view the full response in their browser
+3. The token is included in the URL for authentication
+
+**Generate a token:**
+```bash
+openssl rand -hex 16
+```
+
+**Security:** The web server listens on `0.0.0.0` for local network access. The auth token is required to view any conversation. Keep the token secret.
+
 ### Context Directory
 
 Set `CLAUDE_CONTEXT_DIR` to a directory containing infrastructure documentation. Claude will automatically read and include:
@@ -298,7 +325,7 @@ Extend the bot with custom slash commands and Claude AI tools via plugins.
 2. Add a `.ts` or `.js` file with a default export implementing the `Plugin` interface
 
 ```typescript
-import type { Plugin } from '../src/plugins/index.js';
+import type { Plugin, PluginContext } from '../src/plugins/index.js';
 
 const myPlugin: Plugin = {
   name: 'my-plugin',
@@ -325,11 +352,21 @@ const myPlugin: Plugin = {
     },
   ],
 
-  // Optional: Async initialization
-  init: async () => {},
+  // Optional: Async initialization with database access
+  init: async (ctx: PluginContext) => {
+    // Create plugin tables using ctx.db (scoped to plugin_myname_*)
+    ctx.db.exec(`
+      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}data (
+        id INTEGER PRIMARY KEY,
+        value TEXT
+      )
+    `);
+  },
 
   // Optional: Cleanup on shutdown
-  destroy: async () => {},
+  destroy: async (ctx: PluginContext) => {
+    // Cleanup resources
+  },
 };
 
 export default myPlugin;
@@ -344,8 +381,48 @@ export default myPlugin;
 | `description` | No | Help text |
 | `registerCommands` | No | Function to register Slack commands |
 | `tools` | No | Array of Claude AI tool definitions |
-| `init` | No | Async setup hook (10s timeout) |
-| `destroy` | No | Cleanup hook (5s timeout) |
+| `init` | No | Async setup hook with `PluginContext` (10s timeout) |
+| `destroy` | No | Cleanup hook with `PluginContext` (5s timeout) |
+
+### Plugin Database Access
+
+Plugins can store persistent data via `PluginContext.db`. Tables are isolated per-plugin.
+
+```typescript
+init: async (ctx: PluginContext) => {
+  // Create tables (prefix required - e.g., "plugin_myplugin_")
+  ctx.db.exec(`
+    CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      data TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+},
+```
+
+**In commands/tools:**
+```typescript
+// Insert
+ctx.db.prepare(`INSERT INTO ${ctx.db.prefix}entries (user_id, data, created_at) VALUES (?, ?, ?)`)
+  .run(userId, JSON.stringify(data), Date.now());
+
+// Query
+const rows = ctx.db.prepare(`SELECT * FROM ${ctx.db.prefix}entries WHERE user_id = ?`)
+  .all(userId);
+
+// Transaction (atomic)
+ctx.db.transaction(() => {
+  stmt1.run(...);
+  stmt2.run(...);
+});
+```
+
+**Notes:**
+- Database: `./data/claude.db` (auto-created, shared with core)
+- Isolation: Plugins can only access `plugin_{name}_*` tables
+- Uses [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) - see docs for full API
 
 ### Plugin Security
 
@@ -358,8 +435,9 @@ Plugins can:
 - Execute arbitrary code
 - Make network requests
 - Access the filesystem
+- Store persistent data in the shared SQLite database
 
-The `PluginApp` wrapper provides defense-in-depth (validation, logging) but **not sandboxing**.
+The `PluginApp` wrapper and `PluginDatabase` provide defense-in-depth (validation, logging, table isolation) but **not true sandboxing**.
 
 #### Tool Namespacing
 
@@ -416,6 +494,38 @@ cp plugins.example/lift.ts plugins.local/
 npm run dev
 ```
 
+### Docker Deployment
+
+When running in Docker, the `plugins.local/` directory must be mounted as a volume. The plugin loader looks for `/app/plugins.local/` inside the container.
+
+**Manual Docker deployment:**
+```bash
+docker run -d \
+  --env-file .env \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v /path/to/plugins.local:/app/plugins.local:ro \
+  slack-monitor
+```
+
+**Ansible deployment:**
+
+If deploying via the `slack_monitor` Ansible role (in the parent `home-server-ansible` repo), plugins are automatically mounted when `slack_monitor_plugins_enabled: true` (the default). The role mounts:
+
+```
+{{ slack_monitor_source_path }}/plugins.local -> /app/plugins.local:ro
+```
+
+To add a plugin to an Ansible-managed deployment:
+1. Add your plugin to `plugins.local/` in the source repo on the target server
+2. Re-run the Ansible playbook or restart the container
+
+**How it works:**
+
+The plugin loader uses [jiti](https://github.com/unjs/jiti) to dynamically import TypeScript files at runtime without pre-compilation. This means:
+- Plugins can be `.ts` or `.js` files
+- No build step required for plugins
+- Changes require a container restart to take effect
+
 ## Testing Conventions
 
 - Tests in `tests/` directory, mirroring `src/` structure
@@ -435,8 +545,14 @@ pm2 save
 ### Docker
 ```bash
 docker build -t slack-monitor .
-docker run -d --env-file .env -v /var/run/docker.sock:/var/run/docker.sock:ro slack-monitor
+docker run -d \
+  --env-file .env \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v ./plugins.local:/app/plugins.local:ro \
+  slack-monitor
 ```
+
+**Note:** The `plugins.local` volume mount is required for plugins to work. See [Docker Deployment](#docker-deployment) in the Plugin System section for details.
 
 ## Security Warnings
 

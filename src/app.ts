@@ -5,6 +5,7 @@ import { registerCommands } from './commands/index.js';
 import { destroyPlugins } from './plugins/index.js';
 import { logger } from './utils/logger.js';
 import { closeConversationStore, getConversationStore } from './services/conversation-store.js';
+import { startWebServer, stopWebServer } from './web/index.js';
 
 /**
  * Slack Server Monitor
@@ -62,6 +63,7 @@ async function shutdown(signal: string): Promise<void> {
 
   try {
     await app.stop();
+    await stopWebServer();
     await destroyPlugins();
     closeConversationStore();
     logger.info('App stopped successfully');
@@ -90,6 +92,11 @@ async function main(): Promise<void> {
       }
     }
 
+    // Start web server if enabled
+    if (config.web?.enabled) {
+      await startWebServer(config.web);
+    }
+
     // Register slash commands (async to load context)
     await registerCommands(app);
 
@@ -99,6 +106,7 @@ async function main(): Promise<void> {
       authorizedUsers: config.authorization.userIds.length,
       rateLimit: `${String(config.rateLimit.max)} per ${String(config.rateLimit.windowSeconds)}s`,
       claudeEnabled: !!config.claude,
+      webEnabled: !!config.web?.enabled,
     });
   } catch (error) {
     logger.error('Failed to start app', {

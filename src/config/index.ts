@@ -111,6 +111,15 @@ function loadConfig(): Config {
           contextOptions: parseContextOptions(process.env.CLAUDE_CONTEXT_OPTIONS),
         }
       : undefined,
+    // Enable web server if WEB_ENABLED is set to true
+    web: process.env.WEB_ENABLED === 'true'
+      ? {
+          enabled: true,
+          port: parseIntWithDefault(process.env.WEB_PORT, 8080),
+          baseUrl: process.env.WEB_BASE_URL ?? undefined,
+          authToken: process.env.WEB_AUTH_TOKEN ?? '',
+        }
+      : undefined,
   };
 
   const result = ConfigSchema.safeParse(rawConfig);
@@ -136,4 +145,4 @@ function loadConfig(): Config {
  */
 export const config = loadConfig();
 
-export { type Config } from './schema.js';
+export { type Config, type WebConfig } from './schema.js';
