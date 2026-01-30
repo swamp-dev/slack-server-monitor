@@ -2,12 +2,22 @@ import { readdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
+import { createJiti } from 'jiti';
 import type { App } from '@slack/bolt';
 import type { Plugin, PluginToolDefinition } from './types.js';
 import { isValidPlugin } from './types.js';
 import { createPluginApp, clearRegisteredCommands } from './plugin-app.js';
 import { validatePluginTools } from '../services/tools/validation.js';
 import { logger } from '../utils/logger.js';
+
+/**
+ * Create a jiti instance for dynamic TypeScript imports
+ * This allows plugins to be written in TypeScript without pre-compilation
+ */
+const jiti = createJiti(import.meta.url, {
+  // Use native ESM when possible
+  interopDefault: true,
+});
 
 /**
  * Lifecycle timeouts (in milliseconds)
@@ -92,9 +102,17 @@ export async function discoverPlugins(): Promise<string[]> {
  */
 async function loadPlugin(filePath: string): Promise<Plugin | null> {
   try {
-    // Convert to file URL for ESM import
-    const fileUrl = pathToFileURL(filePath).href;
-    const module = await import(fileUrl) as { default?: unknown };
+    let module: { default?: unknown };
+
+    // Use jiti for TypeScript files to handle dynamic imports properly
+    // This allows plugins to be written in TypeScript without pre-compilation
+    if (filePath.endsWith('.ts')) {
+      module = await jiti.import(filePath, { default: true });
+    } else {
+      // For JavaScript files, use native ESM import
+      const fileUrl = pathToFileURL(filePath).href;
+      module = await import(fileUrl) as { default?: unknown };
+    }
 
     if (!module.default) {
       logger.warn('Plugin has no default export', { file: filePath });

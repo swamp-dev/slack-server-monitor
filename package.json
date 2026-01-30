@@ -30,6 +30,7 @@
   "dependencies": {
     "@slack/bolt": "^4.1.0",
     "better-sqlite3": "^12.6.2",
+    "jiti": "^2.6.1",
     "winston": "^3.17.0",
     "zod": "^3.23.0"
   },
