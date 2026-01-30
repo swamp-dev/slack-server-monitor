@@ -30,6 +30,15 @@ import { header, section, divider, context, buildResponse } from '../src/formatt
 import { logger } from '../src/utils/logger.js';
 
 // =============================================================================
+// Constants for Warmup Calculator
+// =============================================================================
+
+const BAR_WEIGHT = 45; // lbs
+const PLATE_SIZES = [45, 35, 25, 10, 5, 2.5] as const; // descending order
+const WARMUP_PERCENTAGES = [0.4, 0.6, 0.8, 1.0] as const;
+const MAX_TARGET_WEIGHT = 1000; // lbs - safety limit to prevent unbounded output
+
+// =============================================================================
 // Powerlifting Formulas
 // =============================================================================
 
@@ -83,6 +92,66 @@ function calculateDots(totalKg: number, bodyweightKg: number, isMale: boolean): 
 function calculate1rm(weight: number, reps: number): number {
   if (reps === 1) return weight;
   return weight * (1 + reps / 30);
+}
+
+/**
+ * Calculate plate configuration for a given target weight
+ * @param targetWeight Target weight in lbs
+ * @returns String describing the plate configuration
+ */
+function calculatePlateConfig(targetWeight: number): string {
+  if (targetWeight < BAR_WEIGHT) {
+    // Dumbbell case: round total weight to nearest 10 lbs (5 lb increments per hand)
+    // e.g., 32 lbs -> round(32/10)*5 = 15 lbs per hand = 30 lbs total
+    const perHandWeight = Math.round(targetWeight / 10) * 5;
+    return `2x${perHandWeight}lb DBs`;
+  }
+
+  // Greedy algorithm: fill with largest plates first
+  // Note: May not hit exact weight if target isn't achievable with standard plates
+  // (e.g., 46 lbs = bar + 2.5x2 = 50 lbs, can't load exactly 1 lb)
+  let remaining = targetWeight - BAR_WEIGHT;
+  const plates: string[] = [];
+
+  for (const plateSize of PLATE_SIZES) {
+    let pairCount = 0;
+    while (remaining >= plateSize * 2) {
+      remaining -= plateSize * 2;
+      pairCount++;
+    }
+    if (pairCount > 0) {
+      // Show as plates per side (e.g., "45x1" means one 45 on each side)
+      plates.push(`${plateSize}x${pairCount}`);
+    }
+  }
+
+  return plates.length > 0 ? `Bar + ${plates.join(' + ')}` : 'Bar only';
+}
+
+/**
+ * Format warmup table for a single target weight
+ * @param targetWeight Target weight in lbs
+ * @returns Slack Block Kit blocks for the warmup table
+ */
+function formatWarmupTable(targetWeight: number): ReturnType<typeof header | typeof section>[] {
+  const rows = WARMUP_PERCENTAGES.map((pct) => {
+    const weight = Math.round(targetWeight * pct);
+    const config = calculatePlateConfig(weight);
+    const pctStr = `${Math.round(pct * 100)}%`.padEnd(4);
+    const weightStr = `${weight} lbs`.padEnd(8);
+    return `${pctStr} │ ${weightStr} │ ${config}`;
+  });
+
+  return [
+    header(`Warmup: ${targetWeight} lbs`),
+    section(
+      '```\n' +
+        '%    │ Weight   │ Configuration\n' +
+        '─────┼──────────┼──────────────────────────\n' +
+        rows.join('\n') +
+        '\n```'
+    ),
+  ];
 }
 
 // =============================================================================
@@ -204,6 +273,45 @@ function registerLiftCommand(app: App | PluginApp): void {
           break;
         }
 
+        case 'warmup': {
+          // /lift warmup <weight1> [weight2] ...
+          const weights = args
+            .slice(1)
+            .map((w: string) => parseFloat(w))
+            .filter((w: number) => !isNaN(w) && w > 0);
+
+          if (weights.length === 0) {
+            await respond(
+              buildResponse([
+                section(':warning: Usage: `/lift warmup <weight> [weight2] ...`'),
+                context('Example: `/lift warmup 200` or `/lift warmup 135 225 315`'),
+              ])
+            );
+            return;
+          }
+
+          // Validate max weight to prevent unbounded output
+          const invalidWeights = weights.filter((w: number) => w > MAX_TARGET_WEIGHT);
+          if (invalidWeights.length > 0) {
+            await respond(
+              buildResponse([
+                section(`:x: Weight(s) exceed maximum of ${MAX_TARGET_WEIGHT} lbs: ${invalidWeights.join(', ')}`),
+              ])
+            );
+            return;
+          }
+
+          const blocks: ReturnType<typeof header | typeof section | typeof divider | typeof context>[] = [];
+          for (const targetWeight of weights) {
+            if (blocks.length > 0) blocks.push(divider());
+            blocks.push(...formatWarmupTable(targetWeight));
+          }
+          blocks.push(context('Percentages: 40%, 60%, 80%, 100% | Bar = 45 lbs | Plates shown per side'));
+
+          await respond(buildResponse(blocks));
+          break;
+        }
+
         case 'help':
         default:
           await respond(
@@ -213,7 +321,8 @@ function registerLiftCommand(app: App | PluginApp): void {
               section(
                 '• `/lift wilks <total_kg> <bodyweight_kg> <m|f>` - Calculate Wilks score\n' +
                   '• `/lift dots <total_kg> <bodyweight_kg> <m|f>` - Calculate DOTS score\n' +
-                  '• `/lift 1rm <weight> <reps>` - Estimate 1 rep max'
+                  '• `/lift 1rm <weight> <reps>` - Estimate 1 rep max\n' +
+                  '• `/lift warmup <weight> [weight2] ...` - Calculate warmup sets with plate loading'
               ),
               divider(),
               context('Tip: Ask Claude with `/ask what\'s my wilks for a 500kg total at 83kg?`'),
@@ -311,6 +420,55 @@ const powerliftingTool: ToolDefinition = {
   },
 };
 
+const warmupTool: ToolDefinition = {
+  spec: {
+    name: 'calculate_warmup_sets',
+    description:
+      'Calculate warmup set percentages and plate loading configuration for one or more target weights. ' +
+      'Use this when asked about warming up for a lift or what plates to load.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target_weights: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Target weight(s) in lbs to calculate warmup sets for',
+        },
+      },
+      required: ['target_weights'],
+    },
+  },
+  execute: async (input) => {
+    const { target_weights } = input as { target_weights: number[] };
+
+    if (!target_weights || target_weights.length === 0) {
+      return 'Error: target_weights array is required';
+    }
+
+    const results: string[] = [];
+    for (const targetWeight of target_weights) {
+      if (targetWeight <= 0) {
+        results.push(`Skipping invalid weight: ${targetWeight}`);
+        continue;
+      }
+      if (targetWeight > MAX_TARGET_WEIGHT) {
+        results.push(`Skipping weight exceeding maximum (${MAX_TARGET_WEIGHT} lbs): ${targetWeight}`);
+        continue;
+      }
+
+      const lines: string[] = [`Warmup for ${targetWeight} lbs:`];
+      for (const pct of WARMUP_PERCENTAGES) {
+        const weight = Math.round(targetWeight * pct);
+        const config = calculatePlateConfig(weight);
+        lines.push(`  ${Math.round(pct * 100)}%: ${weight} lbs - ${config}`);
+      }
+      results.push(lines.join('\n'));
+    }
+
+    return results.join('\n\n');
+  },
+};
+
 // =============================================================================
 // Plugin Export
 // =============================================================================
@@ -318,11 +476,11 @@ const powerliftingTool: ToolDefinition = {
 const liftPlugin: Plugin = {
   name: 'lift',
   version: '1.0.0',
-  description: 'Powerlifting calculator for Wilks, DOTS, and 1RM estimates',
+  description: 'Powerlifting calculator for Wilks, DOTS, 1RM estimates, and warmup plate loading',
 
   registerCommands: registerLiftCommand,
 
-  tools: [powerliftingTool],
+  tools: [powerliftingTool, warmupTool],
 
   init: async () => {
     // Example async init - could load config, connect to DB, etc.
