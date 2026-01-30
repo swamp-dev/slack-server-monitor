@@ -19,22 +19,27 @@ import {
  *   /context clear              - Clear context (use default or none)
  */
 export function registerContextCommand(app: App): void {
-  if (!config.claude) {
-    logger.info('Claude not configured - /context command disabled');
-    return;
-  }
-
-  const claudeConfig = config.claude;
-  const contextOptions = claudeConfig.contextOptions;
-
-  // If no context options configured, don't register the command
-  if (contextOptions.length === 0) {
-    logger.info('No context options configured - /context command disabled');
-    return;
-  }
-
   app.command('/context', async ({ command, ack, respond }: SlackCommandMiddlewareArgs & AllMiddlewareArgs) => {
     await ack();
+
+    if (!config.claude) {
+      await respond({
+        blocks: [errorBlock('Claude AI is not enabled. Set `CLAUDE_ENABLED=true` to use context switching.')],
+        response_type: 'ephemeral',
+      });
+      return;
+    }
+
+    const claudeConfig = config.claude;
+    const contextOptions = claudeConfig.contextOptions;
+
+    if (contextOptions.length === 0) {
+      await respond({
+        blocks: [errorBlock('No context options configured. Set `CLAUDE_CONTEXT_OPTIONS` to enable context switching.')],
+        response_type: 'ephemeral',
+      });
+      return;
+    }
 
     const args = command.text.trim().split(/\s+/);
     const subcommand = args[0] ?? '';
@@ -70,7 +75,7 @@ export function registerContextCommand(app: App): void {
     }
   });
 
-  logger.info('Registered /context command', { optionCount: contextOptions.length });
+  logger.info('Registered /context command');
 }
 
 /**
