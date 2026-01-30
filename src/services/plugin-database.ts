@@ -210,7 +210,7 @@ export function getPluginDatabase(pluginName: string, customDbPath?: string): Pl
   } else if (dbPath !== targetPath) {
     throw new Error(
       `Database path conflict: plugin "${pluginName}" requested "${targetPath}" ` +
-      `but shared database already initialized at "${dbPath}"`
+      `but shared database already initialized at "${dbPath ?? 'unknown'}"`
     );
   }
 
