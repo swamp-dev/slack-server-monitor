@@ -69,7 +69,7 @@ const SAFE_TEXT_EXTENSIONS = new Set([
 /**
  * Check if file extension is safe to read
  */
-function isSafeExtension(filePath: string): boolean {
+export function isSafeExtension(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
   const basename = path.basename(filePath).toLowerCase();
 
