@@ -36,3 +36,6 @@ Thumbs.db
 # SQLite databases
 data/
 *.db
+
+# Local plugins (personal/untracked)
+plugins.local/

@@ -2,6 +2,7 @@ import { App, LogLevel } from '@slack/bolt';
 import { config } from './config/index.js';
 import { authorizeMiddleware, rateLimitMiddleware, auditLogMiddleware } from './middleware/index.js';
 import { registerCommands } from './commands/index.js';
+import { destroyPlugins } from './plugins/index.js';
 import { logger } from './utils/logger.js';
 import { closeConversationStore, getConversationStore } from './services/conversation-store.js';
 
@@ -61,6 +62,7 @@ async function shutdown(signal: string): Promise<void> {
 
   try {
     await app.stop();
+    await destroyPlugins();
     closeConversationStore();
     logger.info('App stopped successfully');
     process.exit(0);
