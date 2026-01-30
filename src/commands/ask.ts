@@ -109,19 +109,12 @@ async function resolveChannelContext(
  *   /ask <question> - Ask Claude about your server
  */
 export async function registerAskCommand(app: App): Promise<void> {
-  if (!config.claude) {
-    logger.info('Claude not configured - /ask command disabled');
-    return;
-  }
-
-  const claudeConfig = config.claude;
-
-  // Load default context from context directory if configured
-  if (claudeConfig.contextDir) {
-    defaultContext = await getContext(claudeConfig.contextDir);
+  // Load default context only if Claude is enabled
+  if (config.claude?.contextDir) {
+    defaultContext = await getContext(config.claude.contextDir);
     if (defaultContext?.combined) {
       logger.info('Loaded default context from directory', {
-        contextDir: claudeConfig.contextDir,
+        contextDir: config.claude.contextDir,
         hasClaudeMd: !!defaultContext.claudeMd,
         contextFiles: defaultContext.contextFiles.size,
       });
@@ -131,6 +124,15 @@ export async function registerAskCommand(app: App): Promise<void> {
   app.command('/ask', async ({ command, ack, respond, client }: SlackCommandMiddlewareArgs & AllMiddlewareArgs) => {
     await ack();
 
+    if (!config.claude) {
+      await respond({
+        blocks: [errorBlock('Claude AI is not enabled. Set `CLAUDE_ENABLED=true` in your environment and ensure the Claude CLI is installed.')],
+        response_type: 'ephemeral',
+      });
+      return;
+    }
+
+    const claudeConfig = config.claude;
     const question = command.text.trim();
     const userId = command.user_id;
     const channelId = command.channel_id;

@@ -26,16 +26,18 @@ import type { KnownBlock } from '@slack/types';
  *   /sessions stats        - Aggregate statistics
  */
 export function registerSessionsCommand(app: App): void {
-  if (!config.claude) {
-    logger.info('Claude not configured - /sessions command disabled');
-    return;
-  }
-
-  const claudeConfig = config.claude;
-
   app.command('/sessions', async ({ command, ack, respond }: SlackCommandMiddlewareArgs & AllMiddlewareArgs) => {
     await ack();
 
+    if (!config.claude) {
+      await respond({
+        blocks: [errorBlock('Claude AI is not enabled. Set `CLAUDE_ENABLED=true` to view sessions.')],
+        response_type: 'ephemeral',
+      });
+      return;
+    }
+
+    const claudeConfig = config.claude;
     const arg = command.text.trim().toLowerCase();
     const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
 
