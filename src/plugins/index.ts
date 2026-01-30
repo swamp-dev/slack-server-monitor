@@ -26,8 +26,11 @@
  */
 
 // Types for plugin authors
-export type { Plugin, PluginApp } from './types.js';
+export type { Plugin, PluginApp, PluginContext } from './types.js';
 export { isValidPlugin } from './types.js';
+
+// Database access for plugins
+export type { PluginDatabase } from '../services/plugin-database.js';
 
 // Loader functions for internal use
 export { registerPlugins, getPluginTools, destroyPlugins, getLoadedPlugins } from './loader.js';

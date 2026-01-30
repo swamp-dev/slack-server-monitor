@@ -1,6 +1,23 @@
 import type { App } from '@slack/bolt';
 import type { ToolDefinition } from '../services/tools/types.js';
 import type { PluginApp } from './plugin-app.js';
+import type { PluginDatabase } from '../services/plugin-database.js';
+
+/**
+ * Context provided to plugins during lifecycle hooks
+ *
+ * Contains resources the plugin can use, including a scoped database accessor.
+ * The database accessor is pre-configured to only allow access to tables
+ * prefixed with "plugin_{name}_".
+ */
+export interface PluginContext {
+  /** Scoped database accessor for persistent storage */
+  db: PluginDatabase;
+  /** Plugin's unique name */
+  name: string;
+  /** Plugin's version string */
+  version: string;
+}
 
 /**
  * Plugin interface for extending the Slack Server Monitor
@@ -50,16 +67,23 @@ export interface Plugin {
    * Async initialization hook
    * Called before registerCommands
    *
+   * Receives PluginContext with:
+   * - db: Scoped database accessor for persistent storage
+   * - name: Plugin's unique name
+   * - version: Plugin's version string
+   *
    * TIMEOUT: Must complete within 10 seconds or plugin loading fails.
    */
-  init?: () => Promise<void>;
+  init?: (ctx: PluginContext) => Promise<void>;
 
   /**
    * Cleanup hook called on app shutdown
    *
+   * Receives the same PluginContext as init().
+   *
    * TIMEOUT: Must complete within 5 seconds.
    */
-  destroy?: () => Promise<void>;
+  destroy?: (ctx: PluginContext) => Promise<void>;
 }
 
 /**
