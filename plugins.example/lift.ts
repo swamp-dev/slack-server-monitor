@@ -3,9 +3,15 @@
  *
  * Example plugin demonstrating:
  * - Slash command registration (/lift)
- * - Subcommands (wilks, dots, 1rm)
+ * - Subcommands (wilks, dots, 1rm, warmup)
  * - Claude AI tool integration
  * - Using formatters (header, section, divider, context)
+ *
+ * Commands:
+ * - /lift wilks <total_kg> <bodyweight_kg> <m|f> - Calculate Wilks score
+ * - /lift dots <total_kg> <bodyweight_kg> <m|f> - Calculate DOTS score
+ * - /lift 1rm <weight> <reps> - Estimate 1 rep max
+ * - /lift warmup <weight> [weight2] ... - Calculate warmup sets with plate loading
  *
  * SECURITY NOTE: Plugins run with full process privileges.
  * This example is safe - it only performs math calculations.

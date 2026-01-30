@@ -70,6 +70,16 @@ describe('lift plugin warmup calculator', () => {
         expect(calculatePlateConfig(20)).toBe('2x10lb DBs');
       });
 
+      it('should handle edge case of 0 lbs', () => {
+        // 0 lbs -> round(0/10)*5 = 0 lbs per hand
+        expect(calculatePlateConfig(0)).toBe('2x0lb DBs');
+      });
+
+      it('should handle edge case of 5 lbs', () => {
+        // 5 lbs -> round(5/10)*5 = round(0.5)*5 = 5 lbs per hand
+        expect(calculatePlateConfig(5)).toBe('2x5lb DBs');
+      });
+
       it('should handle edge case near 45 lbs', () => {
         expect(calculatePlateConfig(44)).toBe('2x20lb DBs');
       });
@@ -342,6 +352,23 @@ describe('lift plugin warmup calculator', () => {
       const result = simulateWarmupTool([1000]);
       expect(result).toContain('Warmup for 1000 lbs');
       expect(result).not.toContain('Skipping');
+    });
+
+    it('should handle multiple valid weights', () => {
+      const result = simulateWarmupTool([135, 225, 315]);
+      expect(result).toContain('Warmup for 135 lbs');
+      expect(result).toContain('Warmup for 225 lbs');
+      expect(result).toContain('Warmup for 315 lbs');
+      // Check that percentages are calculated for each
+      expect(result).toContain('40%:');
+      expect(result).toContain('100%:');
+    });
+
+    it('should handle mix of valid and invalid weights', () => {
+      const result = simulateWarmupTool([-10, 200, 2000]);
+      expect(result).toContain('Skipping invalid weight: -10');
+      expect(result).toContain('Warmup for 200 lbs');
+      expect(result).toContain(`Skipping weight exceeding maximum (${MAX_TARGET_WEIGHT} lbs): 2000`);
     });
   });
 });
