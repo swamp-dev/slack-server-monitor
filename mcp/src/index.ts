@@ -40,7 +40,11 @@ const toolConfig = getToolConfig(config);
 
 // Log startup info to stderr (MCP uses stdout for protocol)
 console.error('Slack Server Monitor MCP Server starting...');
-console.error(`Allowed directories: ${config.allowedDirs.length > 0 ? config.allowedDirs.join(', ') : '(none configured)'}`);
+// Don't log actual paths to avoid exposing sensitive directory structure
+console.error(`Allowed directories: ${String(config.allowedDirs.length)} configured`);
+if (config.allowedDirs.length === 0) {
+  console.error('Warning: No allowed directories configured. read_file tool will be unavailable.');
+}
 console.error(`Max log lines: ${String(config.maxLogLines)}`);
 console.error(`Max file size: ${String(config.maxFileSizeKb)}KB`);
 
@@ -57,10 +61,16 @@ const server = new Server(
   }
 );
 
+// Filter tools based on configuration
+// read_file requires allowedDirs to be configured
+const availableTools = config.allowedDirs.length > 0
+  ? TOOLS
+  : TOOLS.filter(tool => tool.name !== 'read_file');
+
 // Register available tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
-    tools: TOOLS.map(tool => ({
+    tools: availableTools.map(tool => ({
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
