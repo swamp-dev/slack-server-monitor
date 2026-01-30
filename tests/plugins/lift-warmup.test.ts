@@ -45,7 +45,7 @@ function calculatePlateConfig(targetWeight: number): string {
 /**
  * Calculate warmup sets for a target weight
  */
-function calculateWarmupSets(targetWeight: number): Array<{ percent: number; weight: number; config: string }> {
+function calculateWarmupSets(targetWeight: number): { percent: number; weight: number; config: string }[] {
   return WARMUP_PERCENTAGES.map((pct) => ({
     percent: Math.round(pct * 100),
     weight: Math.round(targetWeight * pct),
