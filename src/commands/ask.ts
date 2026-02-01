@@ -218,8 +218,11 @@ export async function registerAskCommand(app: App): Promise<void> {
 
       // Get Claude service and ask
       const claude = getClaudeService({
+        provider: claudeConfig.provider,
+        apiKey: claudeConfig.apiKey,
         cliPath: claudeConfig.cliPath,
         cliModel: claudeConfig.cliModel,
+        sdkModel: claudeConfig.sdkModel,
         maxTokens: claudeConfig.maxTokens,
         maxToolCalls: claudeConfig.maxToolCalls,
         maxIterations: claudeConfig.maxIterations,
@@ -471,8 +474,11 @@ export function registerThreadHandler(app: App): void {
 
       // Get Claude service and ask
       const claude = getClaudeService({
+        provider: claudeConfig.provider,
+        apiKey: claudeConfig.apiKey,
         cliPath: claudeConfig.cliPath,
         cliModel: claudeConfig.cliModel,
+        sdkModel: claudeConfig.sdkModel,
         maxTokens: claudeConfig.maxTokens,
         maxToolCalls: claudeConfig.maxToolCalls,
         maxIterations: claudeConfig.maxIterations,

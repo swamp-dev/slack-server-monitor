@@ -4,12 +4,37 @@ import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { createJiti } from 'jiti';
 import type { App } from '@slack/bolt';
-import type { Plugin, PluginToolDefinition, PluginContext } from './types.js';
+import type { Plugin, PluginToolDefinition, PluginContext, PluginClaude } from './types.js';
 import { isValidPlugin } from './types.js';
 import { createPluginApp, clearRegisteredCommands } from './plugin-app.js';
 import { validatePluginTools } from '../services/tools/validation.js';
 import { getPluginDatabase, closePluginDatabases, removePluginDatabase } from '../services/plugin-database.js';
+import { createPluginClaude, createDisabledPluginClaude } from '../services/plugin-claude.js';
+import { getProvider, type ProviderConfig } from '../services/providers/index.js';
 import { logger } from '../utils/logger.js';
+
+import type { Config } from '../config/schema.js';
+
+// Lazy-loaded to avoid config validation issues in tests
+interface ConfigModule {
+  config: Config;
+}
+interface AskModule {
+  checkAndRecordClaudeRequest: (userId: string) => boolean;
+}
+
+let configModule: ConfigModule | null = null;
+let askModule: AskModule | null = null;
+
+async function getConfig() {
+  configModule ??= await import('../config/index.js');
+  return configModule.config;
+}
+
+async function getCheckAndRecordClaudeRequest() {
+  askModule ??= await import('../commands/ask.js');
+  return askModule.checkAndRecordClaudeRequest;
+}
 
 /**
  * Create a jiti instance for dynamic TypeScript imports
@@ -188,10 +213,53 @@ export async function registerPlugins(app: App): Promise<void> {
 
       // Create plugin context with scoped database accessor
       const pluginDb = getPluginDatabase(plugin.name);
+
+      // Create PluginClaude if Claude is enabled
+      const config = await getConfig();
+      let pluginClaude: PluginClaude | undefined;
+      if (config.claude) {
+        const providerConfig: ProviderConfig = {
+          provider: config.claude.provider,
+          apiKey: config.claude.apiKey,
+          cliPath: config.claude.cliPath,
+          cliModel: config.claude.cliModel,
+          sdkModel: config.claude.sdkModel,
+          maxTokens: config.claude.maxTokens,
+          maxToolCalls: config.claude.maxToolCalls,
+          maxIterations: config.claude.maxIterations,
+        };
+        const provider = getProvider(providerConfig);
+        const checkAndRecordClaudeRequest = await getCheckAndRecordClaudeRequest();
+
+        // Create namespaced tools for this plugin
+        const namespacedTools = (plugin.tools ?? []).map((tool) => ({
+          ...tool,
+          spec: {
+            ...tool.spec,
+            name: `${plugin.name}:${tool.spec.name}`,
+          },
+        }));
+
+        pluginClaude = createPluginClaude({
+          provider,
+          pluginName: plugin.name,
+          pluginTools: namespacedTools,
+          checkRateLimit: checkAndRecordClaudeRequest,
+          toolConfig: {
+            allowedDirs: config.claude.allowedDirs,
+            maxFileSizeKb: config.claude.maxFileSizeKb,
+            maxLogLines: config.claude.maxLogLines,
+          },
+        });
+      } else {
+        pluginClaude = createDisabledPluginClaude();
+      }
+
       const ctx: PluginContext = {
         db: pluginDb,
         name: plugin.name,
         version: plugin.version,
+        claude: pluginClaude,
       };
 
       // Run init hook with timeout

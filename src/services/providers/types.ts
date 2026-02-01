@@ -1,6 +1,24 @@
 import type { ToolConfig } from '../tools/types.js';
 
 /**
+ * Image input for multimodal requests
+ */
+export interface ImageInput {
+  /** Base64-encoded image data */
+  data: string;
+  /** Image MIME type */
+  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+}
+
+/**
+ * Options for the ask() method
+ */
+export interface AskOptions {
+  /** Images to include in the request (SDK provider only) */
+  images?: ImageInput[];
+}
+
+/**
  * User-specific configuration passed to providers
  */
 export interface UserConfig {
@@ -57,6 +75,13 @@ export interface CliProviderConfig extends BaseProviderConfig {
 }
 
 /**
+ * Configuration for SDK provider (Anthropic API)
+ */
+export interface SdkProviderConfig extends BaseProviderConfig {
+  apiKey: string;
+}
+
+/**
  * Provider interface - abstraction over different Claude backends
  */
 export interface ClaudeProvider {
@@ -66,7 +91,8 @@ export interface ClaudeProvider {
   ask(
     question: string,
     conversationHistory: ConversationMessage[],
-    userConfig: UserConfig
+    userConfig: UserConfig,
+    options?: AskOptions
   ): Promise<AskResult>;
 
   /**

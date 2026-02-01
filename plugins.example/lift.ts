@@ -36,21 +36,26 @@
  */
 
 import type { App, RespondFn } from '@slack/bolt';
-import type { Plugin, PluginApp, PluginContext } from '../src/plugins/index.js';
+import type { Plugin, PluginApp, PluginContext, PluginClaude } from '../src/plugins/index.js';
 import type { ToolDefinition } from '../src/services/tools/types.js';
 import type { PluginDatabase } from '../src/services/plugin-database.js';
 import { header, section, divider, context, buildResponse } from '../src/formatters/blocks.js';
 import { logger } from '../src/utils/logger.js';
+import { isValidImageUrl, fetchImageAsBase64 } from '../src/utils/image.js';
 
 // =============================================================================
 // Module-level state
 // =============================================================================
 
 let pluginDb: PluginDatabase | null = null;
+let pluginClaude: PluginClaude | undefined;
 
 // Cache user timezones to avoid repeated API calls (userId -> { tz, expires })
 const timezoneCache = new Map<string, { tz: string; expires: number }>();
 const TIMEZONE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+// Pending estimate expiration (15 minutes)
+const PENDING_ESTIMATE_TTL = 15 * 60 * 1000;
 
 // =============================================================================
 // Database Types (example of plugin-managed schema)
@@ -99,6 +104,36 @@ export interface QuerySpec {
   date?: Date;
   startDate?: Date;
   endDate?: Date;
+}
+
+/**
+ * Pending macro estimate from image analysis
+ */
+export interface PendingEstimate {
+  id: number;
+  user_id: string;
+  channel_id: string;
+  carbs_g: number;
+  protein_g: number;
+  fat_g: number;
+  food_description: string;
+  confidence: 'high' | 'medium' | 'low';
+  notes: string | null;
+  created_at: number;
+  expires_at: number;
+}
+
+/**
+ * Result from Claude vision macro estimation
+ */
+export interface MacroEstimateResult {
+  food_description: string;
+  estimated_carbs_g: number;
+  estimated_protein_g: number;
+  estimated_fat_g: number;
+  confidence: 'high' | 'medium' | 'low';
+  reference_object_used?: string;
+  notes?: string;
 }
 
 // =============================================================================
@@ -599,16 +634,68 @@ function formatMacroSummary(
 /**
  * Handle /lift m commands
  * @param client Slack client for fetching user timezone
+ * @param channelId Channel ID for pending estimate storage
+ * @param claude PluginClaude instance for image analysis
  */
 async function handleMacros(
   args: string[],
   userId: string,
+  channelId: string,
   db: PluginDatabase,
   respond: RespondFn,
-  client: SlackClient
+  client: SlackClient,
+  claude: PluginClaude | undefined
 ): Promise<void> {
   // Get user's timezone for accurate day boundaries
   const tz = await getUserTimezone(userId, client);
+
+  // Check for subcommands first
+  const subcommand = args[0]?.toLowerCase();
+
+  // Handle analyze <url>
+  if (subcommand === 'analyze') {
+    if (!claude || !claude.enabled) {
+      await respond(
+        buildResponse([
+          section(':x: Image analysis requires Claude to be enabled.'),
+          context('Set CLAUDE_ENABLED=true and configure ANTHROPIC_API_KEY'),
+        ])
+      );
+      return;
+    }
+
+    const imageUrl = args[1];
+    if (!imageUrl) {
+      await respond(
+        buildResponse([
+          section(':warning: Usage: `/lift m analyze <image_url>`'),
+          context('Upload an image to Slack and copy its URL'),
+        ])
+      );
+      return;
+    }
+
+    await handleAnalyze(imageUrl, userId, channelId, db, claude, respond);
+    return;
+  }
+
+  // Handle confirm
+  if (subcommand === 'confirm') {
+    await handleConfirm(userId, channelId, db, respond, tz);
+    return;
+  }
+
+  // Handle adjust <macros>
+  if (subcommand === 'adjust') {
+    await handleAdjust(args.slice(1), userId, channelId, db, respond, tz);
+    return;
+  }
+
+  // Handle cancel
+  if (subcommand === 'cancel') {
+    await handleCancel(userId, channelId, db, respond);
+    return;
+  }
 
   // 1. Try to parse as macro input (c20 p40 f15)
   const macros = parseMacroArgs(args);
@@ -645,6 +732,14 @@ async function handleMacros(
             '*Yesterday:* `/lift m -1`\n' +
             '*Date:* `/lift m 1/15`\n' +
             '*Range:* `/lift m 1/10-1/15`'
+        ),
+        divider(),
+        section(
+          '*Image Analysis:*\n' +
+            '`/lift m analyze <url>` - Estimate macros from image\n' +
+            '`/lift m confirm` - Log pending estimate\n' +
+            '`/lift m adjust c50 p30` - Adjust and log\n' +
+            '`/lift m cancel` - Discard estimate'
         ),
         context('c=carbs p=protein f=fat (grams)'),
       ])
@@ -813,7 +908,15 @@ function registerLiftCommand(app: App | PluginApp): void {
             await respond(buildResponse([section(':x: Database not initialized')]));
             return;
           }
-          await handleMacros(args.slice(1), command.user_id, pluginDb, respond, client as unknown as SlackClient);
+          await handleMacros(
+            args.slice(1),
+            command.user_id,
+            command.channel_id,
+            pluginDb,
+            respond,
+            client as unknown as SlackClient,
+            pluginClaude
+          );
           break;
         }
 
@@ -1020,22 +1123,415 @@ const warmupTool: ToolDefinition = {
   },
 };
 
+/**
+ * Vision tool for estimating macros from food images
+ * Claude uses this to structure its analysis of food photos
+ */
+const estimateFoodMacrosTool: ToolDefinition = {
+  spec: {
+    name: 'estimate_food_macros',
+    description:
+      'Analyze a food image and estimate macronutrients. Use this tool after viewing a food image ' +
+      'to provide a structured estimate. Look for reference objects (plates, utensils, hands) for scale.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        food_description: {
+          type: 'string',
+          description: 'Brief description of the food identified in the image',
+        },
+        estimated_carbs_g: {
+          type: 'number',
+          description: 'Estimated carbohydrates in grams',
+        },
+        estimated_protein_g: {
+          type: 'number',
+          description: 'Estimated protein in grams',
+        },
+        estimated_fat_g: {
+          type: 'number',
+          description: 'Estimated fat in grams',
+        },
+        confidence: {
+          type: 'string',
+          enum: ['high', 'medium', 'low'],
+          description: 'Confidence level: high (clear image, standard portions), medium (some uncertainty), low (obscured, unusual portions)',
+        },
+        reference_object_used: {
+          type: 'string',
+          description: 'Reference object used for scale estimation (e.g., "dinner plate", "fork", "hand")',
+        },
+        notes: {
+          type: 'string',
+          description: 'Additional notes about the estimate or assumptions made',
+        },
+      },
+      required: ['food_description', 'estimated_carbs_g', 'estimated_protein_g', 'estimated_fat_g', 'confidence'],
+    },
+  },
+  execute: async (input) => {
+    // This tool is used by Claude to structure its response
+    // The actual macro estimate is returned as a structured object
+    const estimate = input as MacroEstimateResult;
+    const calories = estimate.estimated_carbs_g * 4 + estimate.estimated_protein_g * 4 + estimate.estimated_fat_g * 9;
+
+    return JSON.stringify({
+      ...estimate,
+      estimated_calories: calories,
+    });
+  },
+};
+
+// =============================================================================
+// Image Analysis Functions
+// =============================================================================
+
+/**
+ * Analyze a food image using Claude vision
+ */
+async function analyzeFood(
+  imageUrl: string,
+  userId: string,
+  claude: PluginClaude
+): Promise<MacroEstimateResult | null> {
+  // Fetch and convert image to base64
+  const image = await fetchImageAsBase64(imageUrl);
+
+  // Ask Claude to analyze the image
+  const result = await claude.ask(
+    'Analyze this food image and estimate the macronutrients. ' +
+    'Look for reference objects like plates, utensils, or hands to estimate portion size. ' +
+    'Use the estimate_food_macros tool to provide your structured estimate.',
+    userId,
+    {
+      images: [image],
+      systemPromptAddition:
+        'You are a nutrition expert. Analyze food images to estimate macronutrients. ' +
+        'Be conservative in estimates - it\'s better to slightly underestimate than overestimate. ' +
+        'Always use the estimate_food_macros tool to provide structured output.',
+    }
+  );
+
+  // Extract the tool call result
+  const toolCall = result.toolCalls.find((tc) => tc.name === 'lift:estimate_food_macros');
+  if (!toolCall) {
+    logger.warn('Claude did not use estimate_food_macros tool', { response: result.response });
+    return null;
+  }
+
+  return toolCall.input as MacroEstimateResult;
+}
+
+/**
+ * Store a pending estimate for user confirmation
+ */
+function storePendingEstimate(
+  userId: string,
+  channelId: string,
+  estimate: MacroEstimateResult,
+  db: PluginDatabase
+): number {
+  const now = Date.now();
+  const result = db.prepare(
+    `INSERT INTO ${db.prefix}pending_estimates
+     (user_id, channel_id, carbs_g, protein_g, fat_g, food_description, confidence, notes, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    userId,
+    channelId,
+    estimate.estimated_carbs_g,
+    estimate.estimated_protein_g,
+    estimate.estimated_fat_g,
+    estimate.food_description,
+    estimate.confidence,
+    estimate.notes ?? null,
+    now,
+    now + PENDING_ESTIMATE_TTL
+  );
+
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Get the most recent pending estimate for a user
+ */
+function getPendingEstimate(userId: string, channelId: string, db: PluginDatabase): PendingEstimate | null {
+  // Clean up expired estimates first
+  db.prepare(`DELETE FROM ${db.prefix}pending_estimates WHERE expires_at < ?`).run(Date.now());
+
+  return db.prepare(
+    `SELECT * FROM ${db.prefix}pending_estimates
+     WHERE user_id = ? AND channel_id = ?
+     ORDER BY created_at DESC LIMIT 1`
+  ).get(userId, channelId) as PendingEstimate | null;
+}
+
+/**
+ * Delete a pending estimate
+ */
+function deletePendingEstimate(id: number, db: PluginDatabase): void {
+  db.prepare(`DELETE FROM ${db.prefix}pending_estimates WHERE id = ?`).run(id);
+}
+
+/**
+ * Format a macro estimate for display
+ */
+function formatEstimate(estimate: MacroEstimateResult | PendingEstimate): ReturnType<typeof section | typeof context>[] {
+  const carbs = 'estimated_carbs_g' in estimate ? estimate.estimated_carbs_g : estimate.carbs_g;
+  const protein = 'estimated_protein_g' in estimate ? estimate.estimated_protein_g : estimate.protein_g;
+  const fat = 'estimated_fat_g' in estimate ? estimate.estimated_fat_g : estimate.fat_g;
+  const description = estimate.food_description;
+  const confidence = estimate.confidence;
+  const notes = estimate.notes;
+
+  const calories = carbs * 4 + protein * 4 + fat * 9;
+  const confidenceEmoji = confidence === 'high' ? ':white_check_mark:' :
+                          confidence === 'medium' ? ':warning:' : ':grey_question:';
+
+  const blocks: ReturnType<typeof section | typeof context>[] = [
+    section(
+      `*${description}*\n` +
+      '```\n' +
+      `Carbs:   ${String(Math.round(carbs)).padStart(4)}g\n` +
+      `Protein: ${String(Math.round(protein)).padStart(4)}g\n` +
+      `Fat:     ${String(Math.round(fat)).padStart(4)}g\n` +
+      '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n' +
+      `Calories: ~${calories.toLocaleString()}\n` +
+      '```'
+    ),
+    context(`${confidenceEmoji} Confidence: ${confidence}${notes ? ` | ${notes}` : ''}`),
+  ];
+
+  return blocks;
+}
+
+/**
+ * Handle /lift m analyze <url> command
+ */
+async function handleAnalyze(
+  imageUrl: string,
+  userId: string,
+  channelId: string,
+  db: PluginDatabase,
+  claude: PluginClaude,
+  respond: RespondFn
+): Promise<void> {
+  // Validate URL
+  if (!isValidImageUrl(imageUrl)) {
+    await respond(
+      buildResponse([
+        section(':x: Invalid image URL. Must be HTTPS.'),
+        context('Tip: Upload an image to Slack and copy the URL'),
+      ])
+    );
+    return;
+  }
+
+  // Check if Claude supports images
+  if (!claude.supportsImages) {
+    await respond(
+      buildResponse([
+        section(':x: Image analysis requires SDK provider with vision support.'),
+        context('Set ANTHROPIC_API_KEY and CLAUDE_PROVIDER=sdk to enable'),
+      ])
+    );
+    return;
+  }
+
+  // Show processing message
+  await respond(buildResponse([section(':hourglass_flowing_sand: Analyzing image...')]));
+
+  try {
+    const estimate = await analyzeFood(imageUrl, userId, claude);
+
+    if (!estimate) {
+      await respond(
+        buildResponse([
+          section(':x: Could not estimate macros from this image.'),
+          context('Try a clearer image with visible portion sizes'),
+        ])
+      );
+      return;
+    }
+
+    // Store pending estimate for confirmation
+    storePendingEstimate(userId, channelId, estimate, db);
+
+    // Show estimate with confirmation prompt
+    await respond(
+      buildResponse([
+        header('Macro Estimate'),
+        ...formatEstimate(estimate),
+        divider(),
+        section(
+          '*Commands:*\n' +
+          '`/lift m confirm` - Log these macros\n' +
+          '`/lift m adjust c50 p30 f15` - Adjust and log\n' +
+          '`/lift m cancel` - Discard estimate'
+        ),
+        context('Estimate expires in 15 minutes'),
+      ])
+    );
+  } catch (error) {
+    logger.error('Failed to analyze food image', { error, imageUrl, userId });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    await respond(
+      buildResponse([
+        section(`:x: Failed to analyze image: ${message}`),
+      ])
+    );
+  }
+}
+
+/**
+ * Handle /lift m confirm command
+ */
+async function handleConfirm(
+  userId: string,
+  channelId: string,
+  db: PluginDatabase,
+  respond: RespondFn,
+  tz: string | null
+): Promise<void> {
+  const pending = getPendingEstimate(userId, channelId, db);
+
+  if (!pending) {
+    await respond(
+      buildResponse([
+        section(':x: No pending estimate to confirm.'),
+        context('Use `/lift m analyze <url>` to analyze a food image'),
+      ])
+    );
+    return;
+  }
+
+  // Log the macros
+  const macros = {
+    carbs: Math.round(pending.carbs_g),
+    protein: Math.round(pending.protein_g),
+    fat: Math.round(pending.fat_g),
+  };
+
+  try {
+    logMacros(userId, macros, db);
+    deletePendingEstimate(pending.id, db);
+
+    // Show confirmation + today's total
+    const totals = getDailyTotals(userId, 0, db, tz);
+    await respond(
+      buildResponse([
+        section(`:white_check_mark: Logged: ${macros.carbs}c ${macros.protein}p ${macros.fat}f`),
+        context(`From: ${pending.food_description}`),
+        divider(),
+        ...formatMacroSummary('Today', totals),
+      ])
+    );
+  } catch (error) {
+    logger.error('Failed to confirm macros', { error, userId });
+    await respond(buildResponse([section(':x: Failed to log macros. Please try again.')]));
+  }
+}
+
+/**
+ * Handle /lift m adjust <macros> command
+ */
+async function handleAdjust(
+  args: string[],
+  userId: string,
+  channelId: string,
+  db: PluginDatabase,
+  respond: RespondFn,
+  tz: string | null
+): Promise<void> {
+  const pending = getPendingEstimate(userId, channelId, db);
+
+  if (!pending) {
+    await respond(
+      buildResponse([
+        section(':x: No pending estimate to adjust.'),
+        context('Use `/lift m analyze <url>` to analyze a food image'),
+      ])
+    );
+    return;
+  }
+
+  // Parse adjusted macros
+  const adjustedMacros = parseMacroArgs(args);
+  if (!adjustedMacros) {
+    await respond(
+      buildResponse([
+        section(':x: Invalid macro format for adjustment.'),
+        context('Example: `/lift m adjust c50 p30 f15`'),
+      ])
+    );
+    return;
+  }
+
+  try {
+    logMacros(userId, adjustedMacros, db);
+    deletePendingEstimate(pending.id, db);
+
+    // Show confirmation + today's total
+    const totals = getDailyTotals(userId, 0, db, tz);
+    await respond(
+      buildResponse([
+        section(`:white_check_mark: Logged (adjusted): ${adjustedMacros.carbs}c ${adjustedMacros.protein}p ${adjustedMacros.fat}f`),
+        context(`Original estimate: ${Math.round(pending.carbs_g)}c ${Math.round(pending.protein_g)}p ${Math.round(pending.fat_g)}f`),
+        divider(),
+        ...formatMacroSummary('Today', totals),
+      ])
+    );
+  } catch (error) {
+    logger.error('Failed to log adjusted macros', { error, userId });
+    await respond(buildResponse([section(':x: Failed to log macros. Please try again.')]));
+  }
+}
+
+/**
+ * Handle /lift m cancel command
+ */
+async function handleCancel(
+  userId: string,
+  channelId: string,
+  db: PluginDatabase,
+  respond: RespondFn
+): Promise<void> {
+  const pending = getPendingEstimate(userId, channelId, db);
+
+  if (!pending) {
+    await respond(
+      buildResponse([
+        section(':information_source: No pending estimate to cancel.'),
+      ])
+    );
+    return;
+  }
+
+  deletePendingEstimate(pending.id, db);
+  await respond(
+    buildResponse([
+      section(':wastebasket: Estimate discarded.'),
+    ])
+  );
+}
+
 // =============================================================================
 // Plugin Export
 // =============================================================================
 
 const liftPlugin: Plugin = {
   name: 'lift',
-  version: '1.1.0',
-  description: 'Powerlifting calculator (Wilks, DOTS, 1RM, warmup) and macro tracker',
+  version: '2.0.0',
+  description: 'Powerlifting calculator (Wilks, DOTS, 1RM, warmup) and macro tracker with vision support',
 
   registerCommands: registerLiftCommand,
 
-  tools: [powerliftingTool, warmupTool],
+  tools: [powerliftingTool, warmupTool, estimateFoodMacrosTool],
 
   init: async (ctx: PluginContext) => {
-    // Store db reference for command handlers
+    // Store db and claude references for command handlers
     pluginDb = ctx.db;
+    pluginClaude = ctx.claude;
 
     // Tables are automatically prefixed with "plugin_lift_" via ctx.db.prefix
     // Note: init() must complete within 10 seconds or plugin loading fails
@@ -1079,6 +1575,28 @@ const liftPlugin: Plugin = {
         ON ${ctx.db.prefix}macros(user_id, logged_at)
     `);
 
+    // Pending estimates table for image analysis confirmation flow
+    ctx.db.exec(`
+      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}pending_estimates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        carbs_g INTEGER NOT NULL,
+        protein_g INTEGER NOT NULL,
+        fat_g INTEGER NOT NULL,
+        food_description TEXT NOT NULL,
+        confidence TEXT NOT NULL,
+        notes TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      )
+    `);
+
+    ctx.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}pending_user_channel
+        ON ${ctx.db.prefix}pending_estimates(user_id, channel_id)
+    `);
+
     logger.info('Lift plugin initialized', {
       version: ctx.version,
       tablePrefix: ctx.db.prefix,
@@ -1086,8 +1604,9 @@ const liftPlugin: Plugin = {
   },
 
   destroy: async (ctx: PluginContext) => {
-    // Clear module-level db reference
+    // Clear module-level references
     pluginDb = null;
+    pluginClaude = undefined;
     // Note: destroy() must complete within 5 seconds
     logger.info('Lift plugin destroyed', { name: ctx.name });
   },

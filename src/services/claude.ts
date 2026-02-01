@@ -2,20 +2,39 @@
  * Claude service - re-exports from providers for backward compatibility
  */
 
-import { createProvider, resetProvider, type CliProviderConfig } from './providers/index.js';
-import type { ClaudeProvider, UserConfig, AskResult, ConversationMessage, ToolCallLog } from './providers/types.js';
+import {
+  createProvider,
+  resetProvider,
+  providerSupportsImages,
+  type ProviderConfig,
+} from './providers/index.js';
+import type {
+  ClaudeProvider,
+  UserConfig,
+  AskResult,
+  AskOptions,
+  ImageInput,
+  ConversationMessage,
+  ToolCallLog,
+} from './providers/types.js';
 
 // Re-export types for backward compatibility
-export type { UserConfig, AskResult, ConversationMessage, ToolCallLog };
+export type { UserConfig, AskResult, AskOptions, ImageInput, ConversationMessage, ToolCallLog };
 
 /**
  * Configuration for Claude service
  */
 export interface ClaudeConfig {
+  /** Provider selection mode */
+  provider: 'auto' | 'sdk' | 'cli';
+  /** Anthropic API key (required for SDK provider) */
+  apiKey?: string;
   /** Path to CLI executable */
   cliPath: string;
   /** Model alias for CLI backend */
   cliModel: string;
+  /** Model for SDK provider */
+  sdkModel: string;
   /** Maximum tokens for response */
   maxTokens: number;
   /** Maximum tool calls per turn */
@@ -34,15 +53,18 @@ export class ClaudeService {
   private provider: ClaudeProvider;
 
   constructor(config: ClaudeConfig) {
-    const cliConfig: CliProviderConfig = {
+    const providerConfig: ProviderConfig = {
+      provider: config.provider,
+      apiKey: config.apiKey,
       cliPath: config.cliPath,
-      model: config.cliModel,
+      cliModel: config.cliModel,
+      sdkModel: config.sdkModel,
       maxTokens: config.maxTokens,
       maxToolCalls: config.maxToolCalls,
       maxIterations: config.maxIterations,
     };
 
-    this.provider = createProvider(cliConfig);
+    this.provider = createProvider(providerConfig);
   }
 
   /**
@@ -51,9 +73,10 @@ export class ClaudeService {
   async ask(
     question: string,
     conversationHistory: ConversationMessage[],
-    userConfig: UserConfig
+    userConfig: UserConfig,
+    options?: AskOptions
   ): Promise<AskResult> {
-    return this.provider.ask(question, conversationHistory, userConfig);
+    return this.provider.ask(question, conversationHistory, userConfig, options);
   }
 
   /**
@@ -61,6 +84,13 @@ export class ClaudeService {
    */
   get providerName(): string {
     return this.provider.name;
+  }
+
+  /**
+   * Check if the current provider supports image inputs
+   */
+  get supportsImages(): boolean {
+    return this.provider.name === 'sdk';
   }
 }
 
@@ -82,3 +112,8 @@ export function resetClaudeService(): void {
   claudeService = null;
   resetProvider();
 }
+
+/**
+ * Check if the current provider supports images
+ */
+export { providerSupportsImages };

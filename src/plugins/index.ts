@@ -26,7 +26,15 @@
  */
 
 // Types for plugin authors
-export type { Plugin, PluginApp, PluginContext } from './types.js';
+export type {
+  Plugin,
+  PluginApp,
+  PluginContext,
+  PluginClaude,
+  PluginClaudeOptions,
+  PluginClaudeResult,
+  PluginImageInput,
+} from './types.js';
 export { isValidPlugin } from './types.js';
 
 // Database access for plugins
