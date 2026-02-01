@@ -14,6 +14,18 @@ vi.mock('../../src/utils/logger.js', () => ({
   },
 }));
 
+// Mock the config module to avoid validation errors in tests
+vi.mock('../../src/config/index.js', () => ({
+  config: {
+    claude: undefined, // Claude not enabled in tests by default
+  },
+}));
+
+// Mock the ask module to avoid circular dependency issues
+vi.mock('../../src/commands/ask.js', () => ({
+  checkAndRecordClaudeRequest: vi.fn().mockReturnValue(true),
+}));
+
 // Import after mocking
 const { discoverPlugins, getPluginTools, destroyPlugins, getLoadedPlugins, registerPlugins } =
   await import('../../src/plugins/loader.js');

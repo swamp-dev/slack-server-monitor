@@ -141,10 +141,16 @@ export const ConfigSchema = z.object({
   }),
 
   claude: z.object({
+    /** Provider selection: auto (prefer SDK if API key set), sdk, cli */
+    provider: z.enum(['auto', 'sdk', 'cli']).default('auto'),
+    /** Anthropic API key for SDK provider (enables SDK mode when set) */
+    apiKey: z.string().optional(),
     /** Path to Claude CLI executable (validated to prevent command injection) */
     cliPath: SafeCliPathSchema.default('claude'),
     /** Model alias for CLI backend (e.g., 'sonnet', 'opus', 'haiku') */
     cliModel: SafeModelNameSchema.default('sonnet'),
+    /** Model ID for SDK provider (e.g., 'claude-sonnet-4-20250514') */
+    sdkModel: SafeModelNameSchema.default('claude-sonnet-4-20250514'),
     /** Maximum tokens for response */
     maxTokens: z.number().int().positive().default(2048),
     /** Maximum tool calls per turn to prevent runaway loops */

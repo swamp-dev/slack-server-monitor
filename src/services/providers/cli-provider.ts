@@ -9,6 +9,7 @@ import type {
   UserConfig,
   ConversationMessage,
   AskResult,
+  AskOptions,
   ToolCallLog,
 } from './types.js';
 
@@ -49,8 +50,16 @@ export class CliProvider implements ClaudeProvider {
   async ask(
     question: string,
     conversationHistory: ConversationMessage[],
-    userConfig: UserConfig
+    userConfig: UserConfig,
+    options?: AskOptions
   ): Promise<AskResult> {
+    // CLI provider doesn't support images - warn and continue
+    if (options?.images && options.images.length > 0) {
+      logger.warn('CLI provider does not support images, ignoring image input', {
+        imageCount: options.images.length,
+      });
+    }
+
     const toolCalls: ToolCallLog[] = [];
     let toolCallCount = 0;
 

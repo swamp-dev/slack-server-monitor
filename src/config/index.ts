@@ -95,8 +95,11 @@ function loadConfig(): Config {
     // Enable Claude if CLAUDE_ENABLED is set to true
     claude: process.env.CLAUDE_ENABLED === 'true'
       ? {
+          provider: (process.env.CLAUDE_PROVIDER ?? 'auto') as 'auto' | 'sdk' | 'cli',
+          apiKey: process.env.ANTHROPIC_API_KEY ?? undefined,
           cliPath: process.env.CLAUDE_CLI_PATH ?? 'claude',
           cliModel: process.env.CLAUDE_CLI_MODEL ?? 'sonnet',
+          sdkModel: process.env.CLAUDE_SDK_MODEL ?? 'claude-sonnet-4-20250514',
           maxTokens: parseIntWithDefault(process.env.CLAUDE_MAX_TOKENS, 2048),
           maxToolCalls: parseIntWithDefault(process.env.CLAUDE_MAX_TOOL_CALLS, 40),
           maxIterations: parseIntWithDefault(process.env.CLAUDE_MAX_ITERATIONS, 50),

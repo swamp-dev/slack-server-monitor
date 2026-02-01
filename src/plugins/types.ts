@@ -4,6 +4,71 @@ import type { PluginApp } from './plugin-app.js';
 import type { PluginDatabase } from '../services/plugin-database.js';
 
 /**
+ * Image input for multimodal Claude requests from plugins
+ */
+export interface PluginImageInput {
+  /** Base64-encoded image data */
+  data: string;
+  /** Image MIME type */
+  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+}
+
+/**
+ * Options for plugin Claude API calls
+ */
+export interface PluginClaudeOptions {
+  /** Include built-in server monitoring tools (default: false) */
+  includeBuiltinTools?: boolean;
+  /** Additional context to append to the system prompt */
+  systemPromptAddition?: string;
+  /** Maximum tokens for response (uses plugin default if not set) */
+  maxTokens?: number;
+  /** Images to include in the request (SDK provider only) */
+  images?: PluginImageInput[];
+}
+
+/**
+ * Result from a plugin Claude API call
+ */
+export interface PluginClaudeResult {
+  /** Claude's text response */
+  response: string;
+  /** Tool calls made during the request */
+  toolCalls: { name: string; input: Record<string, unknown> }[];
+  /** Token usage */
+  usage: { inputTokens: number; outputTokens: number };
+}
+
+/**
+ * Claude API interface for plugins
+ *
+ * Provides access to Claude AI for plugins that need AI capabilities.
+ * Rate limited by user quota.
+ */
+export interface PluginClaude {
+  /**
+   * Ask Claude a question with optional tool access
+   *
+   * @param question - The question to ask Claude
+   * @param userId - Slack user ID (for rate limiting)
+   * @param options - Optional configuration
+   * @returns Claude's response and metadata
+   * @throws Error if rate limited or Claude is disabled
+   */
+  ask(
+    question: string,
+    userId: string,
+    options?: PluginClaudeOptions
+  ): Promise<PluginClaudeResult>;
+
+  /** Whether Claude is enabled in the current configuration */
+  readonly enabled: boolean;
+
+  /** Whether the current provider supports image inputs */
+  readonly supportsImages: boolean;
+}
+
+/**
  * Context provided to plugins during lifecycle hooks
  *
  * Contains resources the plugin can use, including a scoped database accessor.
@@ -17,6 +82,8 @@ export interface PluginContext {
   name: string;
   /** Plugin's version string */
   version: string;
+  /** Claude API (undefined if Claude is not enabled) */
+  claude?: PluginClaude;
 }
 
 /**
