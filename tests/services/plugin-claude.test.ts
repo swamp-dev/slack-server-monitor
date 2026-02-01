@@ -223,6 +223,53 @@ describe('plugin-claude', () => {
       expect(result.toolCalls[0].name).toBe('lift:calculate_score');
       expect(result.toolCalls[0].input).toEqual({ value: 100 });
     });
+
+    it('should throw error when images passed to CLI provider', async () => {
+      const checkRateLimit = vi.fn().mockReturnValue(true);
+      const cliProvider = { ...mockProvider, name: 'cli' };
+
+      const cliClaude = createPluginClaude({
+        provider: cliProvider,
+        pluginName: 'lift',
+        pluginTools,
+        checkRateLimit,
+        toolConfig,
+      });
+
+      await expect(
+        cliClaude.ask('Analyze this food', 'U123', {
+          images: [{ data: 'base64data', mediaType: 'image/jpeg' }],
+        })
+      ).rejects.toThrow('Image analysis requires SDK provider');
+
+      expect(cliProvider.ask).not.toHaveBeenCalled();
+    });
+
+    it('should allow images with SDK provider', async () => {
+      const checkRateLimit = vi.fn().mockReturnValue(true);
+      const sdkProvider = { ...mockProvider, name: 'sdk' };
+
+      const sdkClaude = createPluginClaude({
+        provider: sdkProvider,
+        pluginName: 'lift',
+        pluginTools,
+        checkRateLimit,
+        toolConfig,
+      });
+
+      await sdkClaude.ask('Analyze this food', 'U123', {
+        images: [{ data: 'base64data', mediaType: 'image/jpeg' }],
+      });
+
+      expect(sdkProvider.ask).toHaveBeenCalledWith(
+        'Analyze this food',
+        [],
+        expect.anything(),
+        expect.objectContaining({
+          images: [{ data: 'base64data', mediaType: 'image/jpeg' }],
+        })
+      );
+    });
   });
 
   describe('createDisabledPluginClaude', () => {
