@@ -1,0 +1,41 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Manual trigger from GitHub UI
+
+# Only one deployment at a time
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  # Run CI checks first (reuse existing workflow logic)
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Deploy via Ansible
+    runs-on: [self-hosted, home]
+    needs: ci
+    # Only deploy on push to main (not on PRs)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Deploy slack_monitor role
+        run: |
+          cd "$ANSIBLE_REPO_PATH"
+          ansible-playbook -i inventory/hosts playbooks/site.yml \
+            --tags slack_monitor \
+            --vault-password-file "$VAULT_PASSWORD_FILE" \
+            -e slack_monitor_pull_latest=true \
+            ${{ github.event_name == 'workflow_dispatch' && '-e slack_monitor_force_rebuild=true' || '' }}
+
+      - name: Verify deployment
+        run: |
+          # Wait for container to start
+          sleep 5
+          # Check container is running
+          docker ps --filter "name=slack-monitor" --format "{{.Status}}" | grep -q "Up" || exit 1
+          echo "Deployment successful - container is running"
