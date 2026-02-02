@@ -573,10 +573,11 @@ describe('lift plugin vision commands', () => {
       expect(parseMacroArgs(['c-50'])).toBeNull();
     });
 
-    it('should reject decimal values', () => {
-      // Decimal values should not be parsed
-      expect(parseMacroArgs(['c3.14'])).toBeNull();
-      expect(parseMacroArgs(['p25.5'])).toBeNull();
+    it('should accept decimal values', () => {
+      // Decimal values are now supported for finer-grained tracking
+      expect(parseMacroArgs(['c3.14'])).toEqual({ carbs: 3.14, protein: 0, fat: 0 });
+      expect(parseMacroArgs(['p25.5'])).toEqual({ carbs: 0, protein: 25.5, fat: 0 });
+      expect(parseMacroArgs(['f2.5'])).toEqual({ carbs: 0, protein: 0, fat: 2.5 });
     });
 
     it('should log adjusted values, not original', () => {

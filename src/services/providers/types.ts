@@ -14,8 +14,10 @@ export interface ImageInput {
  * Options for the ask() method
  */
 export interface AskOptions {
-  /** Images to include in the request (SDK provider only) */
+  /** Images to include in the request (base64 encoded) */
   images?: ImageInput[];
+  /** Path to a local image file for CLI provider to read */
+  localImagePath?: string;
 }
 
 /**
@@ -76,6 +78,7 @@ export interface CliProviderConfig extends BaseProviderConfig {
 
 /**
  * Configuration for SDK provider (Anthropic API)
+ * @deprecated SDK provider has been removed - use CLI provider instead
  */
 export interface SdkProviderConfig extends BaseProviderConfig {
   apiKey: string;

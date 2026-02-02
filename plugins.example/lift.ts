@@ -36,12 +36,113 @@
  */
 
 import type { App, RespondFn } from '@slack/bolt';
+import type { WebClient } from '@slack/web-api';
 import type { Plugin, PluginApp, PluginContext, PluginClaude } from '../src/plugins/index.js';
 import type { ToolDefinition } from '../src/services/tools/types.js';
 import type { PluginDatabase } from '../src/services/plugin-database.js';
 import { header, section, divider, context, buildResponse } from '../src/formatters/blocks.js';
 import { logger } from '../src/utils/logger.js';
-import { isValidImageUrl, fetchImageAsBase64 } from '../src/utils/image.js';
+import { isValidImageUrl, fetchImageAsBase64, downloadImageToFile, cleanupTempImage } from '../src/utils/image.js';
+import crypto from 'crypto';
+
+// =============================================================================
+// Database Migration Utilities
+// =============================================================================
+
+/**
+ * Check if a column in a table is using INTEGER type instead of REAL
+ * SQLite stores type affinity in the schema, we can check it via pragma
+ */
+function columnNeedsMigration(db: PluginDatabase, tableName: string, columnName: string): boolean {
+  const tableInfo = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+    cid: number;
+    name: string;
+    type: string;
+    notnull: number;
+    dflt_value: string | null;
+    pk: number;
+  }>;
+
+  const column = tableInfo.find(col => col.name === columnName);
+  if (!column) return false;
+
+  // Check if column type is INTEGER (needs migration to REAL)
+  return column.type.toUpperCase() === 'INTEGER';
+}
+
+/**
+ * Migrate table columns from INTEGER to REAL
+ * SQLite doesn't support ALTER COLUMN, so we need to:
+ * 1. Create a new table with REAL columns
+ * 2. Copy data from old table
+ * 3. Drop old table
+ * 4. Rename new table
+ *
+ * This is safe because all existing integer values are valid as REAL values.
+ */
+async function migrateToRealColumns(
+  db: PluginDatabase,
+  tableName: string,
+  columns: string[]
+): Promise<void> {
+  // Check if any column needs migration
+  const needsMigration = columns.some(col => columnNeedsMigration(db, tableName, col));
+  if (!needsMigration) {
+    return;
+  }
+
+  logger.info(`Migrating ${tableName} columns to REAL type`, { columns });
+
+  // Get current table schema
+  const tableInfo = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+    cid: number;
+    name: string;
+    type: string;
+    notnull: number;
+    dflt_value: string | null;
+    pk: number;
+  }>;
+
+  // Build new table definition with REAL columns
+  const columnDefs = tableInfo.map(col => {
+    let type = col.type;
+    if (columns.includes(col.name)) {
+      type = 'REAL';
+    }
+    let def = `${col.name} ${type}`;
+    if (col.pk) def += ' PRIMARY KEY';
+    if (col.name === 'id') def += ' AUTOINCREMENT';
+    if (col.notnull && !col.pk) def += ' NOT NULL';
+    if (col.dflt_value !== null) def += ` DEFAULT ${col.dflt_value}`;
+    return def;
+  });
+
+  const columnNames = tableInfo.map(col => col.name).join(', ');
+  const tempTableName = `${tableName}_migration_temp`;
+
+  // Execute migration in a transaction
+  db.exec('BEGIN TRANSACTION');
+  try {
+    // Create temp table with new schema
+    db.exec(`CREATE TABLE ${tempTableName} (${columnDefs.join(', ')})`);
+
+    // Copy data
+    db.exec(`INSERT INTO ${tempTableName} (${columnNames}) SELECT ${columnNames} FROM ${tableName}`);
+
+    // Drop old table
+    db.exec(`DROP TABLE ${tableName}`);
+
+    // Rename temp table
+    db.exec(`ALTER TABLE ${tempTableName} RENAME TO ${tableName}`);
+
+    db.exec('COMMIT');
+    logger.info(`Successfully migrated ${tableName} to REAL columns`);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    logger.error(`Failed to migrate ${tableName}`, { error });
+    throw error;
+  }
+}
 
 // =============================================================================
 // Module-level state
@@ -56,6 +157,28 @@ const TIMEZONE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 // Pending estimate expiration (15 minutes)
 const PENDING_ESTIMATE_TTL = 15 * 60 * 1000;
+
+/**
+ * Food analysis system prompt for Claude
+ * Used when analyzing food images via /lift a
+ */
+const FOOD_ANALYSIS_PROMPT = `
+You are a nutrition expert analyzing food images to estimate macronutrients.
+
+When analyzing food images:
+1. Identify all food items visible in the image
+2. Estimate portion sizes using reference objects (plates, utensils, hands) if visible
+3. Estimate macronutrients: carbohydrates, protein, and fat in grams
+4. Consider cooking methods and hidden ingredients (oils, sauces, etc.)
+5. Be conservative - it's better to slightly underestimate than overestimate
+
+Use the estimate_food_macros tool to provide a structured estimate.
+
+Confidence levels:
+- high: Clear image, standard portions, identifiable foods
+- medium: Some obscured items, non-standard portions, or mixed dishes
+- low: Poor image quality, unusual foods, or significant uncertainty
+`;
 
 // =============================================================================
 // Database Types (example of plugin-managed schema)
@@ -262,9 +385,12 @@ function formatWarmupTable(targetWeight: number): ReturnType<typeof header | typ
 }
 
 // =============================================================================
-// Timezone Utilities (exported for testing)
+// Slack API Utilities (exported for testing)
 // =============================================================================
 
+/**
+ * Slack client interface for API calls
+ */
 export interface SlackClient {
   users: {
     info: (params: { user: string }) => Promise<{
@@ -272,6 +398,83 @@ export interface SlackClient {
       user?: { tz?: string; tz_offset?: number };
     }>;
   };
+  conversations: {
+    history: (params: { channel: string; limit?: number }) => Promise<{
+      ok: boolean;
+      messages?: Array<{
+        type: string;
+        ts: string;
+        user?: string;
+        files?: Array<{
+          id: string;
+          name: string;
+          mimetype: string;
+          url_private_download?: string;
+        }>;
+      }>;
+    }>;
+  };
+}
+
+/**
+ * Result from finding an image in channel
+ */
+export interface FoundImage {
+  url: string;
+  filename: string;
+  mimetype: string;
+}
+
+/**
+ * Find the most recent image file shared in a channel
+ *
+ * @param client - Slack client instance
+ * @param channelId - Channel ID to search
+ * @param botToken - Bot token for downloading private files
+ * @returns Image info or null if no recent image found
+ */
+export async function findRecentImageInChannel(
+  client: SlackClient,
+  channelId: string
+): Promise<FoundImage | null> {
+  try {
+    const result = await client.conversations.history({
+      channel: channelId,
+      limit: 20, // Check last 20 messages
+    });
+
+    if (!result.ok || !result.messages) {
+      logger.warn('Failed to fetch channel history', { channelId });
+      return null;
+    }
+
+    // Find first message with an image file
+    for (const message of result.messages) {
+      if (!message.files) continue;
+
+      for (const file of message.files) {
+        // Check if it's an image
+        if (file.mimetype?.startsWith('image/') && file.url_private_download) {
+          logger.debug('Found recent image in channel', {
+            channelId,
+            filename: file.name,
+            mimetype: file.mimetype,
+          });
+          return {
+            url: file.url_private_download,
+            filename: file.name,
+            mimetype: file.mimetype,
+          };
+        }
+      }
+    }
+
+    logger.debug('No recent image found in channel', { channelId });
+    return null;
+  } catch (error) {
+    logger.error('Error searching channel for images', { error, channelId });
+    return null;
+  }
 }
 
 /**
@@ -408,18 +611,20 @@ export function dateToStartOfDayInTimezone(date: Date, tz: string | null): numbe
 // =============================================================================
 
 /**
- * Parse macro arguments like "c20 p40 f15"
+ * Parse macro arguments like "c20 p40 f15" or "c20.5 p40 f2.5"
+ * Supports both integer and decimal values
  */
 export function parseMacroArgs(args: string[]): { carbs: number; fat: number; protein: number } | null {
   const result = { carbs: 0, fat: 0, protein: 0 };
   let found = false;
 
   for (const arg of args) {
-    const match = arg.toLowerCase().match(/^([cpf])(\d+)$/);
+    // Support both integers (c20) and decimals (c20.5, f2.5)
+    const match = arg.toLowerCase().match(/^([cpf])(\d+(?:\.\d+)?)$/);
     if (!match) continue;
 
     const [, type, value] = match;
-    const num = parseInt(value, 10);
+    const num = parseFloat(value);
     if (isNaN(num) || num < 0) continue;
 
     found = true;
@@ -920,6 +1125,115 @@ function registerLiftCommand(app: App | PluginApp): void {
           break;
         }
 
+        case 'a':
+        case 'analyze': {
+          // /lift a [context] - Quick food photo analysis from recent channel image
+          if (!pluginDb) {
+            await respond(buildResponse([section(':x: Database not initialized')]));
+            return;
+          }
+
+          if (!pluginClaude || !pluginClaude.enabled) {
+            await respond(
+              buildResponse([
+                section(':x: Image analysis requires Claude to be enabled.'),
+                context('Set CLAUDE_ENABLED=true'),
+              ])
+            );
+            return;
+          }
+
+          // Get context hint (e.g., "breakfast", "lunch", "dinner")
+          const contextHint = args.slice(1).join(' ');
+
+          // Find recent image in channel
+          const imageInfo = await findRecentImageInChannel(
+            client as unknown as SlackClient,
+            command.channel_id
+          );
+
+          if (!imageInfo) {
+            await respond(
+              buildResponse([
+                section(':warning: No recent image found in this channel.'),
+                context('Share or paste a food photo first, then use `/lift a`'),
+              ])
+            );
+            return;
+          }
+
+          // Download image to temp file with cryptographically random suffix
+          const randomSuffix = crypto.randomBytes(8).toString('hex');
+          const tempPath = `/tmp/lift-food-${Date.now()}-${randomSuffix}.jpg`;
+          try {
+            // Get bot token from environment for downloading Slack private files
+            const botToken = process.env.SLACK_BOT_TOKEN;
+            if (!botToken) {
+              logger.warn('SLACK_BOT_TOKEN not set, image download may fail for private Slack files');
+            }
+            await downloadImageToFile(imageInfo.url, tempPath, botToken);
+
+            // Show processing message
+            await respond(buildResponse([section(':hourglass_flowing_sand: Analyzing food image...')]));
+
+            // Call Claude CLI with local file reference
+            const prompt = contextHint
+              ? `Analyze this food image (${contextHint}) and estimate the macronutrients.`
+              : 'Analyze this food image and estimate the macronutrients.';
+
+            const result = await pluginClaude.ask(prompt, command.user_id, {
+              localImagePath: tempPath,
+              systemPromptAddition: FOOD_ANALYSIS_PROMPT,
+            });
+
+            // Parse result for structured macro estimate
+            const toolCall = result.toolCalls.find((tc) => tc.name === 'lift:estimate_food_macros');
+            if (toolCall) {
+              const estimate = toolCall.input as unknown as MacroEstimateResult;
+
+              // Store pending estimate for confirmation
+              storePendingEstimate(command.user_id, command.channel_id, estimate, pluginDb);
+
+              // Show estimate with confirmation prompt
+              await respond(
+                buildResponse([
+                  header('Macro Estimate'),
+                  ...formatEstimate(estimate),
+                  divider(),
+                  section(
+                    '*Commands:*\n' +
+                    '`/lift m confirm` - Log these macros\n' +
+                    '`/lift m adjust c50 p30 f15` - Adjust and log\n' +
+                    '`/lift m cancel` - Discard estimate'
+                  ),
+                  context('Estimate expires in 15 minutes'),
+                ])
+              );
+            } else {
+              // No structured estimate - show raw response
+              await respond(
+                buildResponse([
+                  header('Food Analysis'),
+                  section(result.response),
+                  context('Tip: Use `/lift m c<carbs> p<protein> f<fat>` to log macros'),
+                ])
+              );
+            }
+          } catch (error) {
+            logger.error('Failed to analyze food image', { error, imageUrl: imageInfo.url });
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            await respond(
+              buildResponse([
+                section(`:x: Failed to analyze image: ${message}`),
+              ])
+            );
+          } finally {
+            // Cleanup temp file
+            await cleanupTempImage(tempPath);
+          }
+          break;
+        }
+
         case 'warmup': {
           // /lift warmup <weight1> [weight2] ...
           const weights = args
@@ -959,6 +1273,7 @@ function registerLiftCommand(app: App | PluginApp): void {
           break;
         }
 
+        case 'h':
         case 'help':
         default:
           await respond(
@@ -972,13 +1287,28 @@ function registerLiftCommand(app: App | PluginApp): void {
                   '`/lift warmup <weight>` - Warmup sets'
               ),
               divider(),
+              section('*Quick Food Analysis:*'),
+              section(
+                '`/lift a` - Analyze latest photo in channel\n' +
+                  '`/lift a breakfast` - With meal context hint'
+              ),
+              divider(),
               section('*Macro Tracking:*'),
               section(
                 '`/lift m c20 p40 f15` - Log macros\n' +
                   '`/lift m` - Today\'s totals\n' +
                   '`/lift m -1` - Yesterday\n' +
                   '`/lift m 1/15` - Specific date\n' +
-                  '`/lift m 1/10-1/15` - Date range'
+                  '`/lift m 1/10-1/15` - Date range\n' +
+                  '`/lift m confirm` - Confirm pending estimate\n' +
+                  '`/lift m adjust c50 p30 f15` - Adjust and log'
+              ),
+              divider(),
+              section('*Quick Templates:*'),
+              section(
+                '`/lift a` \u2192 `confirm` \u2192 done!\n' +
+                  '`/lift m c150 p30 f10` - quick log\n' +
+                  '`/lift m` - check today'
               ),
             ])
           );
@@ -1558,17 +1888,22 @@ const liftPlugin: Plugin = {
 
     // Macros table for nutrition tracking
     // Upper bounds prevent fat-finger errors (e.g., c20000 instead of c200)
+    // Uses REAL columns to support decimal values (e.g., f2.5)
     ctx.db.exec(`
       CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}macros (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,
-        carbs_g INTEGER NOT NULL DEFAULT 0 CHECK(carbs_g >= 0 AND carbs_g <= 5000),
-        fat_g INTEGER NOT NULL DEFAULT 0 CHECK(fat_g >= 0 AND fat_g <= 2000),
-        protein_g INTEGER NOT NULL DEFAULT 0 CHECK(protein_g >= 0 AND protein_g <= 2000),
+        carbs_g REAL NOT NULL DEFAULT 0 CHECK(carbs_g >= 0 AND carbs_g <= 5000),
+        fat_g REAL NOT NULL DEFAULT 0 CHECK(fat_g >= 0 AND fat_g <= 2000),
+        protein_g REAL NOT NULL DEFAULT 0 CHECK(protein_g >= 0 AND protein_g <= 2000),
         logged_at INTEGER NOT NULL CHECK(logged_at > 0),
         created_at INTEGER NOT NULL CHECK(created_at > 0)
       )
     `);
+
+    // Migration: Convert existing INTEGER columns to REAL if needed
+    // SQLite doesn't support ALTER COLUMN, so we need to recreate the table
+    await migrateToRealColumns(ctx.db, `${ctx.db.prefix}macros`, ['carbs_g', 'fat_g', 'protein_g']);
 
     ctx.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}macros_user_date
@@ -1576,14 +1911,15 @@ const liftPlugin: Plugin = {
     `);
 
     // Pending estimates table for image analysis confirmation flow
+    // Uses REAL columns to support decimal values
     ctx.db.exec(`
       CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}pending_estimates (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,
         channel_id TEXT NOT NULL,
-        carbs_g INTEGER NOT NULL,
-        protein_g INTEGER NOT NULL,
-        fat_g INTEGER NOT NULL,
+        carbs_g REAL NOT NULL,
+        protein_g REAL NOT NULL,
+        fat_g REAL NOT NULL,
         food_description TEXT NOT NULL,
         confidence TEXT NOT NULL,
         notes TEXT,
@@ -1591,6 +1927,9 @@ const liftPlugin: Plugin = {
         expires_at INTEGER NOT NULL
       )
     `);
+
+    // Migration: Convert existing INTEGER columns to REAL if needed
+    await migrateToRealColumns(ctx.db, `${ctx.db.prefix}pending_estimates`, ['carbs_g', 'protein_g', 'fat_g']);
 
     ctx.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}pending_user_channel

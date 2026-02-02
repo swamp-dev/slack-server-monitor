@@ -23,8 +23,10 @@ export interface PluginClaudeOptions {
   systemPromptAddition?: string;
   /** Maximum tokens for response (uses plugin default if not set) */
   maxTokens?: number;
-  /** Images to include in the request (SDK provider only) */
+  /** Images to include in the request (base64 encoded) */
   images?: PluginImageInput[];
+  /** Path to a local image file for CLI provider to read */
+  localImagePath?: string;
 }
 
 /**
