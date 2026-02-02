@@ -44,7 +44,8 @@ export function createPluginClaude(config: PluginClaudeConfig): PluginClaude {
 
   return {
     enabled: true,
-    supportsImages: provider.name === 'sdk',
+    // CLI provider supports images via localImagePath
+    supportsImages: true,
 
     async ask(
       question: string,
@@ -82,23 +83,20 @@ export function createPluginClaude(config: PluginClaudeConfig): PluginClaude {
         toolConfig,
       };
 
-      // Convert images if provided
+      // Convert images if provided (for legacy support)
       const images: ImageInput[] | undefined = options?.images?.map((img: PluginImageInput) => ({
         data: img.data,
         mediaType: img.mediaType,
       }));
 
-      // Throw error if images requested but not supported
-      if (images && images.length > 0 && provider.name !== 'sdk') {
-        throw new Error(
-          'Image analysis requires SDK provider. Set ANTHROPIC_API_KEY and CLAUDE_PROVIDER=sdk to enable.'
-        );
-      }
-
       // Call the provider
       // Note: We're using the provider directly rather than the full tool loop
       // because plugins may want to handle tool calls differently
-      const result = await provider.ask(question, [], userConfig, { images });
+      // CLI provider supports localImagePath for image analysis
+      const result = await provider.ask(question, [], userConfig, {
+        images,
+        localImagePath: options?.localImagePath,
+      });
 
       logger.debug('Plugin Claude response', {
         plugin: pluginName,

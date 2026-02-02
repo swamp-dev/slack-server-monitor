@@ -1,6 +1,5 @@
 import { CliProvider } from './cli-provider.js';
-import { SdkProvider } from './sdk-provider.js';
-import type { ClaudeProvider, CliProviderConfig, SdkProviderConfig } from './types.js';
+import type { ClaudeProvider, CliProviderConfig } from './types.js';
 import { logger } from '../../utils/logger.js';
 
 export type {
@@ -12,27 +11,26 @@ export type {
   ConversationMessage,
   ToolCallLog,
   CliProviderConfig,
-  SdkProviderConfig,
 } from './types.js';
 
 /**
- * Provider selection mode
+ * Provider selection mode (CLI-only now)
  */
-export type ProviderMode = 'auto' | 'sdk' | 'cli';
+export type ProviderMode = 'cli';
 
 /**
  * Combined configuration for provider creation
  */
 export interface ProviderConfig {
-  /** Provider selection mode */
-  provider: ProviderMode;
-  /** Anthropic API key (required for SDK provider) */
+  /** Provider selection mode (only 'cli' supported) */
+  provider: ProviderMode | 'auto' | 'sdk' | 'hybrid'; // Accept legacy values for compatibility
+  /** Anthropic API key (no longer used - CLI only) */
   apiKey?: string;
   /** CLI path (required for CLI provider) */
   cliPath: string;
   /** Model for CLI provider */
   cliModel: string;
-  /** Model for SDK provider */
+  /** Model for SDK provider (legacy, ignored) */
   sdkModel: string;
   /** Max tokens for response */
   maxTokens: number;
@@ -46,48 +44,15 @@ export interface ProviderConfig {
 let providerInstance: ClaudeProvider | null = null;
 
 /**
- * Determine which provider to use based on config
- */
-function selectProvider(config: ProviderConfig): 'sdk' | 'cli' {
-  if (config.provider === 'sdk') {
-    if (!config.apiKey) {
-      throw new Error('SDK provider requires ANTHROPIC_API_KEY to be set');
-    }
-    return 'sdk';
-  }
-
-  if (config.provider === 'cli') {
-    return 'cli';
-  }
-
-  // Auto mode: prefer SDK if API key is available
-  if (config.apiKey) {
-    return 'sdk';
-  }
-
-  return 'cli';
-}
-
-/**
  * Create a Claude provider based on configuration
+ * Now always creates CLI provider (SDK/hybrid removed)
  */
 export function createProvider(config: ProviderConfig): ClaudeProvider {
-  const selectedProvider = selectProvider(config);
-
-  if (selectedProvider === 'sdk') {
-    // selectProvider only returns 'sdk' when apiKey is set
-    if (!config.apiKey) {
-      throw new Error('SDK provider selected but no API key configured');
-    }
-    logger.info('Using SDK provider (Anthropic API)', { model: config.sdkModel });
-    const sdkConfig: SdkProviderConfig = {
-      apiKey: config.apiKey,
-      model: config.sdkModel,
-      maxTokens: config.maxTokens,
-      maxToolCalls: config.maxToolCalls,
-      maxIterations: config.maxIterations,
-    };
-    return new SdkProvider(sdkConfig);
+  // Log if legacy SDK/hybrid was requested
+  if (config.provider === 'sdk' || config.provider === 'hybrid') {
+    logger.warn('SDK and hybrid providers have been removed. Using CLI provider instead.', {
+      requestedProvider: config.provider,
+    });
   }
 
   logger.info('Using CLI provider (Claude Code CLI)', { model: config.cliModel });
@@ -122,7 +87,9 @@ export function resetProvider(): void {
 
 /**
  * Check if the current provider supports images
+ * CLI provider now supports images via local file path
  */
 export function providerSupportsImages(): boolean {
-  return providerInstance?.name === 'sdk';
+  // CLI provider supports images via localImagePath option
+  return true;
 }

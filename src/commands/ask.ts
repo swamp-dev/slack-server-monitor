@@ -1,6 +1,7 @@
 import type { App, SlackCommandMiddlewareArgs, AllMiddlewareArgs } from '@slack/bolt';
 import { config } from '../config/index.js';
 import { getClaudeService } from '../services/claude.js';
+import type { AskOptions } from '../services/claude.js';
 import { getConversationStore } from '../services/conversation-store.js';
 import { getContextStore } from '../services/context-store.js';
 import { loadUserConfig } from '../services/user-config.js';
@@ -10,6 +11,7 @@ import { logger } from '../utils/logger.js';
 import { parseSlackError } from '../utils/slack-errors.js';
 import { section, context as contextBlock, error as errorBlock } from '../formatters/blocks.js';
 import { scrubSensitiveData } from '../formatters/scrub.js';
+import { isValidImageUrl, fetchImageAsBase64 } from '../utils/image.js';
 
 /**
  * Slack text limit for section blocks (with buffer for safety)
@@ -86,6 +88,26 @@ export function clearAllRateLimits(): void {
 let defaultContext: LoadedContext | null = null;
 
 /**
+ * Parse image URL from the question text
+ * Supports: --image <url> or --img <url>
+ * Returns { imageUrl, cleanQuestion } or null if no image URL found
+ */
+function parseImageFromQuestion(question: string): { imageUrl: string; cleanQuestion: string } | null {
+  // Match --image <url> or --img <url>
+  const imagePattern = /--(?:image|img)\s+(\S+)/i;
+  const imageMatch = imagePattern.exec(question);
+  if (!imageMatch?.[1]) {
+    return null;
+  }
+
+  const imageUrl = imageMatch[1];
+  // Remove the --image flag from the question
+  const cleanQuestion = question.replace(imagePattern, '').trim();
+
+  return { imageUrl, cleanQuestion };
+}
+
+/**
  * Resolve the active context for a channel
  * Returns the channel-specific context if set, otherwise the default context
  */
@@ -132,13 +154,13 @@ export async function registerAskCommand(app: App): Promise<void> {
   app.command('/ask', async ({ command, ack, respond, client }: SlackCommandMiddlewareArgs & AllMiddlewareArgs) => {
     const userId = command.user_id;
     const channelId = command.channel_id;
-    const question = command.text.trim();
+    const rawQuestion = command.text.trim();
 
     // Acknowledge immediately - this prevents Slack from showing a timeout error
     await ack();
 
     // Log that we received the command (helps diagnose authorization issues)
-    logger.info('Ask command received', { userId, channelId, questionLength: question.length });
+    logger.info('Ask command received', { userId, channelId, questionLength: rawQuestion.length });
 
     // Check if Claude is enabled
     if (!config.claude) {
@@ -151,9 +173,23 @@ export async function registerAskCommand(app: App): Promise<void> {
 
     const claudeConfig = config.claude;
 
-    if (!question) {
+    if (!rawQuestion) {
       await respond({
-        blocks: [errorBlock('Please provide a question. Usage: `/ask <your question>`')],
+        blocks: [errorBlock('Please provide a question. Usage: `/ask <your question>` or `/ask <question> --image <url>`')],
+        response_type: 'ephemeral',
+      });
+      return;
+    }
+
+    // Parse image URL from question if present
+    const imageParsed = parseImageFromQuestion(rawQuestion);
+    const question = imageParsed ? imageParsed.cleanQuestion : rawQuestion;
+    const imageUrl = imageParsed?.imageUrl;
+
+    // Validate question still exists after extracting image
+    if (!question && !imageUrl) {
+      await respond({
+        blocks: [errorBlock('Please provide a question. Usage: `/ask <your question>` or `/ask <question> --image <url>`')],
         response_type: 'ephemeral',
       });
       return;
@@ -216,7 +252,7 @@ export async function registerAskCommand(app: App): Promise<void> {
         contextDirContent: activeContext?.combined,
       });
 
-      // Get Claude service and ask
+      // Get Claude service
       const claude = getClaudeService({
         provider: claudeConfig.provider,
         apiKey: claudeConfig.apiKey,
@@ -228,7 +264,36 @@ export async function registerAskCommand(app: App): Promise<void> {
         maxIterations: claudeConfig.maxIterations,
       });
 
-      const result = await claude.ask(question, history, userConfig);
+      // Prepare ask options with image if provided
+      let askOptions: AskOptions | undefined;
+      if (imageUrl) {
+        // Validate image URL
+        if (!isValidImageUrl(imageUrl)) {
+          await respond({
+            blocks: [errorBlock('Invalid image URL. Must be HTTPS. Example: `/ask What food is this? --image https://files.slack.com/...`')],
+            response_type: 'ephemeral',
+          });
+          return;
+        }
+
+        try {
+          logger.debug('Fetching image for analysis', { imageUrl });
+          const imageData = await fetchImageAsBase64(imageUrl);
+          askOptions = { images: [imageData] };
+          logger.debug('Image fetched successfully', { mediaType: imageData.mediaType });
+        } catch (imgError) {
+          logger.error('Failed to fetch image', { error: imgError, imageUrl });
+          await respond({
+            blocks: [errorBlock(`Failed to fetch image: ${imgError instanceof Error ? imgError.message : 'Unknown error'}`)],
+            response_type: 'ephemeral',
+          });
+          return;
+        }
+      }
+
+      // Ask Claude with optional image
+      const actualQuestion = question || 'Analyze this image and describe what you see.';
+      const result = await claude.ask(actualQuestion, history, userConfig, askOptions);
 
       // Store the response
       store.addAssistantMessage(conversation.id, result.response);

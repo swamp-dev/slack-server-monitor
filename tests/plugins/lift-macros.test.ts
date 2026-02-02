@@ -129,6 +129,46 @@ describe('lift plugin macros tracker', () => {
         });
       });
 
+      it('should parse decimal values', () => {
+        expect(parseMacroArgs(['c20.5', 'p40', 'f2.5'])).toEqual({
+          carbs: 20.5,
+          protein: 40,
+          fat: 2.5,
+        });
+      });
+
+      it('should parse single decimal macro', () => {
+        expect(parseMacroArgs(['f2.5'])).toEqual({
+          carbs: 0,
+          protein: 0,
+          fat: 2.5,
+        });
+      });
+
+      it('should parse mixed integer and decimal values', () => {
+        expect(parseMacroArgs(['c100', 'p50.5', 'f15'])).toEqual({
+          carbs: 100,
+          protein: 50.5,
+          fat: 15,
+        });
+      });
+
+      it('should handle decimal with trailing zeros', () => {
+        expect(parseMacroArgs(['f5.0'])).toEqual({
+          carbs: 0,
+          protein: 0,
+          fat: 5.0,
+        });
+      });
+
+      it('should handle small decimal values', () => {
+        expect(parseMacroArgs(['f0.5'])).toEqual({
+          carbs: 0,
+          protein: 0,
+          fat: 0.5,
+        });
+      });
+
       it('should ignore invalid args and parse valid ones', () => {
         expect(parseMacroArgs(['invalid', 'p40', 'foo'])).toEqual({
           carbs: 0,
@@ -162,8 +202,8 @@ describe('lift plugin macros tracker', () => {
         expect(parseMacroArgs(['c-20'])).toBeNull();
       });
 
-      it('should not parse decimal numbers', () => {
-        expect(parseMacroArgs(['c20.5'])).toBeNull();
+      it('should not parse multiple decimal points', () => {
+        expect(parseMacroArgs(['c20.5.5'])).toBeNull();
       });
 
       it('should not parse without number', () => {

@@ -26,7 +26,7 @@ export type { UserConfig, AskResult, AskOptions, ImageInput, ConversationMessage
  */
 export interface ClaudeConfig {
   /** Provider selection mode */
-  provider: 'auto' | 'sdk' | 'cli';
+  provider: 'auto' | 'sdk' | 'cli' | 'hybrid';
   /** Anthropic API key (required for SDK provider) */
   apiKey?: string;
   /** Path to CLI executable */
@@ -88,10 +88,9 @@ export class ClaudeService {
 
   /**
    * Check if the current provider supports image inputs
+   * CLI provider now supports images via localImagePath option
    */
-  get supportsImages(): boolean {
-    return this.provider.name === 'sdk';
-  }
+  readonly supportsImages = true;
 }
 
 // Singleton instance

@@ -83,7 +83,7 @@ describe('plugin-claude', () => {
       });
       expect(sdkClaude.supportsImages).toBe(true);
 
-      // CLI provider does not support images
+      // CLI provider now supports images via localImagePath
       const cliClaude = createPluginClaude({
         provider: { ...mockProvider, name: 'cli' },
         pluginName: 'test',
@@ -91,7 +91,7 @@ describe('plugin-claude', () => {
         checkRateLimit,
         toolConfig,
       });
-      expect(cliClaude.supportsImages).toBe(false);
+      expect(cliClaude.supportsImages).toBe(true);
     });
 
     it('should call provider.ask with correct parameters', async () => {
@@ -224,7 +224,7 @@ describe('plugin-claude', () => {
       expect(result.toolCalls[0].input).toEqual({ value: 100 });
     });
 
-    it('should throw error when images passed to CLI provider', async () => {
+    it('should pass localImagePath to CLI provider for image analysis', async () => {
       const checkRateLimit = vi.fn().mockReturnValue(true);
       const cliProvider = { ...mockProvider, name: 'cli' };
 
@@ -236,13 +236,18 @@ describe('plugin-claude', () => {
         toolConfig,
       });
 
-      await expect(
-        cliClaude.ask('Analyze this food', 'U123', {
-          images: [{ data: 'base64data', mediaType: 'image/jpeg' }],
-        })
-      ).rejects.toThrow('Image analysis requires SDK provider');
+      await cliClaude.ask('Analyze this food', 'U123', {
+        localImagePath: '/tmp/test-image.jpg',
+      });
 
-      expect(cliProvider.ask).not.toHaveBeenCalled();
+      expect(cliProvider.ask).toHaveBeenCalledWith(
+        'Analyze this food',
+        [],
+        expect.anything(),
+        expect.objectContaining({
+          localImagePath: '/tmp/test-image.jpg',
+        })
+      );
     });
 
     it('should allow images with SDK provider', async () => {

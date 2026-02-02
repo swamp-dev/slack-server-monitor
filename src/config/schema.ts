@@ -141,9 +141,9 @@ export const ConfigSchema = z.object({
   }),
 
   claude: z.object({
-    /** Provider selection: auto (prefer SDK if API key set), sdk, cli */
-    provider: z.enum(['auto', 'sdk', 'cli']).default('auto'),
-    /** Anthropic API key for SDK provider (enables SDK mode when set) */
+    /** Provider selection: cli (SDK/hybrid removed). Legacy values accepted for compatibility. */
+    provider: z.enum(['auto', 'sdk', 'cli', 'hybrid']).default('cli'),
+    /** Anthropic API key (no longer used - SDK removed) */
     apiKey: z.string().optional(),
     /** Path to Claude CLI executable (validated to prevent command injection) */
     cliPath: SafeCliPathSchema.default('claude'),

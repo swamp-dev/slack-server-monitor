@@ -1,14 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createProvider, resetProvider, type ProviderConfig } from '../../../src/services/providers/index.js';
 
-// Mock the SdkProvider to avoid needing real API key
-vi.mock('../../../src/services/providers/sdk-provider.js', () => ({
-  SdkProvider: vi.fn().mockImplementation(() => ({
-    name: 'sdk',
-    ask: vi.fn(),
-  })),
-}));
-
 // Mock the CliProvider
 vi.mock('../../../src/services/providers/cli-provider.js', () => ({
   CliProvider: vi.fn().mockImplementation(() => ({
@@ -35,7 +27,7 @@ describe('provider factory', () => {
 
   describe('createProvider', () => {
     const baseConfig: ProviderConfig = {
-      provider: 'auto',
+      provider: 'cli',
       cliPath: 'claude',
       cliModel: 'sonnet',
       sdkModel: 'claude-sonnet-4-20250514',
@@ -44,25 +36,13 @@ describe('provider factory', () => {
       maxIterations: 20,
     };
 
-    describe('auto mode', () => {
-      it('should create CLI provider when no API key set', () => {
-        const config: ProviderConfig = { ...baseConfig, provider: 'auto' };
+    describe('cli mode (default)', () => {
+      it('should create CLI provider', () => {
+        const config: ProviderConfig = { ...baseConfig, provider: 'cli' };
         const provider = createProvider(config);
         expect(provider.name).toBe('cli');
       });
 
-      it('should create SDK provider when API key is set', () => {
-        const config: ProviderConfig = {
-          ...baseConfig,
-          provider: 'auto',
-          apiKey: 'sk-ant-test-key',
-        };
-        const provider = createProvider(config);
-        expect(provider.name).toBe('sdk');
-      });
-    });
-
-    describe('explicit cli mode', () => {
       it('should create CLI provider even when API key is set', () => {
         const config: ProviderConfig = {
           ...baseConfig,
@@ -72,28 +52,33 @@ describe('provider factory', () => {
         const provider = createProvider(config);
         expect(provider.name).toBe('cli');
       });
+    });
 
-      it('should create CLI provider without API key', () => {
-        const config: ProviderConfig = { ...baseConfig, provider: 'cli' };
+    describe('legacy modes (deprecated)', () => {
+      it('should create CLI provider when auto mode is requested (SDK removed)', () => {
+        const config: ProviderConfig = { ...baseConfig, provider: 'auto' };
         const provider = createProvider(config);
         expect(provider.name).toBe('cli');
       });
-    });
 
-    describe('explicit sdk mode', () => {
-      it('should create SDK provider when API key is set', () => {
+      it('should create CLI provider when sdk mode is requested (SDK removed)', () => {
         const config: ProviderConfig = {
           ...baseConfig,
           provider: 'sdk',
           apiKey: 'sk-ant-test-key',
         };
         const provider = createProvider(config);
-        expect(provider.name).toBe('sdk');
+        expect(provider.name).toBe('cli');
       });
 
-      it('should throw error when SDK mode requested without API key', () => {
-        const config: ProviderConfig = { ...baseConfig, provider: 'sdk' };
-        expect(() => createProvider(config)).toThrow('SDK provider requires ANTHROPIC_API_KEY');
+      it('should create CLI provider when hybrid mode is requested (hybrid removed)', () => {
+        const config: ProviderConfig = {
+          ...baseConfig,
+          provider: 'hybrid',
+          apiKey: 'sk-ant-test-key',
+        };
+        const provider = createProvider(config);
+        expect(provider.name).toBe('cli');
       });
     });
 
@@ -114,27 +99,6 @@ describe('provider factory', () => {
         expect(CliProvider).toHaveBeenCalledWith(
           expect.objectContaining({
             model: 'opus',
-          })
-        );
-      });
-
-      it('should pass SDK model to SDK provider', async () => {
-        const { SdkProvider } = await import(
-          '../../../src/services/providers/sdk-provider.js'
-        );
-
-        const config: ProviderConfig = {
-          ...baseConfig,
-          provider: 'sdk',
-          apiKey: 'test-key',
-          sdkModel: 'claude-opus-4-20250514',
-        };
-
-        createProvider(config);
-
-        expect(SdkProvider).toHaveBeenCalledWith(
-          expect.objectContaining({
-            model: 'claude-opus-4-20250514',
           })
         );
       });

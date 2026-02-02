@@ -53,10 +53,25 @@ export class CliProvider implements ClaudeProvider {
     userConfig: UserConfig,
     options?: AskOptions
   ): Promise<AskResult> {
-    // CLI provider doesn't support images - warn and continue
+    // Handle image options
+    // CLI provider supports localImagePath (passed to CLI for Read tool)
+    // Base64 images are not supported (would need SDK)
     if (options?.images && options.images.length > 0) {
-      logger.warn('CLI provider does not support images, ignoring image input', {
+      logger.warn('CLI provider does not support base64 images, use localImagePath instead', {
         imageCount: options.images.length,
+      });
+    }
+
+    // If localImagePath is provided, validate and prepend file reference to question
+    let effectiveQuestion = question;
+    if (options?.localImagePath) {
+      // Validate path is absolute to prevent directory traversal
+      if (!options.localImagePath.startsWith('/')) {
+        throw new Error('localImagePath must be an absolute path');
+      }
+      effectiveQuestion = `Please analyze the image at ${options.localImagePath}\n\n${question}`;
+      logger.debug('CLI provider: including local image path in prompt', {
+        localImagePath: options.localImagePath,
       });
     }
 
@@ -76,7 +91,7 @@ export class CliProvider implements ClaudeProvider {
 
     // Build conversation context with escaped role markers
     let context = this.buildConversationContext(conversationHistory);
-    context += `\nUser: ${this.escapeRoleMarkers(question)}\n`;
+    context += `\nUser: ${this.escapeRoleMarkers(effectiveQuestion)}\n`;
 
     // Tool loop with iteration limit (defense in depth)
     let iteration = 0;
