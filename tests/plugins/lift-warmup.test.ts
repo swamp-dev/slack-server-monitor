@@ -34,8 +34,8 @@ function calculatePlateConfig(targetWeight: number): string {
       pairCount++;
     }
     if (pairCount > 0) {
-      // Show as plates per side (e.g., "45x1" means one 45 on each side)
-      plates.push(`${plateSize}x${pairCount}`);
+      // Show total plate count (e.g., "45x2" means two 45s total, one per side)
+      plates.push(`${plateSize}x${pairCount * 2}`);
     }
   }
 
@@ -99,27 +99,27 @@ describe('lift plugin warmup calculator', () => {
 
     describe('simple plate configurations', () => {
       it('should calculate bar + 2.5 plates', () => {
-        expect(calculatePlateConfig(50)).toBe('Bar + 2.5x1');
+        expect(calculatePlateConfig(50)).toBe('Bar + 2.5x2');
       });
 
       it('should calculate bar + 5 plates', () => {
-        expect(calculatePlateConfig(55)).toBe('Bar + 5x1');
+        expect(calculatePlateConfig(55)).toBe('Bar + 5x2');
       });
 
       it('should calculate bar + 10 plates', () => {
-        expect(calculatePlateConfig(65)).toBe('Bar + 10x1');
+        expect(calculatePlateConfig(65)).toBe('Bar + 10x2');
       });
 
       it('should calculate bar + 25 plates', () => {
-        expect(calculatePlateConfig(95)).toBe('Bar + 25x1');
+        expect(calculatePlateConfig(95)).toBe('Bar + 25x2');
       });
 
       it('should calculate bar + 35 plates', () => {
-        expect(calculatePlateConfig(115)).toBe('Bar + 35x1');
+        expect(calculatePlateConfig(115)).toBe('Bar + 35x2');
       });
 
       it('should calculate bar + 45 plates', () => {
-        expect(calculatePlateConfig(135)).toBe('Bar + 45x1');
+        expect(calculatePlateConfig(135)).toBe('Bar + 45x2');
       });
     });
 
@@ -132,40 +132,40 @@ describe('lift plugin warmup calculator', () => {
         // 10: 15 >= 20? No
         // 5: 15 >= 10? Yes, 15-10=5, count=1
         // 2.5: 5 >= 5? Yes, 5-5=0, count=1
-        expect(calculatePlateConfig(200)).toBe('Bar + 45x1 + 25x1 + 5x1 + 2.5x1');
+        expect(calculatePlateConfig(200)).toBe('Bar + 45x2 + 25x2 + 5x2 + 2.5x2');
       });
 
       it('should calculate 225 lbs correctly (common weight)', () => {
         // 225 - 45 = 180 remaining
         // 45: 180 >= 90? Yes, 180-90=90, count=1
         // 45: 90 >= 90? Yes, 90-90=0, count=2
-        expect(calculatePlateConfig(225)).toBe('Bar + 45x2');
+        expect(calculatePlateConfig(225)).toBe('Bar + 45x4');
       });
 
       it('should calculate 315 lbs correctly (common weight)', () => {
         // 315 - 45 = 270 remaining
         // 45: 270 >= 90? Yes -> 180 -> 90 -> 0, count=3
-        expect(calculatePlateConfig(315)).toBe('Bar + 45x3');
+        expect(calculatePlateConfig(315)).toBe('Bar + 45x6');
       });
 
       it('should calculate 135 lbs correctly (common weight)', () => {
         // 135 - 45 = 90 remaining
         // 45: 90 >= 90? Yes, 90-90=0, count=1
-        expect(calculatePlateConfig(135)).toBe('Bar + 45x1');
+        expect(calculatePlateConfig(135)).toBe('Bar + 45x2');
       });
 
       it('should calculate 185 lbs correctly', () => {
         // 185 - 45 = 140 remaining
         // 45: 140 >= 90? Yes, 140-90=50, count=1
         // 25: 50 >= 50? Yes, 50-50=0, count=1
-        expect(calculatePlateConfig(185)).toBe('Bar + 45x1 + 25x1');
+        expect(calculatePlateConfig(185)).toBe('Bar + 45x2 + 25x2');
       });
 
       it('should calculate 155 lbs correctly', () => {
         // 155 - 45 = 110 remaining
         // 45: 110 >= 90? Yes, 110-90=20, count=1
         // 10: 20 >= 20? Yes, 20-20=0, count=1
-        expect(calculatePlateConfig(155)).toBe('Bar + 45x1 + 10x1');
+        expect(calculatePlateConfig(155)).toBe('Bar + 45x2 + 10x2');
       });
     });
 
@@ -174,14 +174,14 @@ describe('lift plugin warmup calculator', () => {
         // 500 - 45 = 455 remaining
         // 45: 455 -> 365 -> 275 -> 185 -> 95 -> 5, count=5
         // 2.5: 5 >= 5? Yes, count=1
-        expect(calculatePlateConfig(500)).toBe('Bar + 45x5 + 2.5x1');
+        expect(calculatePlateConfig(500)).toBe('Bar + 45x10 + 2.5x2');
       });
 
       it('should handle weights with remainders', () => {
         // 205 - 45 = 160 remaining
         // 45: 160 >= 90? Yes, 160-90=70, count=1
         // 35: 70 >= 70? Yes, 70-70=0, count=1
-        expect(calculatePlateConfig(205)).toBe('Bar + 45x1 + 35x1');
+        expect(calculatePlateConfig(205)).toBe('Bar + 45x2 + 35x2');
       });
 
       it('should handle non-loadable weights (remainder after algorithm)', () => {
@@ -201,16 +201,16 @@ describe('lift plugin warmup calculator', () => {
       expect(sets).toHaveLength(4);
       // 40% of 200 = 80 lbs: 80 - 45 = 35 remaining
       // 10: 35 >= 20? Yes -> 15, 5: 15 >= 10? Yes -> 5, 2.5: 5 >= 5? Yes
-      expect(sets[0]).toEqual({ percent: 40, weight: 80, config: 'Bar + 10x1 + 5x1 + 2.5x1' });
+      expect(sets[0]).toEqual({ percent: 40, weight: 80, config: 'Bar + 10x2 + 5x2 + 2.5x2' });
       // 60% of 200 = 120 lbs: 120 - 45 = 75 remaining
       // 35: 75 >= 70? Yes -> 5, 2.5: 5 >= 5? Yes
-      expect(sets[1]).toEqual({ percent: 60, weight: 120, config: 'Bar + 35x1 + 2.5x1' });
+      expect(sets[1]).toEqual({ percent: 60, weight: 120, config: 'Bar + 35x2 + 2.5x2' });
       // 80% of 200 = 160 lbs: 160 - 45 = 115 remaining
       // 45: 115 >= 90? Yes -> 25, 10: 25 >= 20? Yes -> 5, 2.5: 5 >= 5? Yes
-      expect(sets[2]).toEqual({ percent: 80, weight: 160, config: 'Bar + 45x1 + 10x1 + 2.5x1' });
+      expect(sets[2]).toEqual({ percent: 80, weight: 160, config: 'Bar + 45x2 + 10x2 + 2.5x2' });
       // 100% of 200 = 200 lbs: 200 - 45 = 155 remaining
       // 45: 155 >= 90? Yes -> 65, 25: 65 >= 50? Yes -> 15, 5: 15 >= 10? Yes -> 5, 2.5: 5 >= 5? Yes
-      expect(sets[3]).toEqual({ percent: 100, weight: 200, config: 'Bar + 45x1 + 25x1 + 5x1 + 2.5x1' });
+      expect(sets[3]).toEqual({ percent: 100, weight: 200, config: 'Bar + 45x2 + 25x2 + 5x2 + 2.5x2' });
     });
 
     it('should calculate correct percentages for 315 lbs', () => {
@@ -218,16 +218,16 @@ describe('lift plugin warmup calculator', () => {
 
       // 40% of 315 = 126 lbs: 126 - 45 = 81 remaining
       // 35: 81 >= 70? Yes -> 11, 5: 11 >= 10? Yes -> 1
-      expect(sets[0]).toEqual({ percent: 40, weight: 126, config: 'Bar + 35x1 + 5x1' });
+      expect(sets[0]).toEqual({ percent: 40, weight: 126, config: 'Bar + 35x2 + 5x2' });
       // 60% of 315 = 189 lbs: 189 - 45 = 144 remaining
       // 45: 144 >= 90? Yes -> 54, 25: 54 >= 50? Yes -> 4
-      expect(sets[1]).toEqual({ percent: 60, weight: 189, config: 'Bar + 45x1 + 25x1' });
+      expect(sets[1]).toEqual({ percent: 60, weight: 189, config: 'Bar + 45x2 + 25x2' });
       // 80% of 315 = 252 lbs: 252 - 45 = 207 remaining
       // 45: 207 >= 90? Yes -> 117 -> 27, count=2, 10: 27 >= 20? Yes -> 7, 2.5: 7 >= 5? Yes -> 2
-      expect(sets[2]).toEqual({ percent: 80, weight: 252, config: 'Bar + 45x2 + 10x1 + 2.5x1' });
+      expect(sets[2]).toEqual({ percent: 80, weight: 252, config: 'Bar + 45x4 + 10x2 + 2.5x2' });
       // 100% of 315 = 315 lbs: 315 - 45 = 270 remaining
       // 45: 270 >= 90? Yes -> 180 -> 90 -> 0, count=3
-      expect(sets[3]).toEqual({ percent: 100, weight: 315, config: 'Bar + 45x3' });
+      expect(sets[3]).toEqual({ percent: 100, weight: 315, config: 'Bar + 45x6' });
     });
 
     it('should handle light weights with dumbbells', () => {
@@ -239,10 +239,10 @@ describe('lift plugin warmup calculator', () => {
       expect(sets[1]).toEqual({ percent: 60, weight: 48, config: 'Bar only' });
       // 80% of 80 = 64 lbs: 64 - 45 = 19 remaining
       // 5: 19 >= 10? Yes -> 9, 2.5: 9 >= 5? Yes -> 4
-      expect(sets[2]).toEqual({ percent: 80, weight: 64, config: 'Bar + 5x1 + 2.5x1' });
+      expect(sets[2]).toEqual({ percent: 80, weight: 64, config: 'Bar + 5x2 + 2.5x2' });
       // 100% of 80 = 80 lbs: 80 - 45 = 35 remaining
       // 10: 35 >= 20? Yes -> 15, 5: 15 >= 10? Yes -> 5, 2.5: 5 >= 5? Yes
-      expect(sets[3]).toEqual({ percent: 100, weight: 80, config: 'Bar + 10x1 + 5x1 + 2.5x1' });
+      expect(sets[3]).toEqual({ percent: 100, weight: 80, config: 'Bar + 10x2 + 5x2 + 2.5x2' });
     });
 
     it('should round weights to nearest integer', () => {
