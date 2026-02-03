@@ -4,13 +4,14 @@
  * These tests verify macro parsing, date calculations, and formatting
  * without needing to test Slack integration.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   parseMacroArgs,
   parseDate,
   parseQueryArgs,
   formatDateLabel,
   getStartOfDayInTimezone,
+  dateToStartOfDayInTimezone,
   type MacroTotals,
 } from '../../plugins.example/lift.js';
 
@@ -546,17 +547,17 @@ describe('lift plugin macros tracker', () => {
 
   describe('timezone utilities', () => {
     describe('getStartOfDayInTimezone', () => {
-      it('should return server time when tz is null', () => {
+      it('should return UTC midnight when tz is null', () => {
         const result = getStartOfDayInTimezone(null, 0);
         const now = new Date();
-        const expected = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const expected = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
         expect(result).toBe(expected);
       });
 
-      it('should return yesterday when daysAgo is 1', () => {
+      it('should return yesterday UTC midnight when daysAgo is 1', () => {
         const result = getStartOfDayInTimezone(null, 1);
         const now = new Date();
-        const expected = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - 24 * 60 * 60 * 1000;
+        const expected = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - 24 * 60 * 60 * 1000;
         expect(result).toBe(expected);
       });
 
@@ -587,6 +588,74 @@ describe('lift plugin macros tracker', () => {
         const result = getStartOfDayInTimezone('Asia/Kolkata', 0);
         expect(typeof result).toBe('number');
         expect(result).toBeGreaterThan(0);
+      });
+    });
+
+    describe('getStartOfDayInTimezone (pinned timestamps)', () => {
+      beforeEach(() => {
+        // Pin to 2026-02-03T15:30:00Z
+        vi.useFakeTimers({ now: Date.UTC(2026, 1, 3, 15, 30, 0) });
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('should return midnight UTC for UTC timezone', () => {
+        const result = getStartOfDayInTimezone('UTC', 0);
+        // Midnight UTC Feb 3 2026
+        expect(result).toBe(Date.UTC(2026, 1, 3));
+      });
+
+      it('should return midnight EST for America/New_York', () => {
+        const result = getStartOfDayInTimezone('America/New_York', 0);
+        // Midnight EST = 5 AM UTC (EST is UTC-5)
+        expect(result).toBe(Date.UTC(2026, 1, 3, 5));
+      });
+
+      it('should return midnight PST for America/Los_Angeles', () => {
+        const result = getStartOfDayInTimezone('America/Los_Angeles', 0);
+        // Midnight PST = 8 AM UTC (PST is UTC-8)
+        expect(result).toBe(Date.UTC(2026, 1, 3, 8));
+      });
+
+      it('should return midnight IST for Asia/Kolkata (+5:30)', () => {
+        const result = getStartOfDayInTimezone('Asia/Kolkata', 0);
+        // Midnight IST = previous day 18:30 UTC (IST is UTC+5:30)
+        expect(result).toBe(Date.UTC(2026, 1, 2, 18, 30));
+      });
+
+      it('should handle daysAgo=1 with EST timezone', () => {
+        const result = getStartOfDayInTimezone('America/New_York', 1);
+        // Midnight EST Feb 2 = 5 AM UTC Feb 2
+        expect(result).toBe(Date.UTC(2026, 1, 2, 5));
+      });
+
+      it('should use UTC date parts when tz is null', () => {
+        // Pin to 2 AM UTC Feb 3 = 9 PM EST Feb 2
+        // Null tz should use UTC date (Feb 3), NOT local date
+        vi.setSystemTime(Date.UTC(2026, 1, 3, 2, 0, 0));
+        const result = getStartOfDayInTimezone(null, 0);
+        // Should be midnight UTC Feb 3
+        expect(result).toBe(Date.UTC(2026, 1, 3));
+      });
+    });
+
+    describe('dateToStartOfDayInTimezone (pinned timestamps)', () => {
+      it('should return midnight EST for a date in EST timezone', () => {
+        // 3:30 PM UTC Feb 3 = 10:30 AM EST Feb 3
+        const date = new Date(Date.UTC(2026, 1, 3, 15, 30, 0));
+        const result = dateToStartOfDayInTimezone(date, 'America/New_York');
+        // Midnight EST Feb 3 = 5 AM UTC Feb 3
+        expect(result).toBe(Date.UTC(2026, 1, 3, 5));
+      });
+
+      it('should handle cross-day boundary in EST', () => {
+        // 3 AM UTC Feb 4 = 10 PM EST Feb 3
+        const date = new Date(Date.UTC(2026, 1, 4, 3, 0, 0));
+        const result = dateToStartOfDayInTimezone(date, 'America/New_York');
+        // In EST this is still Feb 3, so midnight EST Feb 3 = 5 AM UTC Feb 3
+        expect(result).toBe(Date.UTC(2026, 1, 3, 5));
       });
     });
   });
