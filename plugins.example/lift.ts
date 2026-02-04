@@ -504,6 +504,30 @@ export async function getUserTimezone(userId: string, client: SlackClient): Prom
 }
 
 /**
+ * Parse the UTC offset in milliseconds for a given date in a timezone.
+ * Positive = east of UTC, negative = west of UTC.
+ * Returns 0 if offset cannot be parsed (e.g., for UTC/GMT).
+ */
+export function parseTimezoneOffsetMs(date: Date, tz: string): number {
+  const tzFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    timeZoneName: 'shortOffset',
+  });
+  const tzParts = tzFormatter.formatToParts(date);
+  const offsetPart = tzParts.find((p) => p.type === 'timeZoneName')?.value || '';
+
+  const offsetMatch = offsetPart.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+  if (offsetMatch) {
+    const sign = offsetMatch[1] === '+' ? 1 : -1;
+    const hours = parseInt(offsetMatch[2], 10);
+    const minutes = parseInt(offsetMatch[3] || '0', 10);
+    return sign * (hours * 60 + minutes) * 60 * 1000;
+  }
+
+  return 0;
+}
+
+/**
  * Get start of day in a specific timezone
  * @param tz IANA timezone string (e.g., "America/New_York")
  * @param daysAgo Number of days ago (0 = today, 1 = yesterday)
@@ -512,9 +536,9 @@ export function getStartOfDayInTimezone(tz: string | null, daysAgo: number = 0):
   const now = new Date();
 
   if (!tz) {
-    // Fallback to server timezone
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    return start.getTime() - daysAgo * 24 * 60 * 60 * 1000;
+    // Fallback to UTC date parts (server-timezone-independent)
+    const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    return start - daysAgo * 24 * 60 * 60 * 1000;
   }
 
   // Get current date parts in user's timezone
@@ -531,34 +555,15 @@ export function getStartOfDayInTimezone(tz: string | null, daysAgo: number = 0):
   const month = parseInt(parts[1], 10) - 1; // JS months are 0-indexed
   const day = parseInt(parts[2], 10);
 
-  // Create a date at midnight in the user's timezone
-  // We use a different approach: find what UTC time corresponds to midnight in their tz
-  const midnightLocal = new Date(year, month, day - daysAgo);
+  // Create midnight UTC for the user's date, then adjust by timezone offset
+  const midnightUTC = Date.UTC(year, month, day - daysAgo);
 
   // Get the UTC offset for that date in the target timezone
-  const tzFormatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    timeZoneName: 'shortOffset',
-  });
-  const tzParts = tzFormatter.formatToParts(midnightLocal);
-  const offsetPart = tzParts.find((p) => p.type === 'timeZoneName')?.value || '';
+  const offsetMs = parseTimezoneOffsetMs(new Date(midnightUTC), tz);
 
-  // Parse offset like "GMT-5" or "GMT+5:30"
-  const offsetMatch = offsetPart.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
-  if (offsetMatch) {
-    const sign = offsetMatch[1] === '+' ? 1 : -1;
-    const hours = parseInt(offsetMatch[2], 10);
-    const minutes = parseInt(offsetMatch[3] || '0', 10);
-    const offsetMs = sign * (hours * 60 + minutes) * 60 * 1000;
-
-    // Midnight in user's tz = midnight local - offset
-    // Actually we need: when it's midnight in user's tz, what's the UTC time?
-    // If user is GMT-5, midnight their time = 5am UTC
-    return midnightLocal.getTime() - offsetMs;
-  }
-
-  // Fallback if offset parsing fails
-  return midnightLocal.getTime();
+  // Midnight in user's tz = midnight UTC - offset
+  // If user is GMT-5, midnight their time = 5am UTC (midnightUTC - (-5h) = midnightUTC + 5h)
+  return midnightUTC - offsetMs;
 }
 
 /**
@@ -566,7 +571,7 @@ export function getStartOfDayInTimezone(tz: string | null, daysAgo: number = 0):
  */
 export function dateToStartOfDayInTimezone(date: Date, tz: string | null): number {
   if (!tz) {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
   }
 
   // Get the date parts in user's timezone
@@ -577,33 +582,17 @@ export function dateToStartOfDayInTimezone(date: Date, tz: string | null): numbe
     day: '2-digit',
   });
 
-  // Format the target date
-  const targetLocal = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12); // noon to avoid DST issues
-  const parts = formatter.format(targetLocal).split('-');
+  // Format the original date in the user's timezone to get the correct date parts
+  const parts = formatter.format(date).split('-');
   const year = parseInt(parts[0], 10);
   const month = parseInt(parts[1], 10) - 1;
   const day = parseInt(parts[2], 10);
 
-  // Now find midnight in that timezone
-  const midnightLocal = new Date(year, month, day);
+  // Create midnight UTC for that date, then adjust by timezone offset
+  const midnightUTC = Date.UTC(year, month, day);
+  const offsetMs = parseTimezoneOffsetMs(new Date(midnightUTC), tz);
 
-  const tzFormatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    timeZoneName: 'shortOffset',
-  });
-  const tzParts = tzFormatter.formatToParts(midnightLocal);
-  const offsetPart = tzParts.find((p) => p.type === 'timeZoneName')?.value || '';
-
-  const offsetMatch = offsetPart.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
-  if (offsetMatch) {
-    const sign = offsetMatch[1] === '+' ? 1 : -1;
-    const hours = parseInt(offsetMatch[2], 10);
-    const minutes = parseInt(offsetMatch[3] || '0', 10);
-    const offsetMs = sign * (hours * 60 + minutes) * 60 * 1000;
-    return midnightLocal.getTime() - offsetMs;
-  }
-
-  return midnightLocal.getTime();
+  return midnightUTC - offsetMs;
 }
 
 // =============================================================================
