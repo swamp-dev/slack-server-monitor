@@ -307,7 +307,8 @@ export async function registerAskCommand(app: App): Promise<void> {
           conversation.id,
           toolCall.name,
           toolCall.input,
-          toolCall.outputPreview
+          toolCall.outputPreview,
+          { durationMs: toolCall.durationMs, success: !toolCall.isError }
         );
       }
 

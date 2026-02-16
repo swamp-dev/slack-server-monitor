@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import Database from 'better-sqlite3';
 import { ConversationStore } from '../../src/services/conversation-store.js';
 import fs from 'fs';
 import path from 'path';
@@ -272,9 +273,9 @@ describe('ConversationStore', () => {
       const stats = store.getSessionStats();
 
       expect(stats.topTools).toHaveLength(3);
-      expect(stats.topTools[0]).toEqual({ name: 'get_container_logs', count: 3 });
-      expect(stats.topTools[1]).toEqual({ name: 'get_container_status', count: 2 });
-      expect(stats.topTools[2]).toEqual({ name: 'run_command', count: 1 });
+      expect(stats.topTools[0]).toEqual({ name: 'get_container_logs', count: 3, avgDurationMs: null });
+      expect(stats.topTools[1]).toEqual({ name: 'get_container_status', count: 2, avgDurationMs: null });
+      expect(stats.topTools[2]).toEqual({ name: 'run_command', count: 1, avgDurationMs: null });
     });
 
     it('getToolCalls retrieves tool calls for a conversation', () => {
@@ -301,6 +302,150 @@ describe('ConversationStore', () => {
       expect(toolCalls).toHaveLength(2);
       expect(toolCalls[0]?.toolName).toBe('tool3');
       expect(toolCalls[1]?.toolName).toBe('tool2');
+    });
+  });
+
+  describe('tool call analytics', () => {
+    it('should store duration and success fields', () => {
+      const conversation = store.createConversation('1234.5678', 'C123ABC', 'U456DEF', []);
+      store.logToolCall(conversation.id, 'get_disk_usage', { mount: '/' }, '45% used', {
+        durationMs: 150,
+        success: true,
+      });
+
+      const toolCalls = store.getToolCalls(conversation.id);
+
+      expect(toolCalls).toHaveLength(1);
+      expect(toolCalls[0]?.durationMs).toBe(150);
+      expect(toolCalls[0]?.success).toBe(true);
+    });
+
+    it('should store failed tool calls', () => {
+      const conversation = store.createConversation('1234.5678', 'C123ABC', 'U456DEF', []);
+      store.logToolCall(conversation.id, 'run_command', { command: 'bad' }, 'Error: not allowed', {
+        durationMs: 5,
+        success: false,
+      });
+
+      const toolCalls = store.getToolCalls(conversation.id);
+
+      expect(toolCalls).toHaveLength(1);
+      expect(toolCalls[0]?.success).toBe(false);
+    });
+
+    it('should default to null duration and true success when not provided', () => {
+      const conversation = store.createConversation('1234.5678', 'C123ABC', 'U456DEF', []);
+      store.logToolCall(conversation.id, 'get_disk_usage', {}, 'output');
+
+      const toolCalls = store.getToolCalls(conversation.id);
+
+      expect(toolCalls).toHaveLength(1);
+      expect(toolCalls[0]?.durationMs).toBeNull();
+      expect(toolCalls[0]?.success).toBe(true);
+    });
+
+    it('getSessionStats should include avgToolDurationMs', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      store.logToolCall(conv.id, 'tool1', {}, 'out', { durationMs: 100, success: true });
+      store.logToolCall(conv.id, 'tool2', {}, 'out', { durationMs: 200, success: true });
+      store.logToolCall(conv.id, 'tool3', {}, 'out', { durationMs: 300, success: true });
+
+      const stats = store.getSessionStats();
+
+      expect(stats.avgToolDurationMs).toBe(200); // (100 + 200 + 300) / 3
+    });
+
+    it('getSessionStats should include toolFailureRate', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      store.logToolCall(conv.id, 'tool1', {}, 'out', { durationMs: 100, success: true });
+      store.logToolCall(conv.id, 'tool2', {}, 'error', { durationMs: 50, success: false });
+      store.logToolCall(conv.id, 'tool3', {}, 'out', { durationMs: 200, success: true });
+      store.logToolCall(conv.id, 'tool4', {}, 'error', { durationMs: 10, success: false });
+
+      const stats = store.getSessionStats();
+
+      expect(stats.toolFailureRate).toBeCloseTo(0.5, 2); // 2 failures / 4 total
+    });
+
+    it('getSessionStats should handle zero tool calls for analytics', () => {
+      store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      const stats = store.getSessionStats();
+
+      expect(stats.avgToolDurationMs).toBeNull();
+      expect(stats.toolFailureRate).toBe(0);
+    });
+
+    it('getSessionStats should include topTools with avgDurationMs', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      store.logToolCall(conv.id, 'get_container_status', {}, 'out', { durationMs: 100, success: true });
+      store.logToolCall(conv.id, 'get_container_status', {}, 'out', { durationMs: 200, success: true });
+      store.logToolCall(conv.id, 'run_command', {}, 'out', { durationMs: 500, success: true });
+
+      const stats = store.getSessionStats();
+
+      expect(stats.topTools[0]?.name).toBe('get_container_status');
+      expect(stats.topTools[0]?.avgDurationMs).toBe(150); // (100 + 200) / 2
+      expect(stats.topTools[1]?.name).toBe('run_command');
+      expect(stats.topTools[1]?.avgDurationMs).toBe(500);
+    });
+
+    it('should migrate old database without duration_ms and success columns', () => {
+      // Create a database with old schema (no duration_ms or success columns)
+      const oldDbPath = path.join(os.tmpdir(), `test-migration-${Date.now()}.db`);
+      const oldDb = new Database(oldDbPath);
+      oldDb.exec(`
+        CREATE TABLE conversations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          thread_ts TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          messages TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          UNIQUE(thread_ts, channel_id)
+        );
+        CREATE TABLE tool_calls (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          conversation_id INTEGER REFERENCES conversations(id),
+          tool_name TEXT NOT NULL,
+          input TEXT NOT NULL,
+          output_preview TEXT,
+          timestamp INTEGER NOT NULL
+        );
+      `);
+
+      // Insert old-format data
+      const now = Date.now();
+      oldDb.prepare('INSERT INTO conversations (thread_ts, channel_id, user_id, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run('1234.5678', 'C123', 'U456', '[]', now, now);
+      oldDb.prepare('INSERT INTO tool_calls (conversation_id, tool_name, input, output_preview, timestamp) VALUES (?, ?, ?, ?, ?)')
+        .run(1, 'get_disk_usage', '{"mount":"/"}', '45% used', now);
+      oldDb.close();
+
+      // Open with ConversationStore (should migrate)
+      const migratedStore = new ConversationStore(oldDbPath, 24);
+
+      // Verify migration: new columns should exist and old data should be readable
+      const toolCalls = migratedStore.getToolCalls(1);
+      expect(toolCalls).toHaveLength(1);
+      expect(toolCalls[0]?.toolName).toBe('get_disk_usage');
+      expect(toolCalls[0]?.durationMs).toBeNull();
+      expect(toolCalls[0]?.success).toBe(true); // Default
+
+      // Verify we can write with new fields
+      migratedStore.logToolCall(1, 'run_command', {}, 'output', { durationMs: 42, success: false });
+      const allToolCalls = migratedStore.getToolCalls(1);
+      expect(allToolCalls).toHaveLength(2);
+      expect(allToolCalls[0]?.durationMs).toBe(42);
+      expect(allToolCalls[0]?.success).toBe(false);
+
+      migratedStore.close();
+
+      // Cleanup
+      try { fs.unlinkSync(oldDbPath); } catch { /* ignore */ }
+      try { fs.unlinkSync(oldDbPath + '-wal'); } catch { /* ignore */ }
+      try { fs.unlinkSync(oldDbPath + '-shm'); } catch { /* ignore */ }
     });
   });
 });

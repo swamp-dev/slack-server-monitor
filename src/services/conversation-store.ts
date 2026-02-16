@@ -51,6 +51,8 @@ export interface ToolCallLog {
   input: Record<string, unknown>;
   outputPreview: string;
   timestamp: number;
+  durationMs: number | null;
+  success: boolean;
 }
 
 /**
@@ -83,7 +85,9 @@ export interface SessionStats {
   activeSessions: number;
   totalMessages: number;
   totalToolCalls: number;
-  topTools: { name: string; count: number }[];
+  avgToolDurationMs: number | null;
+  toolFailureRate: number;
+  topTools: { name: string; count: number; avgDurationMs: number | null }[];
 }
 
 /**
@@ -132,7 +136,9 @@ export class ConversationStore {
         tool_name TEXT NOT NULL,
         input TEXT NOT NULL,
         output_preview TEXT,
-        timestamp INTEGER NOT NULL
+        timestamp INTEGER NOT NULL,
+        duration_ms INTEGER,
+        success INTEGER NOT NULL DEFAULT 1
       );
 
       CREATE INDEX IF NOT EXISTS idx_conversations_thread
@@ -142,6 +148,18 @@ export class ConversationStore {
       CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation
         ON tool_calls(conversation_id);
     `);
+
+    // Migrate: add duration_ms and success columns if missing
+    const columns = this.db
+      .prepare("PRAGMA table_info(tool_calls)")
+      .all() as { name: string }[];
+    const columnNames = new Set(columns.map((c) => c.name));
+    if (!columnNames.has('duration_ms')) {
+      this.db.exec('ALTER TABLE tool_calls ADD COLUMN duration_ms INTEGER');
+    }
+    if (!columnNames.has('success')) {
+      this.db.exec('ALTER TABLE tool_calls ADD COLUMN success INTEGER NOT NULL DEFAULT 1');
+    }
 
     logger.debug('Conversation store schema initialized');
   }
@@ -292,17 +310,20 @@ export class ConversationStore {
     conversationId: number,
     toolName: string,
     input: Record<string, unknown>,
-    outputPreview: string
+    outputPreview: string,
+    analytics?: { durationMs?: number; success?: boolean }
   ): void {
     const now = Date.now();
     // Safely truncate to avoid splitting multi-byte UTF-8 characters
     const truncated = truncateUTF8Safe(outputPreview, 200);
+    const durationMs = analytics?.durationMs ?? null;
+    const success = analytics?.success !== false ? 1 : 0;
     this.db
       .prepare(`
-        INSERT INTO tool_calls (conversation_id, tool_name, input, output_preview, timestamp)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO tool_calls (conversation_id, tool_name, input, output_preview, timestamp, duration_ms, success)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `)
-      .run(conversationId, toolName, JSON.stringify(input), truncated, now);
+      .run(conversationId, toolName, JSON.stringify(input), truncated, now, durationMs, success);
   }
 
   /**
@@ -467,10 +488,28 @@ export class ConversationStore {
       `)
       .get(cutoff) as { count: number };
 
-    // Get top tools
+    // Get tool call analytics (duration and failure rate)
+    const analyticsStats = this.db
+      .prepare(`
+        SELECT
+          AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms END) as avg_duration_ms,
+          SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failure_count
+        FROM tool_calls tc
+        INNER JOIN conversations c ON tc.conversation_id = c.id
+        WHERE c.updated_at > ?
+      `)
+      .get(cutoff) as { avg_duration_ms: number | null; failure_count: number } | undefined;
+
+    const totalToolCalls = toolCallStats.count;
+    const failureCount = analyticsStats?.failure_count ?? 0;
+
+    // Get top tools with avg duration
     const topToolsRows = this.db
       .prepare(`
-        SELECT tool_name as name, COUNT(*) as count
+        SELECT
+          tool_name as name,
+          COUNT(*) as count,
+          AVG(duration_ms) as avg_duration_ms
         FROM tool_calls tc
         INNER JOIN conversations c ON tc.conversation_id = c.id
         WHERE c.updated_at > ?
@@ -478,14 +517,22 @@ export class ConversationStore {
         ORDER BY count DESC
         LIMIT 5
       `)
-      .all(cutoff) as { name: string; count: number }[];
+      .all(cutoff) as { name: string; count: number; avg_duration_ms: number | null }[];
 
     return {
       totalSessions: sessionStats.total_sessions,
       activeSessions: sessionStats.active_sessions,
       totalMessages,
-      totalToolCalls: toolCallStats.count,
-      topTools: topToolsRows,
+      totalToolCalls,
+      avgToolDurationMs: analyticsStats?.avg_duration_ms != null
+        ? Math.round(analyticsStats.avg_duration_ms)
+        : null,
+      toolFailureRate: totalToolCalls > 0 ? failureCount / totalToolCalls : 0,
+      topTools: topToolsRows.map((t) => ({
+        name: t.name,
+        count: t.count,
+        avgDurationMs: t.avg_duration_ms != null ? Math.round(t.avg_duration_ms) : null,
+      })),
     };
   }
 
@@ -509,6 +556,8 @@ export class ConversationStore {
       input: string;
       output_preview: string;
       timestamp: number;
+      duration_ms: number | null;
+      success: number;
     }[];
 
     return rows.map((row) => ({
@@ -518,6 +567,8 @@ export class ConversationStore {
       input: JSON.parse(row.input) as Record<string, unknown>,
       outputPreview: row.output_preview,
       timestamp: row.timestamp,
+      durationMs: row.duration_ms,
+      success: row.success !== 0,
     }));
   }
 
