@@ -22,6 +22,14 @@ function escapeHtml(text: string): string {
 }
 
 /**
+ * Escape markdown characters that could create links or structure injection
+ */
+function escapeMarkdown(text: string): string {
+  // eslint-disable-next-line no-useless-escape
+  return text.replace(/([`\[\]()\\])/g, '\\$1');
+}
+
+/**
  * Custom marked renderer for security and styling
  */
 const renderer: Partial<Renderer> = {
@@ -334,6 +342,33 @@ const styles = `
     border-top: 1px solid var(--border-color);
   }
 
+  .export-actions {
+    margin-top: 12px;
+    display: flex;
+    gap: 8px;
+  }
+
+  .export-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 0.8125rem;
+    font-family: inherit;
+    color: var(--text-color);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.2s;
+  }
+
+  .export-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    text-decoration: none;
+  }
+
   @media (max-width: 600px) {
     .container {
       padding: 10px;
@@ -462,6 +497,10 @@ export function renderConversation(
         Started: ${formatTimestamp(metadata.createdAt)} |
         Last updated: ${formatTimestamp(metadata.updatedAt)}
       </div>
+      <div class="export-actions">
+        <a class="export-btn" id="export-md" href="export/md">Export Markdown</a>
+        <button class="export-btn" id="copy-clipboard" type="button">Copy to Clipboard</button>
+      </div>
     </div>
   </header>
 
@@ -476,9 +515,94 @@ export function renderConversation(
     </div>
   </footer>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp" crossorigin="anonymous"></script>
-  <script>hljs.highlightAll();</script>
+  <script>
+    hljs.highlightAll();
+    (function() {
+      var params = new URLSearchParams(window.location.search);
+      var token = params.get('token');
+      var exportLink = document.getElementById('export-md');
+      if (exportLink && token) {
+        exportLink.href = window.location.pathname + '/export/md?token=' + encodeURIComponent(token);
+      }
+      var copyBtn = document.getElementById('copy-clipboard');
+      if (copyBtn) {
+        copyBtn.addEventListener('click', function() {
+          var msgs = document.querySelectorAll('.message');
+          var text = Array.from(msgs).map(function(el) {
+            var header = el.querySelector('.message-header');
+            var content = el.querySelector('.message-content');
+            var role = header ? header.textContent : '';
+            var body = content ? content.textContent : '';
+            return '### ' + role + '\\n\\n' + body;
+          }).join('\\n\\n');
+          navigator.clipboard.writeText(text).then(function() {
+            copyBtn.textContent = 'Copied!';
+            setTimeout(function() { copyBtn.textContent = 'Copy to Clipboard'; }, 2000);
+          });
+        });
+      }
+    })();
+  </script>
 </body>
 </html>`;
+}
+
+/**
+ * Render a conversation as markdown for download/export
+ */
+export function renderMarkdownExport(
+  messages: ConversationMessage[],
+  toolCalls: ToolCallLog[],
+  metadata: {
+    threadTs: string;
+    channelId: string;
+    createdAt: number;
+    updatedAt: number;
+  }
+): string {
+  const lines: string[] = [];
+
+  // Header
+  lines.push('# Claude Conversation');
+  lines.push('');
+  lines.push(`Thread: \`${metadata.threadTs}\` | Channel: \`${metadata.channelId}\``);
+  lines.push(`Started: ${formatTimestamp(metadata.createdAt)} | Last updated: ${formatTimestamp(metadata.updatedAt)}`);
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  // Messages
+  for (const message of messages) {
+    const roleLabel = message.role === 'user' ? 'User' : 'Claude';
+    lines.push(`### ${roleLabel}`);
+    lines.push('');
+    lines.push(message.content);
+    lines.push('');
+  }
+
+  // Tool calls
+  if (toolCalls.length > 0) {
+    lines.push('---');
+    lines.push('');
+    lines.push(`## Tool Calls (${String(toolCalls.length)})`);
+    lines.push('');
+
+    for (const tc of toolCalls) {
+      lines.push(`#### ${escapeMarkdown(tc.toolName)}`);
+      lines.push('');
+      lines.push('**Input:**');
+      lines.push('```json');
+      lines.push(JSON.stringify(tc.input, null, 2));
+      lines.push('```');
+      if (tc.outputPreview) {
+        lines.push('');
+        lines.push(`**Output:** ${escapeMarkdown(tc.outputPreview)}`);
+      }
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n');
 }
 
 /**
