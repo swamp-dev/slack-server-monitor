@@ -319,7 +319,7 @@ export async function registerAskCommand(app: App): Promise<void> {
       if (isLongResponse && webEnabled) {
         // Post snippet + link to web UI
         const webUrl = getConversationUrl(threadTs, channelId, webConfig);
-        const snippet = extractSnippet(result.response);
+        const snippet = extractSnippet(scrubSensitiveData(result.response));
         await client.chat.update({
           channel: channelId,
           ts: threadTs,
@@ -576,7 +576,7 @@ export function registerThreadHandler(app: App): void {
         if (isLongResponse && webEnabled) {
           // Post snippet + link to web UI
           const webUrl = getConversationUrl(threadTs, channelId, webConfig);
-          const snippet = extractSnippet(result.response);
+          const snippet = extractSnippet(scrubSensitiveData(result.response));
           await client.chat.update({
             channel: channelId,
             ts: thinkingMsg.ts,
