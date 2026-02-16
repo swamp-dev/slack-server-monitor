@@ -2,9 +2,11 @@
  * HTML templates for web UI
  *
  * Renders conversation pages with simple, readable styling.
+ * Uses marked for full markdown rendering with syntax highlighting.
  * Mobile-friendly design with code block support.
  */
 
+import { marked, type Renderer, type Tokens } from 'marked';
 import type { ConversationMessage, ToolCallLog } from '../services/conversation-store.js';
 
 /**
@@ -20,35 +22,34 @@ function escapeHtml(text: string): string {
 }
 
 /**
- * Convert basic markdown-style formatting to HTML
- * Handles: code blocks, inline code, bold, italic, links
+ * Custom marked renderer for security and styling
+ */
+const renderer: Partial<Renderer> = {
+  // Restrict links to http/https only, add rel="noopener", escape all values
+  link({ href, text }: Tokens.Link) {
+    if (!href.startsWith('http://') && !href.startsWith('https://')) {
+      return escapeHtml(text);
+    }
+    return `<a href="${escapeHtml(href)}" rel="noopener">${escapeHtml(text)}</a>`;
+  },
+  // Block raw HTML to prevent XSS
+  html({ text }: Tokens.HTML) {
+    return escapeHtml(text);
+  },
+};
+
+// Configure marked with security-focused defaults
+marked.use({
+  renderer,
+  gfm: true, // GitHub Flavored Markdown (tables, strikethrough)
+  breaks: true, // Convert \n to <br>
+});
+
+/**
+ * Convert markdown to HTML using marked with security renderer
  */
 function formatMarkdown(text: string): string {
-  // First escape HTML in the text
-  let html = escapeHtml(text);
-
-  // Code blocks (```...```)
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang: string, code: string) => {
-    const langClass = lang ? ` class="language-${lang}"` : '';
-    return `<pre><code${langClass}>${code.trim()}</code></pre>`;
-  });
-
-  // Inline code (`...`)
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-  // Bold (**...**)
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-  // Italic (*...*)
-  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-
-  // Links [text](url) - only allow http/https URLs
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" rel="noopener">$1</a>');
-
-  // Line breaks (preserve them)
-  html = html.replace(/\n/g, '<br>\n');
-
-  return html;
+  return marked.parse(text) as string;
 }
 
 /**
@@ -179,6 +180,60 @@ const styles = `
     padding: 0;
     font-size: 0.875rem;
     line-height: 1.5;
+  }
+
+  .message-content h1,
+  .message-content h2,
+  .message-content h3,
+  .message-content h4 {
+    margin: 16px 0 8px;
+    font-weight: 600;
+  }
+
+  .message-content h1 { font-size: 1.5rem; }
+  .message-content h2 { font-size: 1.25rem; }
+  .message-content h3 { font-size: 1.1rem; }
+
+  .message-content ul,
+  .message-content ol {
+    padding-left: 24px;
+    margin: 8px 0;
+  }
+
+  .message-content li {
+    margin: 4px 0;
+  }
+
+  .message-content blockquote {
+    border-left: 3px solid var(--accent-color);
+    padding: 8px 16px;
+    margin: 12px 0;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .message-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+  }
+
+  .message-content th,
+  .message-content td {
+    border: 1px solid var(--border-color);
+    padding: 8px 12px;
+    text-align: left;
+  }
+
+  .message-content th {
+    background: rgba(255, 255, 255, 0.05);
+    font-weight: 600;
+  }
+
+  .message-content hr {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: 20px 0;
   }
 
   a {
@@ -342,6 +397,7 @@ export function renderConversation(
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
   <title>Claude Conversation</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH" crossorigin="anonymous">
   <style>${styles}</style>
 </head>
 <body>
@@ -365,6 +421,8 @@ export function renderConversation(
       Powered by Slack Server Monitor
     </div>
   </footer>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp" crossorigin="anonymous"></script>
+  <script>hljs.highlightAll();</script>
 </body>
 </html>`;
 }

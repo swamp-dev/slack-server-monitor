@@ -46,7 +46,8 @@ describe('web templates', () => {
 
       const html = renderConversation(messages, toolCalls, metadata);
 
-      expect(html).not.toContain('<script>');
+      // User-supplied script tag should be escaped, not rendered as HTML
+      expect(html).not.toContain('<script>alert');
       expect(html).toContain('&lt;script&gt;');
     });
 
@@ -179,6 +180,194 @@ describe('web templates', () => {
 
       // Should not convert to a link since it's not http/https
       expect(html).not.toContain('href="javascript:');
+    });
+
+    it('should escape quotes in href to prevent attribute injection', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: '[click](https://x.com?a="onload="alert(1))' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      // Quotes in href must be escaped so attribute can't break out
+      expect(html).not.toContain('href="https://x.com?a="onload');
+      expect(html).toContain('&quot;');
+    });
+
+    it('should escape HTML in link text', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: '[<img src=x onerror=alert(1)>](https://example.com)' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      // img tag in link text must be escaped, not rendered as HTML element
+      expect(html).not.toContain('<img');
+      expect(html).toContain('&lt;img');
+    });
+
+    it('should render headings', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: '# Main Title\n\n## Subtitle\n\n### Section' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('<h1>Main Title</h1>');
+      expect(html).toContain('<h2>Subtitle</h2>');
+      expect(html).toContain('<h3>Section</h3>');
+    });
+
+    it('should render unordered lists', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: '- Item one\n- Item two\n- Item three' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('<ul>');
+      expect(html).toContain('<li>Item one</li>');
+      expect(html).toContain('<li>Item two</li>');
+      expect(html).toContain('</ul>');
+    });
+
+    it('should render ordered lists', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: '1. First\n2. Second\n3. Third' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('<ol>');
+      expect(html).toContain('<li>First</li>');
+      expect(html).toContain('</ol>');
+    });
+
+    it('should render blockquotes', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: '> This is a quote' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('<blockquote>');
+      expect(html).toContain('This is a quote');
+      expect(html).toContain('</blockquote>');
+    });
+
+    it('should render tables', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: '| Name | Status |\n| --- | --- |\n| nginx | running |\n| redis | stopped |' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('<table>');
+      expect(html).toContain('<th>Name</th>');
+      expect(html).toContain('<td>nginx</td>');
+      expect(html).toContain('<td>running</td>');
+      expect(html).toContain('</table>');
+    });
+
+    it('should render horizontal rules', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: 'Above\n\n---\n\nBelow' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('<hr');
+    });
+
+    it('should render strikethrough text', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: 'This is ~~deleted~~ text.' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('<del>deleted</del>');
+    });
+
+    it('should include highlight.js for syntax highlighting', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: 'Hello' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('highlight');
+      expect(html).toContain('hljs');
     });
   });
 
