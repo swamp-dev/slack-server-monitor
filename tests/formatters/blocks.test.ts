@@ -30,6 +30,7 @@ import {
   timestampFooter,
   relativeTime,
   threadLink,
+  extractSnippet,
 } from '../../src/formatters/blocks.js';
 
 describe('block utilities', () => {
@@ -560,6 +561,55 @@ describe('enhanced output helpers', () => {
     it('should handle different channel and thread IDs', () => {
       const result = threadLink('C999XYZ', '9999999999.999999');
       expect(result).toBe('slack://channel?team=&id=C999XYZ&thread_ts=9999999999.999999');
+    });
+  });
+
+  describe('extractSnippet', () => {
+    it('should return short text unchanged', () => {
+      const text = 'Short response.';
+      expect(extractSnippet(text, 500)).toBe('Short response.');
+    });
+
+    it('should truncate long text at paragraph boundary', () => {
+      const text = 'First paragraph here.\n\nSecond paragraph that is much longer and pushes us over the limit.';
+      const result = extractSnippet(text, 50);
+      expect(result).toBe('First paragraph here.');
+    });
+
+    it('should truncate at sentence boundary when no paragraph break fits', () => {
+      const text = 'First sentence. Second sentence that makes it too long for the limit.';
+      const result = extractSnippet(text, 30);
+      expect(result).toBe('First sentence.');
+    });
+
+    it('should truncate at word boundary with ellipsis as last resort', () => {
+      const text = 'Averylongsentencewithoutanyperiods but with words that need splitting eventually';
+      const result = extractSnippet(text, 50);
+      expect(result).toContain('...');
+      expect(result.length).toBeLessThanOrEqual(53); // maxLength + "..."
+    });
+
+    it('should not break inside a code block', () => {
+      const text = 'Before code.\n\n```\nsome code here\nmore code\n```\n\nAfter code paragraph.';
+      const result = extractSnippet(text, 40);
+      // Should take text before the code block, not break inside it
+      expect(result).toBe('Before code.');
+    });
+
+    it('should handle text starting with a code block', () => {
+      const text = '```\ncode block\n```\n\nAfter code.';
+      const result = extractSnippet(text, 100);
+      expect(result).toContain('code block');
+    });
+
+    it('should use default maxLength when not specified', () => {
+      const longText = 'x'.repeat(1000);
+      const result = extractSnippet(longText);
+      expect(result.length).toBeLessThanOrEqual(503); // 500 + "..."
+    });
+
+    it('should handle empty string', () => {
+      expect(extractSnippet('')).toBe('');
     });
   });
 });
