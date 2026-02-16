@@ -2170,6 +2170,58 @@ async function handleCancel(
 }
 
 // =============================================================================
+// Bodyweight History Tool (for Claude AI)
+// =============================================================================
+
+const bodyweightTool: ToolDefinition = {
+  spec: {
+    name: 'get_bodyweight_history',
+    description:
+      'Get a user\'s bodyweight history and trend. ' +
+      'Returns recent bodyweight entries, averages, and direction. ' +
+      'Use this when asked about bodyweight, weight trends, or body composition.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        user_id: {
+          type: 'string',
+          description: 'Slack user ID to query bodyweight for',
+        },
+        days: {
+          type: 'number',
+          description: 'Number of days of history to retrieve (default: 30)',
+        },
+      },
+      required: ['user_id'],
+    },
+  },
+  execute: async (input) => {
+    const { user_id, days = 30 } = input as { user_id: string; days?: number };
+
+    if (!pluginDb) {
+      return 'Bodyweight tracking database not initialized.';
+    }
+
+    const unit = getUserUnit(user_id, pluginDb);
+    const history = getBodyweightHistory(user_id, days, pluginDb);
+    const latest = getLatestBodyweight(user_id, pluginDb);
+
+    if (!latest || history.length === 0) {
+      return `No bodyweight entries found for user. They can log with /lift bw <weight>.`;
+    }
+
+    const trend = formatBodyweightTrend(history, unit);
+    const entries = history.map((e) => {
+      const date = new Date(e.loggedAt).toISOString().split('T')[0];
+      const weight = unit === 'kg' ? e.weightKg.toFixed(1) : kgToLbs(e.weightKg).toFixed(1);
+      return `${date}: ${weight} ${unit}`;
+    }).join('\n');
+
+    return `Bodyweight trend (${String(days)}d): ${trend}\n\nHistory:\n${entries}`;
+  },
+};
+
+// =============================================================================
 // Plugin Export
 // =============================================================================
 
@@ -2198,7 +2250,7 @@ const liftPlugin: Plugin = {
 
   registerCommands: registerLiftCommand,
 
-  tools: [powerliftingTool, warmupTool, estimateFoodMacrosTool],
+  tools: [powerliftingTool, warmupTool, estimateFoodMacrosTool, bodyweightTool],
 
   init: async (ctx: PluginContext) => {
     // Store db and claude references for command handlers
