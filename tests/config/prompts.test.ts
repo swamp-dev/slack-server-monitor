@@ -4,24 +4,29 @@ import { SYSTEM_PROMPT, buildSystemPrompt } from '../../src/config/prompts.js';
 describe('prompts', () => {
   describe('SYSTEM_PROMPT', () => {
     it('should contain key sections', () => {
-      expect(SYSTEM_PROMPT).toContain('Available Tools');
       expect(SYSTEM_PROMPT).toContain('Guidelines');
       expect(SYSTEM_PROMPT).toContain('Limitations');
     });
 
-    it('should mention all server tools', () => {
-      expect(SYSTEM_PROMPT).toContain('get_container_status');
-      expect(SYSTEM_PROMPT).toContain('get_container_logs');
-      expect(SYSTEM_PROMPT).toContain('get_system_resources');
-      expect(SYSTEM_PROMPT).toContain('get_disk_usage');
-      expect(SYSTEM_PROMPT).toContain('get_network_info');
-      expect(SYSTEM_PROMPT).toContain('read_file');
+    it('should NOT duplicate tool descriptions that are provided via tool specs', () => {
+      // Tool specs are injected separately by buildToolSystemPrompt in cli-provider.ts
+      // The base system prompt should NOT list individual tools to avoid confusion
+      // when Claude sees tools listed in the prompt but can't use them via normal tool-use
+      expect(SYSTEM_PROMPT).not.toContain('get_container_status');
+      expect(SYSTEM_PROMPT).not.toContain('get_container_logs');
+      expect(SYSTEM_PROMPT).not.toContain('get_system_resources');
+      expect(SYSTEM_PROMPT).not.toContain('get_disk_usage');
+      expect(SYSTEM_PROMPT).not.toContain('get_network_info');
     });
 
-    it('should emphasize read-only nature', () => {
-      expect(SYSTEM_PROMPT).toContain('cannot execute commands');
-      expect(SYSTEM_PROMPT).toContain('cannot');
+    it('should clarify that read-only means no modifications, not no tool access', () => {
+      // Claude should understand it CAN use tools but CANNOT modify the server
       expect(SYSTEM_PROMPT).toContain('read-only');
+      expect(SYSTEM_PROMPT).not.toContain('cannot execute commands');
+    });
+
+    it('should instruct Claude to use the tool_call protocol', () => {
+      expect(SYSTEM_PROMPT).toContain('tool_call');
     });
   });
 
