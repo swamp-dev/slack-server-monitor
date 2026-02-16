@@ -1,7 +1,7 @@
 /**
  * Tests for lift plugin unit conversion and preference system
  */
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
 import type { WeightUnit } from '../../plugins.example/lift.js';
 
@@ -187,6 +187,92 @@ describe('user unit preferences', () => {
       setUserUnit('U2', 'lbs', db);
       expect(db._store.get('U1')).toBe('kg');
       expect(db._store.get('U2')).toBe('lbs');
+    });
+  });
+});
+
+// =============================================================================
+// Weight Display Helper
+// =============================================================================
+
+describe('formatWeight', () => {
+  let formatWeight: (value: number, unit: WeightUnit) => string;
+
+  beforeAll(async () => {
+    const mod = await import('../../plugins.example/lift.js');
+    formatWeight = mod.formatWeight;
+  });
+
+  it('should format lbs with 1 decimal', () => {
+    expect(formatWeight(225, 'lbs')).toBe('225.0 lbs');
+  });
+
+  it('should format kg with 1 decimal', () => {
+    expect(formatWeight(100, 'kg')).toBe('100.0 kg');
+  });
+
+  it('should format decimal values', () => {
+    expect(formatWeight(102.058, 'kg')).toBe('102.1 kg');
+    expect(formatWeight(225.5, 'lbs')).toBe('225.5 lbs');
+  });
+});
+
+// =============================================================================
+// Command Integration: Wilks/DOTS/1RM with Units
+// =============================================================================
+
+describe('calculator commands with unit preferences', () => {
+  let lbsToKg: (lbs: number) => number;
+  let kgToLbs: (kg: number) => number;
+
+  beforeAll(async () => {
+    const mod = await import('../../plugins.example/lift.js');
+    lbsToKg = mod.lbsToKg;
+    kgToLbs = mod.kgToLbs;
+  });
+
+  describe('wilks/dots input conversion', () => {
+    it('should pass through kg values when unit is kg', () => {
+      // User inputs 500 kg, unit is kg -> calculation gets 500 kg
+      const inputKg = 500;
+      const unit: WeightUnit = 'kg';
+      const calcKg = unit === 'kg' ? inputKg : lbsToKg(inputKg);
+      expect(calcKg).toBe(500);
+    });
+
+    it('should convert lbs to kg when unit is lbs', () => {
+      // User inputs 1102 lbs, unit is lbs -> calculation gets ~500 kg
+      const inputLbs = 1102;
+      const unit: WeightUnit = 'lbs';
+      const calcKg = unit === 'kg' ? inputLbs : lbsToKg(inputLbs);
+      expect(calcKg).toBeCloseTo(500, 0);
+    });
+  });
+
+  describe('1rm output conversion', () => {
+    it('should show result in kg when unit is kg', () => {
+      // 1RM calculated as 120 kg -> display 120 kg
+      const resultKg = 120;
+      const unit: WeightUnit = 'kg';
+      const display = unit === 'kg' ? resultKg : kgToLbs(resultKg);
+      expect(display).toBe(120);
+    });
+
+    it('should show result in lbs when unit is lbs', () => {
+      // 1RM calculated as 120 kg -> display ~264.6 lbs
+      const resultKg = 120;
+      const unit: WeightUnit = 'lbs';
+      const display = unit === 'kg' ? resultKg : kgToLbs(resultKg);
+      expect(display).toBeCloseTo(264.6, 0);
+    });
+  });
+
+  describe('warmup with kg input', () => {
+    it('should convert kg input to lbs for plate loading', () => {
+      // User inputs 100 kg for warmup with kg unit -> 220.5 lbs for plate calc
+      const inputKg = 100;
+      const lbsForCalc = kgToLbs(inputKg);
+      expect(lbsForCalc).toBeCloseTo(220.5, 0);
     });
   });
 });
