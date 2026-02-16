@@ -1476,6 +1476,24 @@ const healthPlugin: Plugin = {
   version: '1.0.0',
   description: 'Family health tracker: medications, appointments, vaccinations',
 
+  helpEntries: [
+    { command: '/health', description: "Today's dashboard", group: 'Health' },
+    { command: '/health help', description: 'Show all commands', group: 'Health' },
+    { command: '/health add <name>', description: 'Add family member', group: 'Health - Members' },
+    { command: '/health list', description: 'List all members', group: 'Health - Members' },
+    { command: '/health remove <name>', description: 'Remove member and all records', group: 'Health - Members' },
+    { command: '/health med <name> <med> <dosage> <freq>', description: 'Add medication', group: 'Health - Medications' },
+    { command: '/health med <name>', description: 'Show active meds', group: 'Health - Medications' },
+    { command: '/health med remove <name> <med>', description: 'Stop tracking', group: 'Health - Medications' },
+    { command: '/health took <name> [med] [time]', description: 'Log dose taken', group: 'Health - Medications' },
+    { command: '/health meds', description: 'All-family medication status', group: 'Health - Medications' },
+    { command: '/health appt <name> <date> <type> [notes]', description: 'Add appointment', group: 'Health - Appointments' },
+    { command: '/health appt', description: 'Upcoming appointments (30 days)', group: 'Health - Appointments' },
+    { command: '/health appt remove <id>', description: 'Cancel appointment', group: 'Health - Appointments' },
+    { command: '/health vax <name> <vaccine> [date]', description: 'Log vaccination', group: 'Health - Vaccinations' },
+    { command: '/health vax <name>', description: 'Show vaccination history', group: 'Health - Vaccinations' },
+  ],
+
   registerCommands: registerHealthCommand,
 
   tools: [familyHealthSummaryTool, logDoseTool, queryHealthTool],

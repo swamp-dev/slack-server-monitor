@@ -10,6 +10,7 @@ import { registerSecurityCommand } from './security.js';
 import { registerSslCommand } from './ssl.js';
 import { registerBackupsCommand } from './backups.js';
 import { registerPm2Command } from './pm2.js';
+import { registerHelpCommand } from './help.js';
 import { registerPlugins } from '../plugins/index.js';
 import { refreshToolMap } from '../services/tools/index.js';
 import { logger } from '../utils/logger.js';
@@ -43,6 +44,9 @@ export async function registerCommands(app: App): Promise<void> {
 
   // Load and register plugins
   await registerPlugins(app);
+
+  // Help command (registered after plugins so it can list plugin commands)
+  registerHelpCommand(app);
 
   // Refresh tool map to include plugin tools
   refreshToolMap();

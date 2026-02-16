@@ -576,11 +576,19 @@ describe('lift plugin macros tracker', () => {
       });
 
       it('should return different times for different timezones', () => {
-        const nyTime = getStartOfDayInTimezone('America/New_York', 0);
-        const laTime = getStartOfDayInTimezone('America/Los_Angeles', 0);
-        // LA is 3 hours behind NY, so midnight LA is later than midnight NY
-        // (in UTC terms, LA midnight is a larger timestamp)
-        expect(laTime).toBeGreaterThan(nyTime);
+        // Pin to a time where both NY (UTC-5) and LA (UTC-8) see the same date.
+        // Without pinning, this fails during ~05:00-08:00 UTC when NY has
+        // rolled to the next day but LA hasn't, producing different dates.
+        vi.useFakeTimers({ now: Date.UTC(2026, 1, 3, 15, 0, 0) });
+        try {
+          const nyTime = getStartOfDayInTimezone('America/New_York', 0);
+          const laTime = getStartOfDayInTimezone('America/Los_Angeles', 0);
+          // LA is 3 hours behind NY, so midnight LA is later than midnight NY
+          // (in UTC terms, LA midnight is a larger timestamp)
+          expect(laTime).toBeGreaterThan(nyTime);
+        } finally {
+          vi.useRealTimers();
+        }
       });
 
       it('should handle timezone with half-hour offset', () => {

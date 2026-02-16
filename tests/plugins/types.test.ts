@@ -188,4 +188,121 @@ describe('isValidPlugin', () => {
       expect(isValidPlugin(plugin)).toBe(false);
     });
   });
+
+  describe('helpEntries validation', () => {
+    it('should accept plugin with valid helpEntries', () => {
+      const plugin = {
+        name: 'test-plugin',
+        version: '1.0.0',
+        helpEntries: [
+          { command: '/test', description: 'Test command' },
+          { command: '/test sub', description: 'Subcommand', group: 'Test Group' },
+        ],
+      };
+
+      expect(isValidPlugin(plugin)).toBe(true);
+    });
+
+    it('should accept plugin without helpEntries (backward compat)', () => {
+      const plugin = {
+        name: 'test-plugin',
+        version: '1.0.0',
+      };
+
+      expect(isValidPlugin(plugin)).toBe(true);
+    });
+
+    it('should reject non-array helpEntries', () => {
+      const plugin = {
+        name: 'test-plugin',
+        version: '1.0.0',
+        helpEntries: 'not an array',
+      };
+
+      expect(isValidPlugin(plugin)).toBe(false);
+    });
+
+    it('should reject entries with missing command', () => {
+      const plugin = {
+        name: 'test-plugin',
+        version: '1.0.0',
+        helpEntries: [
+          { description: 'Missing command field' },
+        ],
+      };
+
+      expect(isValidPlugin(plugin)).toBe(false);
+    });
+
+    it('should reject entries with missing description', () => {
+      const plugin = {
+        name: 'test-plugin',
+        version: '1.0.0',
+        helpEntries: [
+          { command: '/test' },
+        ],
+      };
+
+      expect(isValidPlugin(plugin)).toBe(false);
+    });
+
+    it('should accept entries with optional group', () => {
+      const plugin = {
+        name: 'test-plugin',
+        version: '1.0.0',
+        helpEntries: [
+          { command: '/test', description: 'No group' },
+          { command: '/test sub', description: 'With group', group: 'My Group' },
+        ],
+      };
+
+      expect(isValidPlugin(plugin)).toBe(true);
+    });
+
+    it('should reject entries with non-string group', () => {
+      const plugin = {
+        name: 'test-plugin',
+        version: '1.0.0',
+        helpEntries: [
+          { command: '/test', description: 'Bad group', group: 123 },
+        ],
+      };
+
+      expect(isValidPlugin(plugin)).toBe(false);
+    });
+
+    it('should reject entries that are not objects', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        helpEntries: ['not an object'],
+      })).toBe(false);
+    });
+
+    it('should reject null entries', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        helpEntries: [null],
+      })).toBe(false);
+    });
+
+    it('should reject numeric entries', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        helpEntries: [42],
+      })).toBe(false);
+    });
+
+    it('should accept empty helpEntries array', () => {
+      const plugin = {
+        name: 'test-plugin',
+        version: '1.0.0',
+        helpEntries: [],
+      };
+
+      expect(isValidPlugin(plugin)).toBe(true);
+    });
+  });
 });
