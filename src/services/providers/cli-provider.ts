@@ -1,4 +1,8 @@
 import { spawn } from 'child_process';
+import { writeFileSync, unlinkSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { randomBytes } from 'crypto';
 import { getToolSpecs, executeTool } from '../tools/index.js';
 import { buildSystemPrompt } from '../../config/prompts.js';
 import { scrubSensitiveData } from '../../formatters/scrub.js';
@@ -312,23 +316,31 @@ ${JSON.stringify(tools, null, 2)}
 
   /**
    * Call Claude CLI and return response
+   *
+   * Prompt is written to stdin and system prompt to a temp file to avoid
+   * hitting the OS ARG_MAX limit (~2MB) on long conversations.
    */
   private callCli(prompt: string, systemPrompt: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      // Build args: claude -p "prompt" --model model --print --system-prompt "system" --tools ""
+    // Write system prompt to temp file to keep args small
+    const tmpFile = join(tmpdir(), `claude-sp-${randomBytes(8).toString('hex')}.txt`);
+    writeFileSync(tmpFile, systemPrompt, 'utf-8');
+
+    return new Promise<string>((resolve, reject) => {
       // IMPORTANT: --tools "" disables all built-in Claude Code tools (Bash, Read, Edit, etc.)
       // This forces Claude to use our custom text-based tool protocol instead
+      // Prompt is piped via stdin; system prompt read from temp file
       const args = [
-        '-p', prompt,
-        '--model', this.config.model,
         '--print',
-        '--system-prompt', systemPrompt,
+        '--model', this.config.model,
+        '--system-prompt-file', tmpFile,
         '--tools', '',
       ];
 
       logger.debug('Spawning Claude CLI', {
         path: this.config.cliPath,
         model: this.config.model,
+        promptLength: prompt.length,
+        systemPromptFile: tmpFile,
       });
 
       const proc = spawn(this.config.cliPath, args, {
@@ -336,7 +348,8 @@ ${JSON.stringify(tools, null, 2)}
         timeout: 120000, // 2 minute timeout
       });
 
-      // Close stdin to signal EOF - Claude CLI waits for EOF before processing
+      // Write prompt to stdin and signal EOF so CLI processes it
+      proc.stdin.write(prompt);
       proc.stdin.end();
 
       let stdout = '';
@@ -351,10 +364,10 @@ ${JSON.stringify(tools, null, 2)}
       });
 
       proc.on('close', (code) => {
+        this.cleanupTmpFile(tmpFile);
         if (code === 0) {
           resolve(stdout.trim());
         } else {
-          // Scrub stderr before logging or returning to prevent secret leakage
           const scrubbedStderr = scrubSensitiveData(stderr);
           logger.error('Claude CLI failed', { code, stderr: scrubbedStderr });
           reject(new Error(`Claude CLI exited with code ${String(code)}: ${scrubbedStderr}`));
@@ -362,11 +375,22 @@ ${JSON.stringify(tools, null, 2)}
       });
 
       proc.on('error', (err) => {
-        // Scrub error message to be safe
+        this.cleanupTmpFile(tmpFile);
         const scrubbedError = scrubSensitiveData(err.message);
         logger.error('Claude CLI spawn error', { error: scrubbedError });
         reject(new Error(`Failed to spawn Claude CLI: ${scrubbedError}`));
       });
     });
+  }
+
+  /**
+   * Best-effort cleanup of temp file
+   */
+  private cleanupTmpFile(filePath: string): void {
+    try {
+      unlinkSync(filePath);
+    } catch {
+      logger.warn('Failed to clean up temp file', { path: filePath });
+    }
   }
 }
