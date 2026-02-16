@@ -557,6 +557,42 @@ describe('web templates', () => {
       expect(html).toContain('highlight');
       expect(html).toContain('hljs');
     });
+
+    it('should include export markdown button', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('export/md');
+      expect(html).toContain('Export');
+    });
+
+    it('should include copy to clipboard button', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('clipboard');
+      expect(html).toContain('Copy');
+    });
   });
 
   describe('render404', () => {

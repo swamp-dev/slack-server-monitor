@@ -334,6 +334,33 @@ const styles = `
     border-top: 1px solid var(--border-color);
   }
 
+  .export-actions {
+    margin-top: 12px;
+    display: flex;
+    gap: 8px;
+  }
+
+  .export-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 0.8125rem;
+    font-family: inherit;
+    color: var(--text-color);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.2s;
+  }
+
+  .export-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    text-decoration: none;
+  }
+
   @media (max-width: 600px) {
     .container {
       padding: 10px;
@@ -462,6 +489,10 @@ export function renderConversation(
         Started: ${formatTimestamp(metadata.createdAt)} |
         Last updated: ${formatTimestamp(metadata.updatedAt)}
       </div>
+      <div class="export-actions">
+        <a class="export-btn" id="export-md" href="export/md">Export Markdown</a>
+        <button class="export-btn" id="copy-clipboard" type="button">Copy to Clipboard</button>
+      </div>
     </div>
   </header>
 
@@ -476,7 +507,28 @@ export function renderConversation(
     </div>
   </footer>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp" crossorigin="anonymous"></script>
-  <script>hljs.highlightAll();</script>
+  <script>
+    hljs.highlightAll();
+    (function() {
+      var params = new URLSearchParams(window.location.search);
+      var token = params.get('token');
+      var exportLink = document.getElementById('export-md');
+      if (exportLink && token) {
+        exportLink.href = window.location.pathname + '/export/md?token=' + encodeURIComponent(token);
+      }
+      var copyBtn = document.getElementById('copy-clipboard');
+      if (copyBtn) {
+        copyBtn.addEventListener('click', function() {
+          var messages = document.querySelectorAll('.message-content');
+          var text = Array.from(messages).map(function(el) { return el.textContent; }).join('\\n\\n');
+          navigator.clipboard.writeText(text).then(function() {
+            copyBtn.textContent = 'Copied!';
+            setTimeout(function() { copyBtn.textContent = 'Copy to Clipboard'; }, 2000);
+          });
+        });
+      }
+    })();
+  </script>
 </body>
 </html>`;
 }
