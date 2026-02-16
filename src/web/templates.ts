@@ -268,20 +268,55 @@ const styles = `
   .tool-call-header {
     padding: 10px 14px;
     background: rgba(255, 255, 255, 0.03);
-    font-family: 'SF Mono', monospace;
     font-size: 0.875rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    list-style: none;
+  }
+
+  .tool-call-header::-webkit-details-marker {
+    display: none;
+  }
+
+  .tool-call-header::before {
+    content: '\\25B6';
+    margin-right: 8px;
+    font-size: 0.625rem;
+    transition: transform 0.2s;
+  }
+
+  details.tool-call[open] > .tool-call-header::before {
+    transform: rotate(90deg);
+  }
+
+  .tool-call-name {
+    font-family: 'SF Mono', monospace;
     color: #ffd93d;
+  }
+
+  .tool-call-time {
+    color: var(--text-muted);
+    font-size: 0.75rem;
   }
 
   .tool-call-content {
     padding: 12px 14px;
     font-size: 0.8125rem;
     color: var(--text-muted);
+    border-top: 1px solid var(--border-color);
   }
 
   .tool-call-content pre {
     margin: 8px 0 0;
     font-size: 0.75rem;
+  }
+
+  .tool-call-output {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border-color);
   }
 
   .empty {
@@ -340,7 +375,18 @@ function renderMessage(message: ConversationMessage): string {
 }
 
 /**
- * Render tool calls section
+ * Format a tool call timestamp as time only
+ */
+function formatToolTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+/**
+ * Render tool calls section with collapsible details
  */
 function renderToolCalls(toolCalls: ToolCallLog[]): string {
   if (toolCalls.length === 0) {
@@ -350,15 +396,23 @@ function renderToolCalls(toolCalls: ToolCallLog[]): string {
   const toolCallsHtml = toolCalls
     .map((tc) => {
       const inputJson = JSON.stringify(tc.input, null, 2);
+      const time = formatToolTime(tc.timestamp);
+      const outputHtml = tc.outputPreview
+        ? `<div class="tool-call-output"><strong>Output:</strong> ${escapeHtml(tc.outputPreview)}</div>`
+        : '';
+
       return `
-        <div class="tool-call">
-          <div class="tool-call-header">${escapeHtml(tc.toolName)}</div>
+        <details class="tool-call">
+          <summary class="tool-call-header">
+            <span class="tool-call-name">${escapeHtml(tc.toolName)}</span>
+            <span class="tool-call-time">${time}</span>
+          </summary>
           <div class="tool-call-content">
             <strong>Input:</strong>
-            <pre><code>${escapeHtml(inputJson)}</code></pre>
-            ${tc.outputPreview ? `<strong>Output:</strong> ${escapeHtml(tc.outputPreview)}` : ''}
+            <pre><code class="language-json">${escapeHtml(inputJson)}</code></pre>
+            ${outputHtml}
           </div>
-        </div>
+        </details>
       `;
     })
     .join('\n');

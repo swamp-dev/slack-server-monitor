@@ -132,6 +132,177 @@ describe('web templates', () => {
       expect(html).toContain('45% used');
     });
 
+    it('should render tool calls as collapsible details/summary elements', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Check disk' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'get_disk_usage',
+          input: { mount: '/' },
+          outputPreview: '45% used',
+          timestamp: Date.now(),
+        },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('<details');
+      expect(html).toContain('<summary');
+      expect(html).toContain('</details>');
+    });
+
+    it('should use language-json class for tool call input JSON', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Check disk' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'get_disk_usage',
+          input: { mount: '/' },
+          outputPreview: '45% used',
+          timestamp: Date.now(),
+        },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('class="language-json"');
+    });
+
+    it('should display tool call timestamps', () => {
+      const fixedTimestamp = Date.now();
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Check disk' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'get_disk_usage',
+          input: { mount: '/' },
+          outputPreview: '45% used',
+          timestamp: fixedTimestamp,
+        },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: fixedTimestamp - 60000,
+        updatedAt: fixedTimestamp,
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      // Should contain the tool-call-time element with a time string (HH:MM:SS format)
+      expect(html).toContain('tool-call-time');
+      expect(html).toMatch(/\d{1,2}:\d{2}:\d{2}/);
+    });
+
+    it('should render multiple tool calls as separate collapsible items', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Check everything' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'get_disk_usage',
+          input: { mount: '/' },
+          outputPreview: '45% used',
+          timestamp: Date.now(),
+        },
+        {
+          conversationId: 1,
+          toolName: 'get_system_resources',
+          input: {},
+          outputPreview: 'CPU: 12%',
+          timestamp: Date.now() + 1000,
+        },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('Tool Calls (2)');
+      expect(html).toContain('get_disk_usage');
+      expect(html).toContain('get_system_resources');
+      // Each tool call should be a separate details element
+      const detailsCount = (html.match(/<details/g) || []).length;
+      expect(detailsCount).toBe(2);
+    });
+
+    it('should render tool call output in a code block', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Check disk' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'get_disk_usage',
+          input: { mount: '/' },
+          outputPreview: '45% used on /',
+          timestamp: Date.now(),
+        },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      // Output should be in a styled element, not just plain text
+      expect(html).toContain('class="tool-call-output"');
+      expect(html).toContain('45% used on /');
+    });
+
+    it('should handle tool calls with no output preview', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Do something' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'run_command',
+          input: { command: 'uptime' },
+          outputPreview: '',
+          timestamp: Date.now(),
+        },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('run_command');
+      // Should not render an output div for empty output
+      expect(html).not.toContain('class="tool-call-output"');
+    });
+
     it('should handle empty conversation', () => {
       const messages: ConversationMessage[] = [];
       const toolCalls: ToolCallLog[] = [];
