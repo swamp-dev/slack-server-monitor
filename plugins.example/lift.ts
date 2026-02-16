@@ -9,10 +9,11 @@
  * - Using formatters (header, section, divider, context)
  *
  * Commands:
- * - /lift wilks <total_kg> <bodyweight_kg> <m|f> - Calculate Wilks score
- * - /lift dots <total_kg> <bodyweight_kg> <m|f> - Calculate DOTS score
+ * - /lift wilks <total> <bodyweight> <m|f> - Calculate Wilks score
+ * - /lift dots <total> <bodyweight> <m|f> - Calculate DOTS score
  * - /lift 1rm <weight> <reps> - Estimate 1 rep max
  * - /lift warmup <weight> [weight2] ... - Calculate warmup sets with plate loading
+ * - /lift units [lbs|kg] - View or set weight unit preference (default: lbs)
  * - /lift m c20 p40 f15 - Log macros (carbs, protein, fat in grams)
  * - /lift m - Show today's macro totals
  * - /lift m -1 - Show yesterday's totals
@@ -257,6 +258,50 @@ export interface MacroEstimateResult {
   confidence: 'high' | 'medium' | 'low';
   reference_object_used?: string;
   notes?: string;
+}
+
+// =============================================================================
+// Unit Conversion
+// =============================================================================
+
+export type WeightUnit = 'lbs' | 'kg';
+
+export const LBS_TO_KG = 0.453592;
+export const KG_TO_LBS = 2.20462;
+
+export function lbsToKg(lbs: number): number {
+  return lbs * LBS_TO_KG;
+}
+
+export function kgToLbs(kg: number): number {
+  return kg * KG_TO_LBS;
+}
+
+/**
+ * Format a weight value with its unit label
+ */
+export function formatWeight(value: number, unit: WeightUnit): string {
+  return `${value.toFixed(1)} ${unit}`;
+}
+
+/**
+ * Get user's preferred weight unit (defaults to lbs)
+ */
+export function getUserUnit(userId: string, db: PluginDatabase): WeightUnit {
+  const row = db.prepare(
+    `SELECT weight_unit FROM ${db.prefix}user_prefs WHERE user_id = ?`
+  ).get(userId) as { weight_unit: string } | undefined;
+  return (row?.weight_unit as WeightUnit) ?? 'lbs';
+}
+
+/**
+ * Set user's preferred weight unit
+ */
+export function setUserUnit(userId: string, unit: WeightUnit, db: PluginDatabase): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO ${db.prefix}user_prefs (user_id, weight_unit, updated_at)
+     VALUES (?, ?, ?)`
+  ).run(userId, unit, Date.now());
 }
 
 // =============================================================================
@@ -992,31 +1037,35 @@ function registerLiftCommand(app: App | PluginApp): void {
       switch (subcommand) {
         case 'wilks': {
           // /lift wilks <total> <bodyweight> <m|f>
+          const unit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
           const [, totalStr, bwStr, sex] = args;
           if (!totalStr || !bwStr || !sex) {
             await respond(
               buildResponse([
-                section(':warning: Usage: `/lift wilks <total_kg> <bodyweight_kg> <m|f>`'),
-                context('Example: `/lift wilks 500 83 m`'),
+                section(`:warning: Usage: \`/lift wilks <total> <bodyweight> <m|f>\``),
+                context(`Example: \`/lift wilks ${unit === 'lbs' ? '1100 183' : '500 83'} m\` (${unit})`),
               ])
             );
             return;
           }
 
-          const total = parseFloat(totalStr);
-          const bw = parseFloat(bwStr);
+          const totalInput = parseFloat(totalStr);
+          const bwInput = parseFloat(bwStr);
           const isMale = sex.toLowerCase() === 'm';
 
-          if (isNaN(total) || isNaN(bw) || total <= 0 || bw <= 0) {
+          if (isNaN(totalInput) || isNaN(bwInput) || totalInput <= 0 || bwInput <= 0) {
             await respond(buildResponse([section(':x: Invalid numbers. Total and bodyweight must be positive.')]));
             return;
           }
 
-          const wilks = calculateWilks(total, bw, isMale);
+          const totalKg = unit === 'kg' ? totalInput : lbsToKg(totalInput);
+          const bwKg = unit === 'kg' ? bwInput : lbsToKg(bwInput);
+
+          const wilks = calculateWilks(totalKg, bwKg, isMale);
           await respond(
             buildResponse([
               header('Wilks Score'),
-              section(`*Total:* ${total.toFixed(1)} kg\n*Bodyweight:* ${bw.toFixed(1)} kg\n*Sex:* ${isMale ? 'Male' : 'Female'}`),
+              section(`*Total:* ${formatWeight(totalInput, unit)}\n*Bodyweight:* ${formatWeight(bwInput, unit)}\n*Sex:* ${isMale ? 'Male' : 'Female'}`),
               divider(),
               section(`:muscle: *Wilks Score: ${wilks.toFixed(2)}*`),
               context('Using Wilks 2020 formula'),
@@ -1027,31 +1076,35 @@ function registerLiftCommand(app: App | PluginApp): void {
 
         case 'dots': {
           // /lift dots <total> <bodyweight> <m|f>
+          const unit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
           const [, totalStr, bwStr, sex] = args;
           if (!totalStr || !bwStr || !sex) {
             await respond(
               buildResponse([
-                section(':warning: Usage: `/lift dots <total_kg> <bodyweight_kg> <m|f>`'),
-                context('Example: `/lift dots 500 83 m`'),
+                section(`:warning: Usage: \`/lift dots <total> <bodyweight> <m|f>\``),
+                context(`Example: \`/lift dots ${unit === 'lbs' ? '1100 183' : '500 83'} m\` (${unit})`),
               ])
             );
             return;
           }
 
-          const total = parseFloat(totalStr);
-          const bw = parseFloat(bwStr);
+          const totalInput = parseFloat(totalStr);
+          const bwInput = parseFloat(bwStr);
           const isMale = sex.toLowerCase() === 'm';
 
-          if (isNaN(total) || isNaN(bw) || total <= 0 || bw <= 0) {
+          if (isNaN(totalInput) || isNaN(bwInput) || totalInput <= 0 || bwInput <= 0) {
             await respond(buildResponse([section(':x: Invalid numbers. Total and bodyweight must be positive.')]));
             return;
           }
 
-          const dots = calculateDots(total, bw, isMale);
+          const totalKg = unit === 'kg' ? totalInput : lbsToKg(totalInput);
+          const bwKg = unit === 'kg' ? bwInput : lbsToKg(bwInput);
+
+          const dots = calculateDots(totalKg, bwKg, isMale);
           await respond(
             buildResponse([
               header('DOTS Score'),
-              section(`*Total:* ${total.toFixed(1)} kg\n*Bodyweight:* ${bw.toFixed(1)} kg\n*Sex:* ${isMale ? 'Male' : 'Female'}`),
+              section(`*Total:* ${formatWeight(totalInput, unit)}\n*Bodyweight:* ${formatWeight(bwInput, unit)}\n*Sex:* ${isMale ? 'Male' : 'Female'}`),
               divider(),
               section(`:muscle: *DOTS Score: ${dots.toFixed(2)}*`),
               context('DOTS = Dynamic Object Tracking System'),
@@ -1062,37 +1115,76 @@ function registerLiftCommand(app: App | PluginApp): void {
 
         case '1rm': {
           // /lift 1rm <weight> <reps>
+          const unit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
           const [, weightStr, repsStr] = args;
           if (!weightStr || !repsStr) {
             await respond(
               buildResponse([
                 section(':warning: Usage: `/lift 1rm <weight> <reps>`'),
-                context('Example: `/lift 1rm 100 5` (100kg for 5 reps)'),
+                context(`Example: \`/lift 1rm ${unit === 'lbs' ? '225 5' : '100 5'}\` (${unit})`),
               ])
             );
             return;
           }
 
-          const weight = parseFloat(weightStr);
+          const weightInput = parseFloat(weightStr);
           const reps = parseInt(repsStr, 10);
 
-          if (isNaN(weight) || isNaN(reps) || weight <= 0 || reps <= 0 || reps > 20) {
+          if (isNaN(weightInput) || isNaN(reps) || weightInput <= 0 || reps <= 0 || reps > 20) {
             await respond(
               buildResponse([section(':x: Invalid input. Weight must be positive, reps must be 1-20.')])
             );
             return;
           }
 
-          const estimated1rm = calculate1rm(weight, reps);
+          const weightKg = unit === 'kg' ? weightInput : lbsToKg(weightInput);
+          const estimated1rmKg = calculate1rm(weightKg, reps);
+          const estimated1rmDisplay = unit === 'kg' ? estimated1rmKg : kgToLbs(estimated1rmKg);
+
           await respond(
             buildResponse([
               header('Estimated 1RM'),
-              section(`*Weight:* ${weight.toFixed(1)} kg\n*Reps:* ${reps}`),
+              section(`*Weight:* ${formatWeight(weightInput, unit)}\n*Reps:* ${reps}`),
               divider(),
-              section(`:muscle: *Estimated 1RM: ${estimated1rm.toFixed(1)} kg*`),
+              section(`:muscle: *Estimated 1RM: ${formatWeight(estimated1rmDisplay, unit)}*`),
               context('Using Epley formula: weight × (1 + reps/30)'),
             ])
           );
+          break;
+        }
+
+        case 'units': {
+          if (!pluginDb) {
+            await respond(buildResponse([section(':x: Database not initialized')]));
+            return;
+          }
+
+          const unitArg = args[1]?.toLowerCase();
+          if (!unitArg) {
+            // Show current preference
+            const currentUnit = getUserUnit(command.user_id, pluginDb);
+            await respond(
+              buildResponse([
+                section(`:straight_ruler: Current unit: *${currentUnit}*`),
+                context('Change with `/lift units lbs` or `/lift units kg`'),
+              ])
+            );
+          } else if (unitArg === 'lbs' || unitArg === 'kg') {
+            setUserUnit(command.user_id, unitArg, pluginDb);
+            await respond(
+              buildResponse([
+                section(`:white_check_mark: Weight unit set to *${unitArg}*`),
+                context('All calculator commands will now use ' + unitArg),
+              ])
+            );
+          } else {
+            await respond(
+              buildResponse([
+                section(':warning: Invalid unit. Use `lbs` or `kg`.'),
+                context('Example: `/lift units lbs` or `/lift units kg`'),
+              ])
+            );
+          }
           break;
         }
 
@@ -1225,38 +1317,50 @@ function registerLiftCommand(app: App | PluginApp): void {
 
         case 'warmup': {
           // /lift warmup <weight1> [weight2] ...
-          const weights = args
+          const unit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
+          const inputWeights = args
             .slice(1)
             .map((w: string) => parseFloat(w))
             .filter((w: number) => !isNaN(w) && w > 0);
 
-          if (weights.length === 0) {
+          if (inputWeights.length === 0) {
             await respond(
               buildResponse([
                 section(':warning: Usage: `/lift warmup <weight> [weight2] ...`'),
-                context('Example: `/lift warmup 200` or `/lift warmup 135 225 315`'),
+                context(`Example: \`/lift warmup ${unit === 'lbs' ? '225' : '100'}\` (${unit})`),
               ])
             );
             return;
           }
 
-          // Validate max weight to prevent unbounded output
-          const invalidWeights = weights.filter((w: number) => w > MAX_TARGET_WEIGHT);
+          // Convert to lbs for plate loading calculation
+          const weightsLbs = unit === 'kg'
+            ? inputWeights.map((w: number) => Math.round(kgToLbs(w)))
+            : inputWeights;
+
+          // Validate max weight (in lbs) to prevent unbounded output
+          const invalidWeights = weightsLbs.filter((w: number) => w > MAX_TARGET_WEIGHT);
           if (invalidWeights.length > 0) {
+            const maxDisplay = unit === 'kg'
+              ? `${Math.round(lbsToKg(MAX_TARGET_WEIGHT))} kg`
+              : `${MAX_TARGET_WEIGHT} lbs`;
             await respond(
               buildResponse([
-                section(`:x: Weight(s) exceed maximum of ${MAX_TARGET_WEIGHT} lbs: ${invalidWeights.join(', ')}`),
+                section(`:x: Weight(s) exceed maximum of ${maxDisplay}`),
               ])
             );
             return;
           }
 
           const blocks: ReturnType<typeof header | typeof section | typeof divider | typeof context>[] = [];
-          for (const targetWeight of weights) {
+          for (const targetWeight of weightsLbs) {
             if (blocks.length > 0) blocks.push(divider());
             blocks.push(...formatWarmupTable(targetWeight));
           }
-          blocks.push(context('Percentages: 40%, 60%, 80%, 100% | Bar = 45 lbs | Plate count is total (both sides)'));
+          const noteText = unit === 'kg'
+            ? 'Percentages: 40%, 60%, 80%, 100% | Bar = 45 lbs | Plate loading in lbs (standard plates)'
+            : 'Percentages: 40%, 60%, 80%, 100% | Bar = 45 lbs | Plate count is total (both sides)';
+          blocks.push(context(noteText));
 
           await respond(buildResponse(blocks));
           break;
@@ -1264,7 +1368,8 @@ function registerLiftCommand(app: App | PluginApp): void {
 
         case 'h':
         case 'help':
-        default:
+        default: {
+          const helpUnit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
           await respond(
             buildResponse([
               header('Lift Plugin'),
@@ -1275,6 +1380,7 @@ function registerLiftCommand(app: App | PluginApp): void {
                   '`/lift 1rm <weight> <reps>` - Estimate 1RM\n' +
                   '`/lift warmup <weight>` - Warmup sets'
               ),
+              context(`Weights in ${helpUnit} | Change with \`/lift units lbs\` or \`/lift units kg\``),
               divider(),
               section('*Quick Food Analysis:*'),
               section(
@@ -1293,14 +1399,15 @@ function registerLiftCommand(app: App | PluginApp): void {
                   '`/lift m adjust c50 p30 f15` - Adjust and log'
               ),
               divider(),
-              section('*Quick Templates:*'),
+              section('*Settings:*'),
               section(
-                '`/lift a` \u2192 `confirm` \u2192 done!\n' +
-                  '`/lift m c150 p30 f10` - quick log\n' +
-                  '`/lift m` - check today'
+                '`/lift units` - View current unit\n' +
+                  '`/lift units lbs` - Set to pounds\n' +
+                  '`/lift units kg` - Set to kilograms'
               ),
             ])
           );
+        }
       }
     } catch (error) {
       await respond(
@@ -1319,6 +1426,7 @@ const powerliftingTool: ToolDefinition = {
     name: 'calculate_powerlifting_score',
     description:
       'Calculate powerlifting scores (Wilks, DOTS) or estimate 1RM. ' +
+      'Accepts weights in lbs or kg (specify via unit parameter, defaults to lbs). ' +
       'Use this when asked about powerlifting strength scores or rep max estimates.',
     input_schema: {
       type: 'object',
@@ -1328,63 +1436,88 @@ const powerliftingTool: ToolDefinition = {
           enum: ['wilks', 'dots', '1rm'],
           description: 'Type of calculation: wilks, dots, or 1rm',
         },
-        total_kg: {
+        total: {
           type: 'number',
-          description: 'Total lifted in kg (for wilks/dots)',
+          description: 'Total lifted (for wilks/dots). Unit determined by unit parameter.',
         },
-        bodyweight_kg: {
+        bodyweight: {
           type: 'number',
-          description: 'Bodyweight in kg (for wilks/dots)',
+          description: 'Bodyweight (for wilks/dots). Unit determined by unit parameter.',
         },
         is_male: {
           type: 'boolean',
           description: 'True for male, false for female (for wilks/dots)',
         },
-        weight_kg: {
+        weight: {
           type: 'number',
-          description: 'Weight lifted in kg (for 1rm)',
+          description: 'Weight lifted (for 1rm). Unit determined by unit parameter.',
         },
         reps: {
           type: 'number',
           description: 'Number of reps performed (for 1rm)',
+        },
+        unit: {
+          type: 'string',
+          enum: ['lbs', 'kg'],
+          description: 'Weight unit for input values. Defaults to lbs.',
         },
       },
       required: ['calculation'],
     },
   },
   execute: async (input) => {
-    const { calculation, total_kg, bodyweight_kg, is_male, weight_kg, reps } = input as {
+    const { calculation, total, bodyweight, is_male, weight, reps, unit: inputUnit,
+            // Backward compat: accept old _kg params
+            total_kg, bodyweight_kg, weight_kg } = input as {
       calculation: string;
+      total?: number;
+      bodyweight?: number;
+      is_male?: boolean;
+      weight?: number;
+      reps?: number;
+      unit?: string;
       total_kg?: number;
       bodyweight_kg?: number;
-      is_male?: boolean;
       weight_kg?: number;
-      reps?: number;
     };
+
+    const unit: WeightUnit = inputUnit === 'kg' ? 'kg' : 'lbs';
+    const toKg = (v: number) => unit === 'kg' ? v : lbsToKg(v);
 
     switch (calculation) {
       case 'wilks': {
-        if (total_kg === undefined || bodyweight_kg === undefined || is_male === undefined) {
-          return 'Error: wilks requires total_kg, bodyweight_kg, and is_male';
+        const t = total ?? total_kg;
+        const bw = bodyweight ?? bodyweight_kg;
+        if (t === undefined || bw === undefined || is_male === undefined) {
+          return 'Error: wilks requires total, bodyweight, and is_male';
         }
-        const score = calculateWilks(total_kg, bodyweight_kg, is_male);
-        return `Wilks Score: ${score.toFixed(2)} (${is_male ? 'male' : 'female'}, ${total_kg}kg total @ ${bodyweight_kg}kg bodyweight)`;
+        const tKg = total_kg !== undefined ? total_kg : toKg(t);
+        const bwKg = bodyweight_kg !== undefined ? bodyweight_kg : toKg(bw);
+        const score = calculateWilks(tKg, bwKg, is_male);
+        return `Wilks Score: ${score.toFixed(2)} (${is_male ? 'male' : 'female'}, ${t} ${unit} total @ ${bw} ${unit} bodyweight)`;
       }
 
       case 'dots': {
-        if (total_kg === undefined || bodyweight_kg === undefined || is_male === undefined) {
-          return 'Error: dots requires total_kg, bodyweight_kg, and is_male';
+        const t = total ?? total_kg;
+        const bw = bodyweight ?? bodyweight_kg;
+        if (t === undefined || bw === undefined || is_male === undefined) {
+          return 'Error: dots requires total, bodyweight, and is_male';
         }
-        const score = calculateDots(total_kg, bodyweight_kg, is_male);
-        return `DOTS Score: ${score.toFixed(2)} (${is_male ? 'male' : 'female'}, ${total_kg}kg total @ ${bodyweight_kg}kg bodyweight)`;
+        const tKg = total_kg !== undefined ? total_kg : toKg(t);
+        const bwKg = bodyweight_kg !== undefined ? bodyweight_kg : toKg(bw);
+        const score = calculateDots(tKg, bwKg, is_male);
+        return `DOTS Score: ${score.toFixed(2)} (${is_male ? 'male' : 'female'}, ${t} ${unit} total @ ${bw} ${unit} bodyweight)`;
       }
 
       case '1rm': {
-        if (weight_kg === undefined || reps === undefined) {
-          return 'Error: 1rm requires weight_kg and reps';
+        const w = weight ?? weight_kg;
+        if (w === undefined || reps === undefined) {
+          return 'Error: 1rm requires weight and reps';
         }
-        const estimated = calculate1rm(weight_kg, reps);
-        return `Estimated 1RM: ${estimated.toFixed(1)}kg (based on ${weight_kg}kg × ${reps} reps using Epley formula)`;
+        const wKg = weight_kg !== undefined ? weight_kg : toKg(w);
+        const estimated = calculate1rm(wKg, reps);
+        const estimatedDisplay = unit === 'kg' ? estimated : kgToLbs(estimated);
+        return `Estimated 1RM: ${estimatedDisplay.toFixed(1)} ${unit} (based on ${w} ${unit} × ${reps} reps using Epley formula)`;
       }
 
       default:
@@ -1398,6 +1531,8 @@ const warmupTool: ToolDefinition = {
     name: 'calculate_warmup_sets',
     description:
       'Calculate warmup set percentages and plate loading configuration for one or more target weights. ' +
+      'Accepts weights in lbs or kg (specify via unit parameter, defaults to lbs). ' +
+      'Plate loading is always shown in lbs (standard US gym plates). ' +
       'Use this when asked about warming up for a lift or what plates to load.',
     input_schema: {
       type: 'object',
@@ -1405,33 +1540,44 @@ const warmupTool: ToolDefinition = {
         target_weights: {
           type: 'array',
           items: { type: 'number' },
-          description: 'Target weight(s) in lbs to calculate warmup sets for',
+          description: 'Target weight(s) to calculate warmup sets for',
+        },
+        unit: {
+          type: 'string',
+          enum: ['lbs', 'kg'],
+          description: 'Weight unit for target_weights. Defaults to lbs. Plate loading always shown in lbs.',
         },
       },
       required: ['target_weights'],
     },
   },
   execute: async (input) => {
-    const { target_weights } = input as { target_weights: number[] };
+    const { target_weights, unit: inputUnit } = input as { target_weights: number[]; unit?: string };
 
     if (!target_weights || target_weights.length === 0) {
       return 'Error: target_weights array is required';
     }
 
+    const unit: WeightUnit = inputUnit === 'kg' ? 'kg' : 'lbs';
+
     const results: string[] = [];
-    for (const targetWeight of target_weights) {
-      if (targetWeight <= 0) {
-        results.push(`Skipping invalid weight: ${targetWeight}`);
-        continue;
-      }
-      if (targetWeight > MAX_TARGET_WEIGHT) {
-        results.push(`Skipping weight exceeding maximum (${MAX_TARGET_WEIGHT} lbs): ${targetWeight}`);
+    for (const inputWeight of target_weights) {
+      if (inputWeight <= 0) {
+        results.push(`Skipping invalid weight: ${inputWeight}`);
         continue;
       }
 
-      const lines: string[] = [`Warmup for ${targetWeight} lbs:`];
+      const weightLbs = unit === 'kg' ? Math.round(kgToLbs(inputWeight)) : inputWeight;
+
+      if (weightLbs > MAX_TARGET_WEIGHT) {
+        results.push(`Skipping weight exceeding maximum (${MAX_TARGET_WEIGHT} lbs): ${inputWeight} ${unit}`);
+        continue;
+      }
+
+      const label = unit === 'kg' ? `${inputWeight} kg (~${weightLbs} lbs)` : `${weightLbs} lbs`;
+      const lines: string[] = [`Warmup for ${label}:`];
       for (const pct of WARMUP_PERCENTAGES) {
-        const weight = Math.round(targetWeight * pct);
+        const weight = Math.round(weightLbs * pct);
         const config = calculatePlateConfig(weight);
         lines.push(`  ${Math.round(pct * 100)}%: ${weight} lbs - ${config}`);
       }
@@ -1841,13 +1987,14 @@ async function handleCancel(
 const liftPlugin: Plugin = {
   name: 'lift',
   version: '2.0.0',
-  description: 'Powerlifting calculator (Wilks, DOTS, 1RM, warmup) and macro tracker with vision support',
+  description: 'Powerlifting calculator (Wilks, DOTS, 1RM, warmup) with lbs/kg support, macro tracker, and vision',
 
   helpEntries: [
-    { command: '/lift wilks <total> <bw> <m|f>', description: 'Calculate Wilks score', group: 'Lift - Calculators' },
-    { command: '/lift dots <total> <bw> <m|f>', description: 'Calculate DOTS score', group: 'Lift - Calculators' },
-    { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max', group: 'Lift - Calculators' },
+    { command: '/lift wilks <total> <bw> <m|f>', description: 'Calculate Wilks score (lbs or kg)', group: 'Lift - Calculators' },
+    { command: '/lift dots <total> <bw> <m|f>', description: 'Calculate DOTS score (lbs or kg)', group: 'Lift - Calculators' },
+    { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max (lbs or kg)', group: 'Lift - Calculators' },
     { command: '/lift warmup <weight> [weight2]', description: 'Warmup sets with plate loading', group: 'Lift - Calculators' },
+    { command: '/lift units [lbs|kg]', description: 'View or set weight unit preference', group: 'Lift - Settings' },
     { command: '/lift a [context]', description: 'Analyze latest food photo in channel', group: 'Lift - Food Analysis' },
     { command: '/lift m c20 p40 f15', description: 'Log macros (carbs/protein/fat in grams)', group: 'Lift - Macros' },
     { command: '/lift m', description: "Today's macro totals", group: 'Lift - Macros' },
@@ -1869,6 +2016,15 @@ const liftPlugin: Plugin = {
 
     // Tables are automatically prefixed with "plugin_lift_" via ctx.db.prefix
     // Note: init() must complete within 10 seconds or plugin loading fails
+
+    // User preferences table (weight unit)
+    ctx.db.exec(`
+      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}user_prefs (
+        user_id TEXT PRIMARY KEY,
+        weight_unit TEXT NOT NULL DEFAULT 'lbs' CHECK(weight_unit IN ('lbs', 'kg')),
+        updated_at INTEGER NOT NULL
+      )
+    `);
 
     // Workouts table (example schema)
     ctx.db.exec(`
