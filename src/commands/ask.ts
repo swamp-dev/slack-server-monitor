@@ -205,6 +205,9 @@ export async function registerAskCommand(app: App): Promise<void> {
       return;
     }
 
+    // Track threadTs outside try so error handler can update the message
+    let threadTs: string | undefined;
+
     try {
       // Initialize conversation store (can fail on DB issues)
       logger.debug('Initializing conversation store', { dbPath: claudeConfig.dbPath });
@@ -227,7 +230,7 @@ export async function registerAskCommand(app: App): Promise<void> {
       }
       logger.debug('Initial message posted', { threadTs: initialMessage.ts });
 
-      const threadTs = initialMessage.ts;
+      threadTs = initialMessage.ts;
 
       // Get or create conversation
       const conversation = store.getOrCreateConversation(
@@ -386,21 +389,45 @@ export async function registerAskCommand(app: App): Promise<void> {
       // Try multiple methods to ensure user sees the error
       let errorSent = false;
 
-      // First attempt: use respond() for ephemeral message
-      try {
-        await respond({
-          blocks: [errorBlock(`Failed to get response: ${displayMessage}`)],
-          response_type: 'ephemeral',
-        });
-        errorSent = true;
-        logger.debug('Error response sent via respond()');
-      } catch (respondErr) {
-        logger.warn('respond() failed, trying postMessage', {
-          respondError: respondErr instanceof Error ? respondErr.message : String(respondErr),
-        });
+      // First attempt: update the initial "thinking" message if it was posted
+      // This replaces the stuck "Analyzing..." message with the actual error
+      if (threadTs) {
+        try {
+          await client.chat.update({
+            channel: channelId,
+            ts: threadTs,
+            text: `Error: ${displayMessage}`,
+            blocks: [
+              section(`*Q:* ${question}`),
+              errorBlock(`Failed to get response: ${displayMessage}`),
+            ],
+          });
+          errorSent = true;
+          logger.debug('Error response sent via chat.update on initial message');
+        } catch (updateErr) {
+          logger.warn('chat.update failed, trying respond()', {
+            updateError: updateErr instanceof Error ? updateErr.message : String(updateErr),
+          });
+        }
       }
 
-      // Fallback: post a regular message if respond() failed
+      // Second attempt: use respond() for ephemeral message
+      if (!errorSent) {
+        try {
+          await respond({
+            blocks: [errorBlock(`Failed to get response: ${displayMessage}`)],
+            response_type: 'ephemeral',
+          });
+          errorSent = true;
+          logger.debug('Error response sent via respond()');
+        } catch (respondErr) {
+          logger.warn('respond() failed, trying postMessage', {
+            respondError: respondErr instanceof Error ? respondErr.message : String(respondErr),
+          });
+        }
+      }
+
+      // Last resort: post a regular message
       if (!errorSent) {
         try {
           await client.chat.postMessage({
