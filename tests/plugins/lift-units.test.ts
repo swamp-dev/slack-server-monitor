@@ -365,31 +365,32 @@ describe('Claude tool unit parameter', () => {
   });
 
   describe('warmup tool', () => {
-    it('should accept lbs (default) for warmup', async () => {
+    it('should default to lbs with plate loading', async () => {
       const result = await warmupExecute({
         target_weights: [225],
       });
-      expect(result).toContain('225 lbs');
+      expect(result).toContain('Warmup for 225 lbs:');
       expect(result).toContain('Bar +');
     });
 
-    it('should accept kg unit and convert to lbs for plate loading', async () => {
+    it('should show kg label with lbs equivalent when unit is kg', async () => {
+      // Warmup uses physical plates (lbs), so kg input gets a dual label
+      // "Warmup for 100 kg (~220 lbs):" followed by lbs-based warmup sets
       const result = await warmupExecute({
         target_weights: [100],
         unit: 'kg',
       });
-      // 100 kg ≈ 220 lbs
-      expect(result).toContain('100 kg');
-      expect(result).toContain('lbs');
+      expect(result).toContain('100 kg (~220 lbs)');
     });
 
-    it('should show lbs plate loading even with kg input', async () => {
+    it('should calculate warmup percentages in lbs from kg input', async () => {
+      // 100 kg ≈ 220 lbs, so 40% ≈ 88 lbs, 60% ≈ 132, 80% ≈ 176, 100% = 220
       const result = await warmupExecute({
-        target_weights: [60],
+        target_weights: [100],
         unit: 'kg',
       });
-      // Plate loading should be in lbs
-      expect(result).toContain('lbs');
+      expect(result).toContain('40%: 88 lbs');
+      expect(result).toContain('100%: 220 lbs');
     });
   });
 });
