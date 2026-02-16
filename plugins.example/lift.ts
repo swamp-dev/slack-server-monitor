@@ -305,6 +305,86 @@ export function setUserUnit(userId: string, unit: WeightUnit, db: PluginDatabase
 }
 
 // =============================================================================
+// Bodyweight Tracking
+// =============================================================================
+
+/**
+ * Log a bodyweight entry (one per day, replaces if same day)
+ */
+export function logBodyweight(userId: string, weightKg: number, db: PluginDatabase): void {
+  // Store with start-of-day timestamp (UTC) so one entry per day
+  const now = new Date();
+  const startOfDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  db.prepare(
+    `INSERT OR REPLACE INTO ${db.prefix}bodyweight (user_id, weight_kg, logged_at)
+     VALUES (?, ?, ?)`
+  ).run(userId, weightKg, startOfDay);
+}
+
+/**
+ * Get the most recent bodyweight entry for a user
+ */
+export function getLatestBodyweight(
+  userId: string,
+  db: PluginDatabase
+): { weightKg: number; loggedAt: number } | null {
+  const row = db.prepare(
+    `SELECT weight_kg, logged_at FROM ${db.prefix}bodyweight
+     WHERE user_id = ? ORDER BY logged_at DESC LIMIT 1`
+  ).get(userId) as { weight_kg: number; logged_at: number } | undefined;
+  return row ? { weightKg: row.weight_kg, loggedAt: row.logged_at } : null;
+}
+
+/**
+ * Get bodyweight history for a user over the last N days
+ */
+export function getBodyweightHistory(
+  userId: string,
+  days: number,
+  db: PluginDatabase
+): Array<{ weightKg: number; loggedAt: number }> {
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = db.prepare(
+    `SELECT weight_kg, logged_at FROM ${db.prefix}bodyweight
+     WHERE user_id = ? AND logged_at >= ? ORDER BY logged_at ASC`
+  ).all(userId, since) as Array<{ weight_kg: number; logged_at: number }>;
+  return rows.map((r) => ({ weightKg: r.weight_kg, loggedAt: r.logged_at }));
+}
+
+/**
+ * Format bodyweight trend for display
+ */
+export function formatBodyweightTrend(
+  history: Array<{ weightKg: number; loggedAt: number }>,
+  unit: WeightUnit
+): string {
+  if (history.length === 0) {
+    return 'No bodyweight entries logged yet.';
+  }
+
+  const toDisplay = (kg: number) =>
+    unit === 'kg' ? kg.toFixed(1) : kgToLbs(kg).toFixed(1);
+
+  const latest = history[history.length - 1];
+  const avg = history.reduce((sum, e) => sum + e.weightKg, 0) / history.length;
+
+  let trend = '';
+  if (history.length >= 2) {
+    const first = history[0];
+    const diff = latest.weightKg - first.weightKg;
+    if (diff > 0.2) {
+      trend = ` ↑ +${toDisplay(diff)} ${unit}`;
+    } else if (diff < -0.2) {
+      trend = ` ↓ ${toDisplay(diff)} ${unit}`;
+    } else {
+      trend = ' → stable';
+    }
+  }
+
+  return `*Current:* ${toDisplay(latest.weightKg)} ${unit} | *${String(history.length)}d avg:* ${toDisplay(avg)} ${unit}${trend}`;
+}
+
+// =============================================================================
 // Constants for Warmup Calculator
 // =============================================================================
 
@@ -2024,6 +2104,21 @@ const liftPlugin: Plugin = {
         weight_unit TEXT NOT NULL DEFAULT 'lbs' CHECK(weight_unit IN ('lbs', 'kg')),
         updated_at INTEGER NOT NULL
       )
+    `);
+
+    // Bodyweight tracking table (one entry per user per day)
+    ctx.db.exec(`
+      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}bodyweight (
+        user_id TEXT NOT NULL,
+        weight_kg REAL NOT NULL CHECK(weight_kg > 0 AND weight_kg < 500),
+        logged_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, logged_at)
+      )
+    `);
+
+    ctx.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}bodyweight_user
+        ON ${ctx.db.prefix}bodyweight(user_id, logged_at)
     `);
 
     // Workouts table (example schema)
