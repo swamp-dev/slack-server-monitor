@@ -7,9 +7,9 @@ import type { PluginDatabase } from '../../src/services/plugin-database.js';
 // Type for our exported functions (will fail until implemented)
 type LogBodyweight = (userId: string, weightKg: number, db: PluginDatabase) => void;
 type GetLatestBodyweight = (userId: string, db: PluginDatabase) => { weightKg: number; loggedAt: number } | null;
-type GetBodyweightHistory = (userId: string, days: number, db: PluginDatabase) => Array<{ weightKg: number; loggedAt: number }>;
+type GetBodyweightHistory = (userId: string, days: number, db: PluginDatabase) => { weightKg: number; loggedAt: number }[];
 type FormatBodyweightTrend = (
-  history: Array<{ weightKg: number; loggedAt: number }>,
+  history: { weightKg: number; loggedAt: number }[],
   unit: 'lbs' | 'kg'
 ) => string;
 
@@ -133,7 +133,7 @@ describe('bodyweight tracking', () => {
       const result = getLatestBodyweight('U123', db);
 
       expect(result).not.toBeNull();
-      expect(result!.weightKg).toBeCloseTo(83.0);
+      expect(result?.weightKg).toBeCloseTo(83.0);
     });
 
     it('should return null when no entries exist', () => {

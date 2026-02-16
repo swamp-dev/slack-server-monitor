@@ -1121,6 +1121,18 @@ function registerLiftCommand(app: App | PluginApp): void {
           const unit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
           const [, totalStr, secondArg, thirdArg] = args;
 
+          // Validate total early (before DB lookup)
+          const totalInput = parseFloat(totalStr);
+          if (isNaN(totalInput) || totalInput <= 0) {
+            await respond(
+              buildResponse([
+                section(`:warning: Usage: \`/lift wilks <total> <m|f>\` or \`/lift wilks <total> <bw> <m|f>\``),
+                context(`Example: \`/lift wilks ${unit === 'lbs' ? '1100' : '500'} m\` (uses stored bw) or \`/lift wilks ${unit === 'lbs' ? '1100 183' : '500 83'} m\``),
+              ])
+            );
+            return;
+          }
+
           // Determine if second arg is sex (auto-BW) or bodyweight (explicit)
           let bwInput: number;
           let isMale: boolean;
@@ -1145,10 +1157,14 @@ function registerLiftCommand(app: App | PluginApp): void {
             }
             bwInput = unit === 'kg' ? stored.weightKg : kgToLbs(stored.weightKg);
             usedStoredBw = true;
-          } else if (totalStr && secondArg && thirdArg) {
+          } else if (secondArg && !isNaN(parseFloat(secondArg)) && thirdArg && (thirdArg.toLowerCase() === 'm' || thirdArg.toLowerCase() === 'f')) {
             // /lift wilks <total> <bw> <m|f>
             bwInput = parseFloat(secondArg);
             isMale = thirdArg.toLowerCase() === 'm';
+            if (bwInput <= 0) {
+              await respond(buildResponse([section(':x: Bodyweight must be positive.')]));
+              return;
+            }
           } else {
             await respond(
               buildResponse([
@@ -1156,12 +1172,6 @@ function registerLiftCommand(app: App | PluginApp): void {
                 context(`Example: \`/lift wilks ${unit === 'lbs' ? '1100' : '500'} m\` (uses stored bw) or \`/lift wilks ${unit === 'lbs' ? '1100 183' : '500 83'} m\``),
               ])
             );
-            return;
-          }
-
-          const totalInput = parseFloat(totalStr);
-          if (isNaN(totalInput) || isNaN(bwInput) || totalInput <= 0 || bwInput <= 0) {
-            await respond(buildResponse([section(':x: Invalid numbers. Total and bodyweight must be positive.')]));
             return;
           }
 
@@ -1188,6 +1198,18 @@ function registerLiftCommand(app: App | PluginApp): void {
           const unit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
           const [, totalStr, secondArg, thirdArg] = args;
 
+          // Validate total early (before DB lookup)
+          const totalInput = parseFloat(totalStr);
+          if (isNaN(totalInput) || totalInput <= 0) {
+            await respond(
+              buildResponse([
+                section(`:warning: Usage: \`/lift dots <total> <m|f>\` or \`/lift dots <total> <bw> <m|f>\``),
+                context(`Example: \`/lift dots ${unit === 'lbs' ? '1100' : '500'} m\` (uses stored bw) or \`/lift dots ${unit === 'lbs' ? '1100 183' : '500 83'} m\``),
+              ])
+            );
+            return;
+          }
+
           let bwInput: number;
           let isMale: boolean;
           let usedStoredBw = false;
@@ -1210,9 +1232,13 @@ function registerLiftCommand(app: App | PluginApp): void {
             }
             bwInput = unit === 'kg' ? stored.weightKg : kgToLbs(stored.weightKg);
             usedStoredBw = true;
-          } else if (totalStr && secondArg && thirdArg) {
+          } else if (secondArg && !isNaN(parseFloat(secondArg)) && thirdArg && (thirdArg.toLowerCase() === 'm' || thirdArg.toLowerCase() === 'f')) {
             bwInput = parseFloat(secondArg);
             isMale = thirdArg.toLowerCase() === 'm';
+            if (bwInput <= 0) {
+              await respond(buildResponse([section(':x: Bodyweight must be positive.')]));
+              return;
+            }
           } else {
             await respond(
               buildResponse([
@@ -1220,12 +1246,6 @@ function registerLiftCommand(app: App | PluginApp): void {
                 context(`Example: \`/lift dots ${unit === 'lbs' ? '1100' : '500'} m\` (uses stored bw) or \`/lift dots ${unit === 'lbs' ? '1100 183' : '500 83'} m\``),
               ])
             );
-            return;
-          }
-
-          const totalInput = parseFloat(totalStr);
-          if (isNaN(totalInput) || isNaN(bwInput) || totalInput <= 0 || bwInput <= 0) {
-            await respond(buildResponse([section(':x: Invalid numbers. Total and bodyweight must be positive.')]));
             return;
           }
 
