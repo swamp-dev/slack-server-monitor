@@ -738,6 +738,53 @@ describe('web templates', () => {
       expect(md).not.toContain('### Claude');
     });
 
+    it('should escape markdown injection in tool names', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Check' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'evil](http://malicious.com)',
+          input: {},
+          outputPreview: 'ok',
+          timestamp: Date.now(),
+          durationMs: null,
+          success: true,
+        },
+      ];
+
+      const md = renderMarkdownExport(messages, toolCalls, baseMetadata);
+
+      // Tool name brackets should be escaped so no link is created
+      expect(md).not.toContain('[evil](http://malicious.com)');
+      expect(md).toContain('\\]');
+      expect(md).toContain('\\(');
+    });
+
+    it('should escape markdown injection in tool output', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Check' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'test_tool',
+          input: {},
+          outputPreview: 'Click [here](javascript:alert(1)) for details',
+          timestamp: Date.now(),
+          durationMs: null,
+          success: true,
+        },
+      ];
+
+      const md = renderMarkdownExport(messages, toolCalls, baseMetadata);
+
+      // Output brackets/parens should be escaped
+      expect(md).not.toContain('[here](javascript:alert(1))');
+      expect(md).toContain('\\[here\\]');
+    });
+
     it('should include multiple tool calls', () => {
       const messages: ConversationMessage[] = [
         { role: 'user', content: 'Check everything' },

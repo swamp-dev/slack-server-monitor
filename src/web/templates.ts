@@ -22,6 +22,14 @@ function escapeHtml(text: string): string {
 }
 
 /**
+ * Escape markdown characters that could create links or structure injection
+ */
+function escapeMarkdown(text: string): string {
+  // eslint-disable-next-line no-useless-escape
+  return text.replace(/([`\[\]()\\])/g, '\\$1');
+}
+
+/**
  * Custom marked renderer for security and styling
  */
 const renderer: Partial<Renderer> = {
@@ -519,8 +527,14 @@ export function renderConversation(
       var copyBtn = document.getElementById('copy-clipboard');
       if (copyBtn) {
         copyBtn.addEventListener('click', function() {
-          var messages = document.querySelectorAll('.message-content');
-          var text = Array.from(messages).map(function(el) { return el.textContent; }).join('\\n\\n');
+          var msgs = document.querySelectorAll('.message');
+          var text = Array.from(msgs).map(function(el) {
+            var header = el.querySelector('.message-header');
+            var content = el.querySelector('.message-content');
+            var role = header ? header.textContent : '';
+            var body = content ? content.textContent : '';
+            return '### ' + role + '\\n\\n' + body;
+          }).join('\\n\\n');
           navigator.clipboard.writeText(text).then(function() {
             copyBtn.textContent = 'Copied!';
             setTimeout(function() { copyBtn.textContent = 'Copy to Clipboard'; }, 2000);
@@ -574,7 +588,7 @@ export function renderMarkdownExport(
     lines.push('');
 
     for (const tc of toolCalls) {
-      lines.push(`#### ${tc.toolName}`);
+      lines.push(`#### ${escapeMarkdown(tc.toolName)}`);
       lines.push('');
       lines.push('**Input:**');
       lines.push('```json');
@@ -582,7 +596,7 @@ export function renderMarkdownExport(
       lines.push('```');
       if (tc.outputPreview) {
         lines.push('');
-        lines.push(`**Output:** ${tc.outputPreview}`);
+        lines.push(`**Output:** ${escapeMarkdown(tc.outputPreview)}`);
       }
       lines.push('');
     }
