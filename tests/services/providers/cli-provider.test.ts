@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { CliProvider } from '../../../src/services/providers/cli-provider.js';
 
 describe('CliProvider', () => {
@@ -292,31 +292,47 @@ But I continue anyway.`;
     // These tests verify critical implementation requirements via source inspection.
     // See git commit for full bug analysis: CLI hangs without stdin.end().
 
-    it('must close stdin immediately after spawn to prevent CLI hang', async () => {
+    let source: string;
+
+    beforeAll(async () => {
       const fs = await import('fs');
       const path = await import('path');
       const sourceFile = path.join(__dirname, '../../../src/services/providers/cli-provider.ts');
-      const source = fs.readFileSync(sourceFile, 'utf-8');
-
-      // CRITICAL: stdin.end() must be called after spawn, before event handlers
-      // Without this, CLI waits for EOF indefinitely (exit code 143 after timeout)
-      expect(source).toContain('proc.stdin.end()');
-
-      const spawnIndex = source.indexOf('spawn(this.config.cliPath');
-      const stdinEndIndex = source.indexOf('proc.stdin.end()');
-      const onDataIndex = source.indexOf("proc.stdout.on('data'");
-
-      expect(spawnIndex).toBeGreaterThan(0);
-      expect(stdinEndIndex).toBeGreaterThan(spawnIndex);
-      expect(onDataIndex).toBeGreaterThan(stdinEndIndex);
+      source = fs.readFileSync(sourceFile, 'utf-8');
     });
 
-    it('must have timeout configured as safety net', async () => {
-      const fs = await import('fs');
-      const path = await import('path');
-      const sourceFile = path.join(__dirname, '../../../src/services/providers/cli-provider.ts');
-      const source = fs.readFileSync(sourceFile, 'utf-8');
+    it('must write prompt to stdin instead of passing as -p argument', () => {
+      // E2BIG fix: prompt is written to stdin to avoid ARG_MAX limit
+      // The -p flag should NOT be in the args array
+      expect(source).toContain('proc.stdin.write(prompt)');
+      expect(source).not.toMatch(/args\s*=\s*\[[\s\S]*?'-p',\s*prompt/);
+    });
 
+    it('must write system prompt to temp file instead of passing as arg', () => {
+      // E2BIG fix: system prompt written to temp file to avoid ARG_MAX limit
+      expect(source).toContain('writeFileSync');
+      expect(source).toContain('--system-prompt-file');
+      // Should NOT pass system prompt string as arg
+      expect(source).not.toMatch(/'--system-prompt',\s*systemPrompt/);
+    });
+
+    it('must clean up temp file after CLI completes', () => {
+      // Temp file cleanup must happen in both success and error paths
+      expect(source).toContain('unlinkSync');
+    });
+
+    it('must end stdin after writing prompt to signal EOF', () => {
+      // CRITICAL: stdin.end() must be called after write to signal EOF
+      const writeIndex = source.indexOf('proc.stdin.write(prompt)');
+      const endIndex = source.indexOf('proc.stdin.end()');
+      const onDataIndex = source.indexOf("proc.stdout.on('data'");
+
+      expect(writeIndex).toBeGreaterThan(0);
+      expect(endIndex).toBeGreaterThan(writeIndex);
+      expect(onDataIndex).toBeGreaterThan(endIndex);
+    });
+
+    it('must have timeout configured as safety net', () => {
       expect(source).toMatch(/timeout:\s*\d+/);
     });
   });
