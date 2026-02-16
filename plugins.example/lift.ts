@@ -1116,23 +1116,50 @@ function registerLiftCommand(app: App | PluginApp): void {
     try {
       switch (subcommand) {
         case 'wilks': {
-          // /lift wilks <total> <bodyweight> <m|f>
+          // /lift wilks <total> <m|f>        (uses stored bodyweight)
+          // /lift wilks <total> <bw> <m|f>   (explicit bodyweight)
           const unit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
-          const [, totalStr, bwStr, sex] = args;
-          if (!totalStr || !bwStr || !sex) {
+          const [, totalStr, secondArg, thirdArg] = args;
+
+          // Determine if second arg is sex (auto-BW) or bodyweight (explicit)
+          let bwInput: number;
+          let isMale: boolean;
+          let usedStoredBw = false;
+
+          if (secondArg && (secondArg.toLowerCase() === 'm' || secondArg.toLowerCase() === 'f')) {
+            // /lift wilks <total> <m|f> — use stored bodyweight
+            isMale = secondArg.toLowerCase() === 'm';
+            if (!pluginDb) {
+              await respond(buildResponse([section(':x: Database not initialized')]));
+              return;
+            }
+            const stored = getLatestBodyweight(command.user_id, pluginDb);
+            if (!stored) {
+              await respond(
+                buildResponse([
+                  section(':warning: No bodyweight logged. Log with `/lift bw <weight>` first, or specify explicitly.'),
+                  context(`Usage: \`/lift wilks <total> <bodyweight> <m|f>\``),
+                ])
+              );
+              return;
+            }
+            bwInput = unit === 'kg' ? stored.weightKg : kgToLbs(stored.weightKg);
+            usedStoredBw = true;
+          } else if (totalStr && secondArg && thirdArg) {
+            // /lift wilks <total> <bw> <m|f>
+            bwInput = parseFloat(secondArg);
+            isMale = thirdArg.toLowerCase() === 'm';
+          } else {
             await respond(
               buildResponse([
-                section(`:warning: Usage: \`/lift wilks <total> <bodyweight> <m|f>\``),
-                context(`Example: \`/lift wilks ${unit === 'lbs' ? '1100 183' : '500 83'} m\` (${unit})`),
+                section(`:warning: Usage: \`/lift wilks <total> <m|f>\` or \`/lift wilks <total> <bw> <m|f>\``),
+                context(`Example: \`/lift wilks ${unit === 'lbs' ? '1100' : '500'} m\` (uses stored bw) or \`/lift wilks ${unit === 'lbs' ? '1100 183' : '500 83'} m\``),
               ])
             );
             return;
           }
 
           const totalInput = parseFloat(totalStr);
-          const bwInput = parseFloat(bwStr);
-          const isMale = sex.toLowerCase() === 'm';
-
           if (isNaN(totalInput) || isNaN(bwInput) || totalInput <= 0 || bwInput <= 0) {
             await respond(buildResponse([section(':x: Invalid numbers. Total and bodyweight must be positive.')]));
             return;
@@ -1142,10 +1169,11 @@ function registerLiftCommand(app: App | PluginApp): void {
           const bwKg = unit === 'kg' ? bwInput : lbsToKg(bwInput);
 
           const wilks = calculateWilks(totalKg, bwKg, isMale);
+          const bwNote = usedStoredBw ? ' _(from logged bw)_' : '';
           await respond(
             buildResponse([
               header('Wilks Score'),
-              section(`*Total:* ${formatWeight(totalInput, unit)}\n*Bodyweight:* ${formatWeight(bwInput, unit)}\n*Sex:* ${isMale ? 'Male' : 'Female'}`),
+              section(`*Total:* ${formatWeight(totalInput, unit)}\n*Bodyweight:* ${formatWeight(bwInput, unit)}${bwNote}\n*Sex:* ${isMale ? 'Male' : 'Female'}`),
               divider(),
               section(`:muscle: *Wilks Score: ${wilks.toFixed(2)}*`),
               context('Using Wilks 2020 formula'),
@@ -1155,23 +1183,47 @@ function registerLiftCommand(app: App | PluginApp): void {
         }
 
         case 'dots': {
-          // /lift dots <total> <bodyweight> <m|f>
+          // /lift dots <total> <m|f>        (uses stored bodyweight)
+          // /lift dots <total> <bw> <m|f>   (explicit bodyweight)
           const unit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
-          const [, totalStr, bwStr, sex] = args;
-          if (!totalStr || !bwStr || !sex) {
+          const [, totalStr, secondArg, thirdArg] = args;
+
+          let bwInput: number;
+          let isMale: boolean;
+          let usedStoredBw = false;
+
+          if (secondArg && (secondArg.toLowerCase() === 'm' || secondArg.toLowerCase() === 'f')) {
+            isMale = secondArg.toLowerCase() === 'm';
+            if (!pluginDb) {
+              await respond(buildResponse([section(':x: Database not initialized')]));
+              return;
+            }
+            const stored = getLatestBodyweight(command.user_id, pluginDb);
+            if (!stored) {
+              await respond(
+                buildResponse([
+                  section(':warning: No bodyweight logged. Log with `/lift bw <weight>` first, or specify explicitly.'),
+                  context(`Usage: \`/lift dots <total> <bodyweight> <m|f>\``),
+                ])
+              );
+              return;
+            }
+            bwInput = unit === 'kg' ? stored.weightKg : kgToLbs(stored.weightKg);
+            usedStoredBw = true;
+          } else if (totalStr && secondArg && thirdArg) {
+            bwInput = parseFloat(secondArg);
+            isMale = thirdArg.toLowerCase() === 'm';
+          } else {
             await respond(
               buildResponse([
-                section(`:warning: Usage: \`/lift dots <total> <bodyweight> <m|f>\``),
-                context(`Example: \`/lift dots ${unit === 'lbs' ? '1100 183' : '500 83'} m\` (${unit})`),
+                section(`:warning: Usage: \`/lift dots <total> <m|f>\` or \`/lift dots <total> <bw> <m|f>\``),
+                context(`Example: \`/lift dots ${unit === 'lbs' ? '1100' : '500'} m\` (uses stored bw) or \`/lift dots ${unit === 'lbs' ? '1100 183' : '500 83'} m\``),
               ])
             );
             return;
           }
 
           const totalInput = parseFloat(totalStr);
-          const bwInput = parseFloat(bwStr);
-          const isMale = sex.toLowerCase() === 'm';
-
           if (isNaN(totalInput) || isNaN(bwInput) || totalInput <= 0 || bwInput <= 0) {
             await respond(buildResponse([section(':x: Invalid numbers. Total and bodyweight must be positive.')]));
             return;
@@ -1181,10 +1233,11 @@ function registerLiftCommand(app: App | PluginApp): void {
           const bwKg = unit === 'kg' ? bwInput : lbsToKg(bwInput);
 
           const dots = calculateDots(totalKg, bwKg, isMale);
+          const bwNote = usedStoredBw ? ' _(from logged bw)_' : '';
           await respond(
             buildResponse([
               header('DOTS Score'),
-              section(`*Total:* ${formatWeight(totalInput, unit)}\n*Bodyweight:* ${formatWeight(bwInput, unit)}\n*Sex:* ${isMale ? 'Male' : 'Female'}`),
+              section(`*Total:* ${formatWeight(totalInput, unit)}\n*Bodyweight:* ${formatWeight(bwInput, unit)}${bwNote}\n*Sex:* ${isMale ? 'Male' : 'Female'}`),
               divider(),
               section(`:muscle: *DOTS Score: ${dots.toFixed(2)}*`),
               context('DOTS = Dynamic Object Tracking System'),
@@ -2126,8 +2179,8 @@ const liftPlugin: Plugin = {
   description: 'Powerlifting calculator (Wilks, DOTS, 1RM, warmup) with lbs/kg support, macro tracker, and vision',
 
   helpEntries: [
-    { command: '/lift wilks <total> <bw> <m|f>', description: 'Calculate Wilks score (lbs or kg)', group: 'Lift - Calculators' },
-    { command: '/lift dots <total> <bw> <m|f>', description: 'Calculate DOTS score (lbs or kg)', group: 'Lift - Calculators' },
+    { command: '/lift wilks <total> [bw] <m|f>', description: 'Wilks score (auto-fills bw if logged)', group: 'Lift - Calculators' },
+    { command: '/lift dots <total> [bw] <m|f>', description: 'DOTS score (auto-fills bw if logged)', group: 'Lift - Calculators' },
     { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max (lbs or kg)', group: 'Lift - Calculators' },
     { command: '/lift warmup <weight> [weight2]', description: 'Warmup sets with plate loading', group: 'Lift - Calculators' },
     { command: '/lift bw <weight>', description: 'Log today\'s bodyweight', group: 'Lift - Bodyweight' },
