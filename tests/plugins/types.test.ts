@@ -272,13 +272,27 @@ describe('isValidPlugin', () => {
     });
 
     it('should reject entries that are not objects', () => {
-      const plugin = {
+      expect(isValidPlugin({
         name: 'test-plugin',
         version: '1.0.0',
         helpEntries: ['not an object'],
-      };
+      })).toBe(false);
+    });
 
-      expect(isValidPlugin(plugin)).toBe(false);
+    it('should reject null entries', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        helpEntries: [null],
+      })).toBe(false);
+    });
+
+    it('should reject numeric entries', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        helpEntries: [42],
+      })).toBe(false);
     });
 
     it('should accept empty helpEntries array', () => {

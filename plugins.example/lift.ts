@@ -1849,7 +1849,7 @@ const liftPlugin: Plugin = {
     { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max', group: 'Lift - Calculators' },
     { command: '/lift warmup <weight> [weight2]', description: 'Warmup sets with plate loading', group: 'Lift - Calculators' },
     { command: '/lift a [context]', description: 'Analyze latest food photo in channel', group: 'Lift - Food Analysis' },
-    { command: '/lift m c<g> p<g> f<g>', description: 'Log macros (carbs/protein/fat)', group: 'Lift - Macros' },
+    { command: '/lift m c20 p40 f15', description: 'Log macros (carbs/protein/fat in grams)', group: 'Lift - Macros' },
     { command: '/lift m', description: "Today's macro totals", group: 'Lift - Macros' },
     { command: '/lift m -1', description: "Yesterday's totals", group: 'Lift - Macros' },
     { command: '/lift m <date>', description: 'Specific date (M/D)', group: 'Lift - Macros' },
