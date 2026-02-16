@@ -276,6 +276,26 @@ export function kgToLbs(kg: number): number {
   return kg * KG_TO_LBS;
 }
 
+/**
+ * Get user's preferred weight unit (defaults to lbs)
+ */
+export function getUserUnit(userId: string, db: PluginDatabase): WeightUnit {
+  const row = db.prepare(
+    `SELECT weight_unit FROM ${db.prefix}user_prefs WHERE user_id = ?`
+  ).get(userId) as { weight_unit: string } | undefined;
+  return (row?.weight_unit as WeightUnit) ?? 'lbs';
+}
+
+/**
+ * Set user's preferred weight unit
+ */
+export function setUserUnit(userId: string, unit: WeightUnit, db: PluginDatabase): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO ${db.prefix}user_prefs (user_id, weight_unit, updated_at)
+     VALUES (?, ?, ?)`
+  ).run(userId, unit, Date.now());
+}
+
 // =============================================================================
 // Constants for Warmup Calculator
 // =============================================================================
@@ -1886,6 +1906,15 @@ const liftPlugin: Plugin = {
 
     // Tables are automatically prefixed with "plugin_lift_" via ctx.db.prefix
     // Note: init() must complete within 10 seconds or plugin loading fails
+
+    // User preferences table (weight unit)
+    ctx.db.exec(`
+      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}user_prefs (
+        user_id TEXT PRIMARY KEY,
+        weight_unit TEXT NOT NULL DEFAULT 'lbs' CHECK(weight_unit IN ('lbs', 'kg')),
+        updated_at INTEGER NOT NULL
+      )
+    `);
 
     // Workouts table (example schema)
     ctx.db.exec(`
