@@ -413,39 +413,123 @@ describe('system executor', () => {
   });
 
   describe('getProcessInfo', () => {
-    it('should parse process info correctly', async () => {
-      mockExecuteCommand.mockResolvedValueOnce({
-        exitCode: 0,
-        stdout:
-          'STAT\n' +
-          'Ss\n' +
-          'R+\n' +
-          'S\n' +
-          'S\n' +
-          'Z\n' +
-          'I<\n',
-        stderr: '',
+    it('should use /proc/loadavg for host-level process counts', async () => {
+      // /proc/loadavg format: "load1 load5 load15 running/total lastPid"
+      mockExecuteCommand.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'cat' && args[0] === '/proc/loadavg') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: '1.50 1.20 1.00 5/350 12345\n',
+            stderr: '',
+          });
+        }
+        if (cmd === 'ps') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: 'STAT\nSs\nR+\nS\n',
+            stderr: '',
+          });
+        }
+        return Promise.resolve({ exitCode: 1, stdout: '', stderr: '' });
+      });
+
+      const result = await getProcessInfo();
+
+      expect(result.total).toBe(350);
+      expect(result.running).toBe(5);
+    });
+
+    it('should detect zombies from ps even when using /proc/loadavg', async () => {
+      mockExecuteCommand.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'cat' && args[0] === '/proc/loadavg') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: '0.50 0.40 0.30 2/150 9999\n',
+            stderr: '',
+          });
+        }
+        if (cmd === 'ps') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: 'STAT\nSs\nR+\nS\nZ\nZ+\n',
+            stderr: '',
+          });
+        }
+        return Promise.resolve({ exitCode: 1, stdout: '', stderr: '' });
+      });
+
+      const result = await getProcessInfo();
+
+      expect(result.total).toBe(150);
+      expect(result.running).toBe(2);
+      expect(result.zombie).toBe(2);
+    });
+
+    it('should fall back to ps when /proc/loadavg fails', async () => {
+      mockExecuteCommand.mockImplementation((cmd: string) => {
+        if (cmd === 'cat') {
+          return Promise.resolve({
+            exitCode: 1,
+            stdout: '',
+            stderr: 'No such file',
+          });
+        }
+        if (cmd === 'ps') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: 'STAT\nSs\nR+\nS\nS\nZ\nI<\n',
+            stderr: '',
+          });
+        }
+        return Promise.resolve({ exitCode: 1, stdout: '', stderr: '' });
       });
 
       const result = await getProcessInfo();
 
       expect(result.total).toBe(6);
       expect(result.running).toBe(1);
-      expect(result.sleeping).toBe(4); // Ss, S, S, I<
+      expect(result.sleeping).toBe(4);
       expect(result.zombie).toBe(1);
     });
 
-    it('should handle command failure gracefully', async () => {
-      mockExecuteCommand.mockResolvedValueOnce({
+    it('should handle both commands failing gracefully', async () => {
+      mockExecuteCommand.mockResolvedValue({
         exitCode: 1,
         stdout: '',
-        stderr: 'ps: command not found',
+        stderr: 'command not found',
       });
 
       const result = await getProcessInfo();
 
       expect(result.total).toBe(0);
       expect(result.running).toBe(0);
+      expect(result.zombie).toBe(0);
+    });
+
+    it('should handle malformed /proc/loadavg output', async () => {
+      mockExecuteCommand.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'cat' && args[0] === '/proc/loadavg') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: 'garbage data\n',
+            stderr: '',
+          });
+        }
+        if (cmd === 'ps') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: 'STAT\nSs\nR+\nS\n',
+            stderr: '',
+          });
+        }
+        return Promise.resolve({ exitCode: 1, stdout: '', stderr: '' });
+      });
+
+      const result = await getProcessInfo();
+
+      // Should fall back to ps
+      expect(result.total).toBe(3);
+      expect(result.running).toBe(1);
     });
   });
 
@@ -515,6 +599,13 @@ describe('system executor', () => {
             stderr: '',
           });
         }
+        if (cmd === 'cat' && args[0] === '/proc/loadavg') {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: '0.15 0.10 0.05 3/250 54321\n',
+            stderr: '',
+          });
+        }
         if (cmd === 'free') {
           return Promise.resolve({
             exitCode: 0,
@@ -548,7 +639,8 @@ describe('system executor', () => {
       expect(result.memory.total).toBe(16384);
       expect(result.memory.bufferCache).toBe(6144);
       expect(result.swap.total).toBe(4096);
-      expect(result.processes.total).toBe(3);
+      expect(result.processes.total).toBe(250); // From /proc/loadavg (host-level)
+      expect(result.processes.running).toBe(3); // From /proc/loadavg
       expect(result.uptime).toBe('5d 3h 21m'); // Now formatted by formatUptimeString
       expect(result.uptimeSeconds).toBe(444060); // 5 days + 3 hours + 21 min
       expect(result.loadAverage).toEqual([0.15, 0.1, 0.05]);

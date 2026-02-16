@@ -279,17 +279,75 @@ export async function getCpuInfo(): Promise<CpuInfo> {
 
 /**
  * Get process information
- * Process states: R=running, S=sleeping, D=disk sleep, I=idle,
- *                 Z=zombie, T=stopped, t=tracing stop
+ *
+ * Uses /proc/loadavg for host-level process counts (works in Docker).
+ * Falls back to ps -eo stat when /proc/loadavg is unavailable.
+ *
+ * /proc/loadavg format: "load1 load5 load15 running/total lastPid"
+ * The running/total field shows kernel scheduling entities (system-wide).
  */
 export async function getProcessInfo(): Promise<ProcessInfo> {
+  // Try /proc/loadavg first for host-level counts
+  // This works correctly even inside Docker containers without --pid=host
+  const loadavgResult = await executeCommand('cat', ['/proc/loadavg']);
+
+  if (loadavgResult.exitCode === 0) {
+    const parts = loadavgResult.stdout.trim().split(/\s+/);
+    const processParts = parts[3]?.split('/');
+
+    if (processParts?.length === 2) {
+      const running = parseInt(processParts[0] ?? '0', 10);
+      const total = parseInt(processParts[1] ?? '0', 10);
+
+      if (!isNaN(running) && !isNaN(total) && total > 0) {
+        // Best-effort zombie detection via ps
+        // In Docker without --pid=host, this only detects container zombies
+        const zombie = await getZombieCount();
+
+        return {
+          total,
+          running,
+          sleeping: Math.max(0, total - running - zombie),
+          zombie,
+        };
+      }
+    }
+  }
+
+  // Fallback: parse ps output (container-scoped in Docker)
+  return getProcessInfoFromPs();
+}
+
+/**
+ * Count zombie processes from ps output (best-effort)
+ */
+async function getZombieCount(): Promise<number> {
+  const result = await executeCommand('ps', ['-eo', 'stat']);
+  if (result.exitCode !== 0) return 0;
+
+  const lines = result.stdout.trim().split('\n').slice(1);
+  let zombie = 0;
+
+  for (const line of lines) {
+    const stat = line.trim().charAt(0);
+    if (stat === 'Z' || stat === 'X') zombie++;
+  }
+
+  return zombie;
+}
+
+/**
+ * Fallback: get process info from ps -eo stat
+ * Only sees container processes when running in Docker without --pid=host
+ */
+async function getProcessInfoFromPs(): Promise<ProcessInfo> {
   const result = await executeCommand('ps', ['-eo', 'stat']);
 
   if (result.exitCode !== 0) {
     return { total: 0, running: 0, sleeping: 0, zombie: 0 };
   }
 
-  const lines = result.stdout.trim().split('\n').slice(1); // Skip header
+  const lines = result.stdout.trim().split('\n').slice(1);
   let running = 0;
   let sleeping = 0;
   let zombie = 0;
@@ -300,18 +358,17 @@ export async function getProcessInfo(): Promise<ProcessInfo> {
       case 'R':
         running++;
         break;
-      case 'S': // Interruptible sleep
-      case 'D': // Uninterruptible disk sleep
-      case 'I': // Idle kernel thread
-      case 'T': // Stopped by job control
-      case 't': // Stopped by debugger
+      case 'S':
+      case 'D':
+      case 'I':
+      case 'T':
+      case 't':
         sleeping++;
         break;
-      case 'Z': // Zombie
-      case 'X': // Dead (should never be seen)
+      case 'Z':
+      case 'X':
         zombie++;
         break;
-      // Other states (W=paging) are rare and can be ignored
     }
   }
 
