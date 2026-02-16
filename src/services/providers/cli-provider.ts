@@ -323,7 +323,7 @@ ${JSON.stringify(tools, null, 2)}
   private callCli(prompt: string, systemPrompt: string): Promise<string> {
     // Write system prompt to temp file to keep args small
     const tmpFile = join(tmpdir(), `claude-sp-${randomBytes(8).toString('hex')}.txt`);
-    writeFileSync(tmpFile, systemPrompt, 'utf-8');
+    writeFileSync(tmpFile, systemPrompt, { encoding: 'utf-8', mode: 0o600 });
 
     return new Promise<string>((resolve, reject) => {
       // IMPORTANT: --tools "" disables all built-in Claude Code tools (Bash, Read, Edit, etc.)
@@ -340,7 +340,6 @@ ${JSON.stringify(tools, null, 2)}
         path: this.config.cliPath,
         model: this.config.model,
         promptLength: prompt.length,
-        systemPromptFile: tmpFile,
       });
 
       const proc = spawn(this.config.cliPath, args, {
