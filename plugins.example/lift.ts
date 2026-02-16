@@ -260,6 +260,23 @@ export interface MacroEstimateResult {
 }
 
 // =============================================================================
+// Unit Conversion
+// =============================================================================
+
+export type WeightUnit = 'lbs' | 'kg';
+
+export const LBS_TO_KG = 0.453592;
+export const KG_TO_LBS = 2.20462;
+
+export function lbsToKg(lbs: number): number {
+  return lbs * LBS_TO_KG;
+}
+
+export function kgToLbs(kg: number): number {
+  return kg * KG_TO_LBS;
+}
+
+// =============================================================================
 // Constants for Warmup Calculator
 // =============================================================================
 
