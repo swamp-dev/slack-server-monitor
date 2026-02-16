@@ -1422,6 +1422,7 @@ const powerliftingTool: ToolDefinition = {
     name: 'calculate_powerlifting_score',
     description:
       'Calculate powerlifting scores (Wilks, DOTS) or estimate 1RM. ' +
+      'Accepts weights in lbs or kg (specify via unit parameter, defaults to lbs). ' +
       'Use this when asked about powerlifting strength scores or rep max estimates.',
     input_schema: {
       type: 'object',
@@ -1431,63 +1432,88 @@ const powerliftingTool: ToolDefinition = {
           enum: ['wilks', 'dots', '1rm'],
           description: 'Type of calculation: wilks, dots, or 1rm',
         },
-        total_kg: {
+        total: {
           type: 'number',
-          description: 'Total lifted in kg (for wilks/dots)',
+          description: 'Total lifted (for wilks/dots). Unit determined by unit parameter.',
         },
-        bodyweight_kg: {
+        bodyweight: {
           type: 'number',
-          description: 'Bodyweight in kg (for wilks/dots)',
+          description: 'Bodyweight (for wilks/dots). Unit determined by unit parameter.',
         },
         is_male: {
           type: 'boolean',
           description: 'True for male, false for female (for wilks/dots)',
         },
-        weight_kg: {
+        weight: {
           type: 'number',
-          description: 'Weight lifted in kg (for 1rm)',
+          description: 'Weight lifted (for 1rm). Unit determined by unit parameter.',
         },
         reps: {
           type: 'number',
           description: 'Number of reps performed (for 1rm)',
+        },
+        unit: {
+          type: 'string',
+          enum: ['lbs', 'kg'],
+          description: 'Weight unit for input values. Defaults to lbs.',
         },
       },
       required: ['calculation'],
     },
   },
   execute: async (input) => {
-    const { calculation, total_kg, bodyweight_kg, is_male, weight_kg, reps } = input as {
+    const { calculation, total, bodyweight, is_male, weight, reps, unit: inputUnit,
+            // Backward compat: accept old _kg params
+            total_kg, bodyweight_kg, weight_kg } = input as {
       calculation: string;
+      total?: number;
+      bodyweight?: number;
+      is_male?: boolean;
+      weight?: number;
+      reps?: number;
+      unit?: string;
       total_kg?: number;
       bodyweight_kg?: number;
-      is_male?: boolean;
       weight_kg?: number;
-      reps?: number;
     };
+
+    const unit: WeightUnit = inputUnit === 'kg' ? 'kg' : 'lbs';
+    const toKg = (v: number) => unit === 'kg' ? v : lbsToKg(v);
 
     switch (calculation) {
       case 'wilks': {
-        if (total_kg === undefined || bodyweight_kg === undefined || is_male === undefined) {
-          return 'Error: wilks requires total_kg, bodyweight_kg, and is_male';
+        const t = total ?? total_kg;
+        const bw = bodyweight ?? bodyweight_kg;
+        if (t === undefined || bw === undefined || is_male === undefined) {
+          return 'Error: wilks requires total, bodyweight, and is_male';
         }
-        const score = calculateWilks(total_kg, bodyweight_kg, is_male);
-        return `Wilks Score: ${score.toFixed(2)} (${is_male ? 'male' : 'female'}, ${total_kg}kg total @ ${bodyweight_kg}kg bodyweight)`;
+        const tKg = total_kg !== undefined ? total_kg : toKg(t);
+        const bwKg = bodyweight_kg !== undefined ? bodyweight_kg : toKg(bw);
+        const score = calculateWilks(tKg, bwKg, is_male);
+        return `Wilks Score: ${score.toFixed(2)} (${is_male ? 'male' : 'female'}, ${t} ${unit} total @ ${bw} ${unit} bodyweight)`;
       }
 
       case 'dots': {
-        if (total_kg === undefined || bodyweight_kg === undefined || is_male === undefined) {
-          return 'Error: dots requires total_kg, bodyweight_kg, and is_male';
+        const t = total ?? total_kg;
+        const bw = bodyweight ?? bodyweight_kg;
+        if (t === undefined || bw === undefined || is_male === undefined) {
+          return 'Error: dots requires total, bodyweight, and is_male';
         }
-        const score = calculateDots(total_kg, bodyweight_kg, is_male);
-        return `DOTS Score: ${score.toFixed(2)} (${is_male ? 'male' : 'female'}, ${total_kg}kg total @ ${bodyweight_kg}kg bodyweight)`;
+        const tKg = total_kg !== undefined ? total_kg : toKg(t);
+        const bwKg = bodyweight_kg !== undefined ? bodyweight_kg : toKg(bw);
+        const score = calculateDots(tKg, bwKg, is_male);
+        return `DOTS Score: ${score.toFixed(2)} (${is_male ? 'male' : 'female'}, ${t} ${unit} total @ ${bw} ${unit} bodyweight)`;
       }
 
       case '1rm': {
-        if (weight_kg === undefined || reps === undefined) {
-          return 'Error: 1rm requires weight_kg and reps';
+        const w = weight ?? weight_kg;
+        if (w === undefined || reps === undefined) {
+          return 'Error: 1rm requires weight and reps';
         }
-        const estimated = calculate1rm(weight_kg, reps);
-        return `Estimated 1RM: ${estimated.toFixed(1)}kg (based on ${weight_kg}kg × ${reps} reps using Epley formula)`;
+        const wKg = weight_kg !== undefined ? weight_kg : toKg(w);
+        const estimated = calculate1rm(wKg, reps);
+        const estimatedDisplay = unit === 'kg' ? estimated : kgToLbs(estimated);
+        return `Estimated 1RM: ${estimatedDisplay.toFixed(1)} ${unit} (based on ${w} ${unit} × ${reps} reps using Epley formula)`;
       }
 
       default:
@@ -1501,6 +1527,8 @@ const warmupTool: ToolDefinition = {
     name: 'calculate_warmup_sets',
     description:
       'Calculate warmup set percentages and plate loading configuration for one or more target weights. ' +
+      'Accepts weights in lbs or kg (specify via unit parameter, defaults to lbs). ' +
+      'Plate loading is always shown in lbs (standard US gym plates). ' +
       'Use this when asked about warming up for a lift or what plates to load.',
     input_schema: {
       type: 'object',
@@ -1508,33 +1536,44 @@ const warmupTool: ToolDefinition = {
         target_weights: {
           type: 'array',
           items: { type: 'number' },
-          description: 'Target weight(s) in lbs to calculate warmup sets for',
+          description: 'Target weight(s) to calculate warmup sets for',
+        },
+        unit: {
+          type: 'string',
+          enum: ['lbs', 'kg'],
+          description: 'Weight unit for target_weights. Defaults to lbs. Plate loading always shown in lbs.',
         },
       },
       required: ['target_weights'],
     },
   },
   execute: async (input) => {
-    const { target_weights } = input as { target_weights: number[] };
+    const { target_weights, unit: inputUnit } = input as { target_weights: number[]; unit?: string };
 
     if (!target_weights || target_weights.length === 0) {
       return 'Error: target_weights array is required';
     }
 
+    const unit: WeightUnit = inputUnit === 'kg' ? 'kg' : 'lbs';
+
     const results: string[] = [];
-    for (const targetWeight of target_weights) {
-      if (targetWeight <= 0) {
-        results.push(`Skipping invalid weight: ${targetWeight}`);
-        continue;
-      }
-      if (targetWeight > MAX_TARGET_WEIGHT) {
-        results.push(`Skipping weight exceeding maximum (${MAX_TARGET_WEIGHT} lbs): ${targetWeight}`);
+    for (const inputWeight of target_weights) {
+      if (inputWeight <= 0) {
+        results.push(`Skipping invalid weight: ${inputWeight}`);
         continue;
       }
 
-      const lines: string[] = [`Warmup for ${targetWeight} lbs:`];
+      const weightLbs = unit === 'kg' ? Math.round(kgToLbs(inputWeight)) : inputWeight;
+
+      if (weightLbs > MAX_TARGET_WEIGHT) {
+        results.push(`Skipping weight exceeding maximum (${MAX_TARGET_WEIGHT} lbs): ${inputWeight} ${unit}`);
+        continue;
+      }
+
+      const label = unit === 'kg' ? `${inputWeight} kg (~${weightLbs} lbs)` : `${weightLbs} lbs`;
+      const lines: string[] = [`Warmup for ${label}:`];
       for (const pct of WARMUP_PERCENTAGES) {
-        const weight = Math.round(targetWeight * pct);
+        const weight = Math.round(weightLbs * pct);
         const config = calculatePlateConfig(weight);
         lines.push(`  ${Math.round(pct * 100)}%: ${weight} lbs - ${config}`);
       }
