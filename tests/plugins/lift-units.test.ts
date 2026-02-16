@@ -289,8 +289,10 @@ describe('Claude tool unit parameter', () => {
   beforeAll(async () => {
     const mod = await import('../../plugins.example/lift.js');
     const plugin = mod.default;
-    const plTool = plugin.tools!.find((t) => t.spec.name === 'calculate_powerlifting_score')!;
-    const wuTool = plugin.tools!.find((t) => t.spec.name === 'calculate_warmup_sets')!;
+    const tools = plugin.tools ?? [];
+    const plTool = tools.find((t) => t.spec.name === 'calculate_powerlifting_score');
+    const wuTool = tools.find((t) => t.spec.name === 'calculate_warmup_sets');
+    if (!plTool || !wuTool) throw new Error('Required tools not found');
     powerliftingExecute = plTool.execute as (input: Record<string, unknown>) => Promise<string>;
     warmupExecute = wuTool.execute as (input: Record<string, unknown>) => Promise<string>;
   });
