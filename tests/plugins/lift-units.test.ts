@@ -276,3 +276,120 @@ describe('calculator commands with unit preferences', () => {
     });
   });
 });
+
+// =============================================================================
+// Claude Tool Unit Support
+// =============================================================================
+
+describe('Claude tool unit parameter', () => {
+  // We test the tool execute functions directly via dynamic import
+  let powerliftingExecute: (input: Record<string, unknown>) => Promise<string>;
+  let warmupExecute: (input: Record<string, unknown>) => Promise<string>;
+
+  beforeAll(async () => {
+    const mod = await import('../../plugins.example/lift.js');
+    const plugin = mod.default;
+    const plTool = plugin.tools!.find((t) => t.spec.name === 'calculate_powerlifting_score')!;
+    const wuTool = plugin.tools!.find((t) => t.spec.name === 'calculate_warmup_sets')!;
+    powerliftingExecute = plTool.execute as (input: Record<string, unknown>) => Promise<string>;
+    warmupExecute = wuTool.execute as (input: Record<string, unknown>) => Promise<string>;
+  });
+
+  describe('powerlifting tool', () => {
+    it('should accept lbs unit and convert for wilks', async () => {
+      // 1100 lbs ≈ 499 kg, 183 lbs ≈ 83 kg
+      const result = await powerliftingExecute({
+        calculation: 'wilks',
+        total: 1100,
+        bodyweight: 183,
+        is_male: true,
+        unit: 'lbs',
+      });
+      expect(result).toContain('Wilks Score:');
+      expect(result).toContain('1100 lbs');
+    });
+
+    it('should accept kg unit for wilks', async () => {
+      const result = await powerliftingExecute({
+        calculation: 'wilks',
+        total: 500,
+        bodyweight: 83,
+        is_male: true,
+        unit: 'kg',
+      });
+      expect(result).toContain('Wilks Score:');
+      expect(result).toContain('500 kg');
+    });
+
+    it('should default to lbs when no unit specified', async () => {
+      const result = await powerliftingExecute({
+        calculation: 'wilks',
+        total: 1100,
+        bodyweight: 183,
+        is_male: true,
+      });
+      expect(result).toContain('1100 lbs');
+    });
+
+    it('should accept lbs for 1rm and return result in lbs', async () => {
+      const result = await powerliftingExecute({
+        calculation: '1rm',
+        weight: 225,
+        reps: 5,
+        unit: 'lbs',
+      });
+      expect(result).toContain('lbs');
+      expect(result).toContain('225 lbs');
+    });
+
+    it('should accept kg for 1rm and return result in kg', async () => {
+      const result = await powerliftingExecute({
+        calculation: '1rm',
+        weight: 100,
+        reps: 5,
+        unit: 'kg',
+      });
+      expect(result).toContain('kg');
+      expect(result).toContain('100 kg');
+    });
+
+    it('should still accept old _kg params for backward compat', async () => {
+      const result = await powerliftingExecute({
+        calculation: 'wilks',
+        total_kg: 500,
+        bodyweight_kg: 83,
+        is_male: true,
+      });
+      expect(result).toContain('Wilks Score:');
+    });
+  });
+
+  describe('warmup tool', () => {
+    it('should accept lbs (default) for warmup', async () => {
+      const result = await warmupExecute({
+        target_weights: [225],
+      });
+      expect(result).toContain('225 lbs');
+      expect(result).toContain('Bar +');
+    });
+
+    it('should accept kg unit and convert to lbs for plate loading', async () => {
+      const result = await warmupExecute({
+        target_weights: [100],
+        unit: 'kg',
+      });
+      // 100 kg ≈ 220 lbs
+      expect(result).toContain('100 kg');
+      expect(result).toContain('lbs');
+    });
+
+    it('should show lbs plate loading even with kg input', async () => {
+      const result = await warmupExecute({
+        target_weights: [60],
+        unit: 'kg',
+      });
+      // Plate loading should be in lbs
+      expect(result).toContain('lbs');
+    });
+  });
+});
