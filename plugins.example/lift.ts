@@ -9,10 +9,11 @@
  * - Using formatters (header, section, divider, context)
  *
  * Commands:
- * - /lift wilks <total_kg> <bodyweight_kg> <m|f> - Calculate Wilks score
- * - /lift dots <total_kg> <bodyweight_kg> <m|f> - Calculate DOTS score
+ * - /lift wilks <total> <bodyweight> <m|f> - Calculate Wilks score
+ * - /lift dots <total> <bodyweight> <m|f> - Calculate DOTS score
  * - /lift 1rm <weight> <reps> - Estimate 1 rep max
  * - /lift warmup <weight> [weight2] ... - Calculate warmup sets with plate loading
+ * - /lift units [lbs|kg] - View or set weight unit preference (default: lbs)
  * - /lift m c20 p40 f15 - Log macros (carbs, protein, fat in grams)
  * - /lift m - Show today's macro totals
  * - /lift m -1 - Show yesterday's totals
@@ -1367,7 +1368,8 @@ function registerLiftCommand(app: App | PluginApp): void {
 
         case 'h':
         case 'help':
-        default:
+        default: {
+          const helpUnit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
           await respond(
             buildResponse([
               header('Lift Plugin'),
@@ -1378,6 +1380,7 @@ function registerLiftCommand(app: App | PluginApp): void {
                   '`/lift 1rm <weight> <reps>` - Estimate 1RM\n' +
                   '`/lift warmup <weight>` - Warmup sets'
               ),
+              context(`Weights in ${helpUnit} | Change with \`/lift units lbs\` or \`/lift units kg\``),
               divider(),
               section('*Quick Food Analysis:*'),
               section(
@@ -1396,14 +1399,15 @@ function registerLiftCommand(app: App | PluginApp): void {
                   '`/lift m adjust c50 p30 f15` - Adjust and log'
               ),
               divider(),
-              section('*Quick Templates:*'),
+              section('*Settings:*'),
               section(
-                '`/lift a` \u2192 `confirm` \u2192 done!\n' +
-                  '`/lift m c150 p30 f10` - quick log\n' +
-                  '`/lift m` - check today'
+                '`/lift units` - View current unit\n' +
+                  '`/lift units lbs` - Set to pounds\n' +
+                  '`/lift units kg` - Set to kilograms'
               ),
             ])
           );
+        }
       }
     } catch (error) {
       await respond(
@@ -1983,13 +1987,14 @@ async function handleCancel(
 const liftPlugin: Plugin = {
   name: 'lift',
   version: '2.0.0',
-  description: 'Powerlifting calculator (Wilks, DOTS, 1RM, warmup) and macro tracker with vision support',
+  description: 'Powerlifting calculator (Wilks, DOTS, 1RM, warmup) with lbs/kg support, macro tracker, and vision',
 
   helpEntries: [
-    { command: '/lift wilks <total> <bw> <m|f>', description: 'Calculate Wilks score', group: 'Lift - Calculators' },
-    { command: '/lift dots <total> <bw> <m|f>', description: 'Calculate DOTS score', group: 'Lift - Calculators' },
-    { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max', group: 'Lift - Calculators' },
+    { command: '/lift wilks <total> <bw> <m|f>', description: 'Calculate Wilks score (lbs or kg)', group: 'Lift - Calculators' },
+    { command: '/lift dots <total> <bw> <m|f>', description: 'Calculate DOTS score (lbs or kg)', group: 'Lift - Calculators' },
+    { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max (lbs or kg)', group: 'Lift - Calculators' },
     { command: '/lift warmup <weight> [weight2]', description: 'Warmup sets with plate loading', group: 'Lift - Calculators' },
+    { command: '/lift units [lbs|kg]', description: 'View or set weight unit preference', group: 'Lift - Settings' },
     { command: '/lift a [context]', description: 'Analyze latest food photo in channel', group: 'Lift - Food Analysis' },
     { command: '/lift m c20 p40 f15', description: 'Log macros (carbs/protein/fat in grams)', group: 'Lift - Macros' },
     { command: '/lift m', description: "Today's macro totals", group: 'Lift - Macros' },
