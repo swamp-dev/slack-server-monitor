@@ -9,7 +9,7 @@ import { getContext, getContextByAlias, type LoadedContext } from '../services/c
 import { getConversationUrl } from '../web/index.js';
 import { logger } from '../utils/logger.js';
 import { parseSlackError } from '../utils/slack-errors.js';
-import { section, context as contextBlock, error as errorBlock } from '../formatters/blocks.js';
+import { section, context as contextBlock, error as errorBlock, extractSnippet } from '../formatters/blocks.js';
 import { scrubSensitiveData } from '../formatters/scrub.js';
 import { isValidImageUrl, fetchImageAsBase64 } from '../utils/image.js';
 
@@ -317,18 +317,17 @@ export async function registerAskCommand(app: App): Promise<void> {
       const webEnabled = webConfig && webConfig.enabled && webConfig.baseUrl;
 
       if (isLongResponse && webEnabled) {
-        // Post link to web UI instead of full response
+        // Post snippet + link to web UI
         const webUrl = getConversationUrl(threadTs, channelId, webConfig);
+        const snippet = extractSnippet(result.response);
         await client.chat.update({
           channel: channelId,
           ts: threadTs,
           text: `Response: ${result.response.slice(0, 100)}...`,
           blocks: [
             section(`*Q:* ${question}`),
-            section(
-              `_Response is ${result.response.length.toLocaleString()} characters._\n\n` +
-              `<${webUrl}|View full response>`
-            ),
+            section(snippet),
+            section(`<${webUrl}|View full response> _(${result.response.length.toLocaleString()} chars)_`),
             contextBlock(
               `_Tools used: ${String(result.toolCalls.length)} | ` +
               `Tokens: ${totalTokens.toLocaleString()} | ` +
@@ -575,17 +574,16 @@ export function registerThreadHandler(app: App): void {
       // Update the thinking message with response
       if (thinkingMsg.ts) {
         if (isLongResponse && webEnabled) {
-          // Post link to web UI instead of full response
+          // Post snippet + link to web UI
           const webUrl = getConversationUrl(threadTs, channelId, webConfig);
+          const snippet = extractSnippet(result.response);
           await client.chat.update({
             channel: channelId,
             ts: thinkingMsg.ts,
             text: `Response: ${result.response.slice(0, 100)}...`,
             blocks: [
-              section(
-                `_Response is ${result.response.length.toLocaleString()} characters._\n\n` +
-                `<${webUrl}|View full response>`
-              ),
+              section(snippet),
+              section(`<${webUrl}|View full response> _(${result.response.length.toLocaleString()} chars)_`),
               contextBlock(
                 `_Tools used: ${String(result.toolCalls.length)} | Tokens: ${totalTokens.toLocaleString()}_`
               ),

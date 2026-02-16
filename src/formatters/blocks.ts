@@ -439,3 +439,63 @@ export function relativeTime(timestamp: number): string {
 export function threadLink(channelId: string, threadTs: string): string {
   return `slack://channel?team=&id=${channelId}&thread_ts=${threadTs}`;
 }
+
+/**
+ * Extract a snippet from a response for preview in Slack
+ *
+ * Truncates text at natural boundaries in this order of preference:
+ * 1. Before a code block (```) that would be split
+ * 2. At a paragraph boundary (double newline)
+ * 3. At a sentence boundary (period followed by space)
+ * 4. At a word boundary with ellipsis
+ *
+ * @param text - Full response text
+ * @param maxLength - Maximum snippet length (default: 500)
+ */
+export function extractSnippet(text: string, maxLength = 500): string {
+  if (text.length <= maxLength) return text;
+
+  // Check if a code block starts within the truncation zone
+  const codeBlockStart = text.indexOf('```');
+  if (codeBlockStart !== -1 && codeBlockStart < maxLength) {
+    // Find the text before the code block
+    const beforeCode = text.slice(0, codeBlockStart).trim();
+    if (beforeCode.length > 0 && beforeCode.length <= maxLength) {
+      return beforeCode;
+    }
+    // If there's no text before the code block, include the whole block
+    const codeBlockEnd = text.indexOf('```', codeBlockStart + 3);
+    if (codeBlockEnd !== -1 && codeBlockEnd + 3 <= maxLength) {
+      // Whole code block fits - take up to the next paragraph
+      const afterBlock = text.slice(codeBlockEnd + 3);
+      const nextParagraph = afterBlock.indexOf('\n\n');
+      if (nextParagraph !== -1) {
+        const candidate = text.slice(0, codeBlockEnd + 3 + nextParagraph).trim();
+        if (candidate.length <= maxLength) return candidate;
+      }
+      return text.slice(0, codeBlockEnd + 3).trim();
+    }
+  }
+
+  // Try paragraph boundary
+  const truncated = text.slice(0, maxLength);
+  const lastParagraph = truncated.lastIndexOf('\n\n');
+  if (lastParagraph > 0) {
+    return text.slice(0, lastParagraph).trim();
+  }
+
+  // Try sentence boundary
+  const lastSentence = truncated.lastIndexOf('. ');
+  if (lastSentence > 0) {
+    return text.slice(0, lastSentence + 1).trim();
+  }
+
+  // Word boundary with ellipsis
+  const lastSpace = truncated.lastIndexOf(' ');
+  if (lastSpace > 0) {
+    return text.slice(0, lastSpace).trim() + '...';
+  }
+
+  // Last resort: hard cut with ellipsis
+  return truncated.trim() + '...';
+}
