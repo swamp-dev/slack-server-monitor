@@ -183,6 +183,13 @@ async function handleStats(
 ): Promise<void> {
   const stats = store.getSessionStats(24);
 
+  const avgDuration = stats.avgToolDurationMs != null
+    ? `${String(stats.avgToolDurationMs)}ms`
+    : 'N/A';
+  const failureRate = stats.totalToolCalls > 0
+    ? `${(stats.toolFailureRate * 100).toFixed(1)}%`
+    : 'N/A';
+
   const blocks: KnownBlock[] = [
     header('Session Statistics (24h)'),
     sectionWithFields([
@@ -191,13 +198,20 @@ async function handleStats(
       `*Messages:* ${String(stats.totalMessages)}`,
       `*Tool Calls:* ${String(stats.totalToolCalls)}`,
     ]),
+    sectionWithFields([
+      `*Avg Tool Duration:* ${avgDuration}`,
+      `*Tool Failure Rate:* ${failureRate}`,
+    ]),
     divider(),
   ];
 
   // Add top tools if any
   if (stats.topTools.length > 0) {
     blocks.push(section('*Top Tools:*'));
-    const toolLines = stats.topTools.map((tool, index) => `${String(index + 1)}. ${tool.name} (${String(tool.count)})`);
+    const toolLines = stats.topTools.map((tool, index) => {
+      const duration = tool.avgDurationMs != null ? ` · avg ${String(tool.avgDurationMs)}ms` : '';
+      return `${String(index + 1)}. ${tool.name} (${String(tool.count)}${duration})`;
+    });
     blocks.push(context(toolLines.join('\n')));
   } else {
     blocks.push(section('_No tools used yet._'));

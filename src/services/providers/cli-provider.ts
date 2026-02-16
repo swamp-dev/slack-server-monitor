@@ -158,17 +158,21 @@ export class CliProvider implements ClaudeProvider {
       // Execute tool calls
       toolResults = [];
       for (const toolRequest of toolCallRequests) {
+        const startTime = Date.now();
         const result = await executeTool(
           toolRequest.id,
           toolRequest.name,
           toolRequest.input,
           userConfig.toolConfig
         );
+        const durationMs = Date.now() - startTime;
 
         toolCalls.push({
           name: toolRequest.name,
           input: toolRequest.input,
           outputPreview: result.content.slice(0, 200),
+          durationMs,
+          isError: result.isError ?? false,
         });
 
         toolResults.push({

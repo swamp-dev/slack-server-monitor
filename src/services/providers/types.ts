@@ -37,6 +37,8 @@ export interface ToolCallLog {
   name: string;
   input: Record<string, unknown>;
   outputPreview: string;
+  durationMs?: number;
+  isError?: boolean;
 }
 
 /**
