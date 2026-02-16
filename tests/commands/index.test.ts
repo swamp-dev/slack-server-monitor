@@ -37,6 +37,9 @@ vi.mock('../../src/commands/backups.js', () => ({
 vi.mock('../../src/commands/pm2.js', () => ({
   registerPm2Command: vi.fn(),
 }));
+vi.mock('../../src/commands/help.js', () => ({
+  registerHelpCommand: vi.fn(),
+}));
 vi.mock('../../src/plugins/index.js', () => ({
   registerPlugins: vi.fn().mockResolvedValue(undefined),
 }));
@@ -69,6 +72,7 @@ const { registerSecurityCommand } = await import('../../src/commands/security.js
 const { registerSslCommand } = await import('../../src/commands/ssl.js');
 const { registerBackupsCommand } = await import('../../src/commands/backups.js');
 const { registerPm2Command } = await import('../../src/commands/pm2.js');
+const { registerHelpCommand } = await import('../../src/commands/help.js');
 const { registerPlugins } = await import('../../src/plugins/index.js');
 const { refreshToolMap } = await import('../../src/services/tools/index.js');
 const { logger } = await import('../../src/utils/logger.js');
@@ -115,6 +119,12 @@ describe('registerCommands', () => {
       expect(registerSessionsCommand).toHaveBeenCalledWith(mockApp);
     });
 
+    it('should register help command', async () => {
+      await registerCommands(mockApp);
+
+      expect(registerHelpCommand).toHaveBeenCalledWith(mockApp);
+    });
+
     it('should register plugins', async () => {
       await registerCommands(mockApp);
 
@@ -143,7 +153,7 @@ describe('registerCommands', () => {
   });
 
   describe('registration order', () => {
-    it('should register commands before plugins', async () => {
+    it('should register commands before plugins and help after plugins', async () => {
       const callOrder: string[] = [];
 
       (registerServicesCommand as ReturnType<typeof vi.fn>).mockImplementation(() => {
@@ -152,6 +162,9 @@ describe('registerCommands', () => {
       (registerPlugins as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         callOrder.push('plugins');
       });
+      (registerHelpCommand as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        callOrder.push('help');
+      });
       (refreshToolMap as ReturnType<typeof vi.fn>).mockImplementation(() => {
         callOrder.push('refreshToolMap');
       });
@@ -159,7 +172,8 @@ describe('registerCommands', () => {
       await registerCommands(mockApp);
 
       expect(callOrder.indexOf('services')).toBeLessThan(callOrder.indexOf('plugins'));
-      expect(callOrder.indexOf('plugins')).toBeLessThan(callOrder.indexOf('refreshToolMap'));
+      expect(callOrder.indexOf('plugins')).toBeLessThan(callOrder.indexOf('help'));
+      expect(callOrder.indexOf('help')).toBeLessThan(callOrder.indexOf('refreshToolMap'));
     });
   });
 });

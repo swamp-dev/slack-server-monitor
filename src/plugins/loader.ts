@@ -4,7 +4,7 @@ import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { createJiti } from 'jiti';
 import type { App } from '@slack/bolt';
-import type { Plugin, PluginToolDefinition, PluginContext, PluginClaude } from './types.js';
+import type { Plugin, PluginToolDefinition, PluginContext, PluginClaude, PluginHelpEntry } from './types.js';
 import { isValidPlugin } from './types.js';
 import { createPluginApp, clearRegisteredCommands } from './plugin-app.js';
 import { validatePluginTools } from '../services/tools/validation.js';
@@ -364,4 +364,25 @@ export async function destroyPlugins(): Promise<void> {
  */
 export function getLoadedPlugins(): string[] {
   return loadedPlugins.map((plugin) => `${plugin.name}@${plugin.version}`);
+}
+
+/**
+ * Structured help data exposed by a loaded plugin
+ */
+export interface PluginHelpData {
+  name: string;
+  description?: string;
+  helpEntries?: PluginHelpEntry[];
+}
+
+/**
+ * Get help metadata from all loaded plugins
+ * Used by /help to render plugin documentation
+ */
+export function getPluginHelpData(): PluginHelpData[] {
+  return loadedPlugins.map((p) => ({
+    name: p.name,
+    description: p.description,
+    helpEntries: p.helpEntries,
+  }));
 }

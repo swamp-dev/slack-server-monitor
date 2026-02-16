@@ -27,8 +27,9 @@ A **read-only** Slack bot for home server monitoring and diagnostics using Socke
 
 | Command | Description |
 |---------|-------------|
-| `/status` | List all Docker containers and their status |
-| `/status <service>` | Detailed info for a specific container |
+| `/help` | Show all available commands |
+| `/services` | List all Docker containers and their status |
+| `/services <service>` | Detailed info for a specific container |
 | `/logs <service> [lines]` | View container logs (default: 50, max: 500) |
 | `/resources` | CPU, memory, swap overview |
 | `/disk` | Disk usage per mount point |
@@ -71,7 +72,8 @@ A **read-only** Slack bot for home server monitoring and diagnostics using Socke
 
 In your Slack App settings, go to Slash Commands and add:
 
-- `/status` - Get server status
+- `/help` - Show all available commands
+- `/services` - Get server status
 - `/logs` - View container logs
 - `/resources` - System resources
 - `/disk` - Disk usage
@@ -82,6 +84,7 @@ In your Slack App settings, go to Slash Commands and add:
 - `/pm2` - PM2 process status (optional)
 - `/ask` - Ask Claude AI (optional, requires API key or CLI)
 - `/context` - Switch Claude context directory (optional)
+- `/sessions` - Claude AI session history (optional)
 
 ### 3. Configure Environment
 

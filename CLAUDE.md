@@ -75,6 +75,7 @@ src/
 
 | Command | Description |
 |---------|-------------|
+| `/help` | Show all available commands |
 | `/services` | All container states |
 | `/services <svc>` | Detailed container info |
 | `/logs <svc> [n]` | Last n lines of logs (max 500) |

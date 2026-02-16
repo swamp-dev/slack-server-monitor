@@ -1843,6 +1843,21 @@ const liftPlugin: Plugin = {
   version: '2.0.0',
   description: 'Powerlifting calculator (Wilks, DOTS, 1RM, warmup) and macro tracker with vision support',
 
+  helpEntries: [
+    { command: '/lift wilks <total> <bw> <m|f>', description: 'Calculate Wilks score', group: 'Lift - Calculators' },
+    { command: '/lift dots <total> <bw> <m|f>', description: 'Calculate DOTS score', group: 'Lift - Calculators' },
+    { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max', group: 'Lift - Calculators' },
+    { command: '/lift warmup <weight> [weight2]', description: 'Warmup sets with plate loading', group: 'Lift - Calculators' },
+    { command: '/lift a [context]', description: 'Analyze latest food photo in channel', group: 'Lift - Food Analysis' },
+    { command: '/lift m c<g> p<g> f<g>', description: 'Log macros (carbs/protein/fat)', group: 'Lift - Macros' },
+    { command: '/lift m', description: "Today's macro totals", group: 'Lift - Macros' },
+    { command: '/lift m -1', description: "Yesterday's totals", group: 'Lift - Macros' },
+    { command: '/lift m <date>', description: 'Specific date (M/D)', group: 'Lift - Macros' },
+    { command: '/lift m <start>-<end>', description: 'Date range', group: 'Lift - Macros' },
+    { command: '/lift m confirm', description: 'Log pending estimate', group: 'Lift - Macros' },
+    { command: '/lift m adjust c<g> p<g> f<g>', description: 'Adjust and log estimate', group: 'Lift - Macros' },
+  ],
+
   registerCommands: registerLiftCommand,
 
   tools: [powerliftingTool, warmupTool, estimateFoodMacrosTool],

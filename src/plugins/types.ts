@@ -89,6 +89,20 @@ export interface PluginContext {
 }
 
 /**
+ * Structured help entry for plugin commands
+ *
+ * Plugins declare these so `/help` can render them consistently.
+ */
+export interface PluginHelpEntry {
+  /** Full command syntax, e.g. "/health med <name> <med> <dosage> <freq>" */
+  command: string;
+  /** Brief description, e.g. "Add medication" */
+  description: string;
+  /** Optional group label, e.g. "Health - Medications" (defaults to plugin name) */
+  group?: string;
+}
+
+/**
  * Plugin interface for extending the Slack Server Monitor
  *
  * SECURITY WARNING: Plugins run with full process privileges.
@@ -113,6 +127,13 @@ export interface Plugin {
 
   /** Optional description for help text */
   description?: string;
+
+  /**
+   * Structured help entries for this plugin's commands
+   * Used by /help to display rich, grouped command documentation.
+   * Plugins without helpEntries get a generic fallback line.
+   */
+  helpEntries?: PluginHelpEntry[];
 
   /**
    * Register slash commands with the Bolt app
@@ -189,6 +210,18 @@ export function isValidPlugin(obj: unknown): obj is Plugin {
   // Optional fields with type validation
   if (plugin.description !== undefined && typeof plugin.description !== 'string') {
     return false;
+  }
+
+  if (plugin.helpEntries !== undefined) {
+    if (!Array.isArray(plugin.helpEntries)) {
+      return false;
+    }
+    for (const entry of plugin.helpEntries) {
+      if (typeof entry !== 'object' || entry === null) return false;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.command !== 'string' || typeof e.description !== 'string') return false;
+      if (e.group !== undefined && typeof e.group !== 'string') return false;
+    }
   }
 
   if (plugin.registerCommands !== undefined && typeof plugin.registerCommands !== 'function') {
