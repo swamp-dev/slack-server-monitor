@@ -205,33 +205,113 @@ describe('Ask command error handling', () => {
     vi.clearAllMocks();
   });
 
-  describe('error response fallback logic', () => {
-    it('should attempt respond() first when handling errors', async () => {
-      // This tests the concept: when respond() works, we don't need postMessage
+  describe('error recovery with posted initial message', () => {
+    it('should update initial message with error when threadTs exists', async () => {
+      // Simulate: initial "thinking" message was posted, then Claude call fails
+      // The error should update the existing message, not send ephemeral
+      const chatUpdate = vi.fn().mockResolvedValue({ ok: true });
       const respond = vi.fn().mockResolvedValue(undefined);
-      const postMessage = vi.fn().mockResolvedValue({ ok: true });
+      const threadTs = '1234567890.123456';
+      const channelId = 'C123';
+      const displayMessage = 'Claude CLI exited with code 1';
+      const question = 'test question';
 
-      // Simulate the fallback logic from ask.ts
+      // This mirrors the error handling logic in ask.ts
+      // When threadTs exists, it should prefer chat.update over respond()
       let errorSent = false;
 
-      try {
-        await respond({ response_type: 'ephemeral' });
-        errorSent = true;
-      } catch {
-        // Would try postMessage as fallback
+      if (threadTs) {
+        try {
+          await chatUpdate({
+            channel: channelId,
+            ts: threadTs,
+            text: `Error: ${displayMessage}`,
+            blocks: [
+              { type: 'section', text: { type: 'mrkdwn', text: `*Q:* ${question}` } },
+              { type: 'section', text: { type: 'mrkdwn', text: `Error: ${displayMessage}` } },
+            ],
+          });
+          errorSent = true;
+        } catch {
+          // Fall through to respond()
+        }
       }
 
       if (!errorSent) {
-        await postMessage({ channel: 'C123', text: 'error' });
+        await respond({ response_type: 'ephemeral' });
       }
 
+      expect(chatUpdate).toHaveBeenCalledTimes(1);
+      expect(chatUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ ts: threadTs })
+      );
+      expect(respond).not.toHaveBeenCalled();
+    });
+
+    it('should fall back to respond() when chat.update fails', async () => {
+      const chatUpdate = vi.fn().mockRejectedValue(new Error('message_not_found'));
+      const respond = vi.fn().mockResolvedValue(undefined);
+      const threadTs = '1234567890.123456';
+      const channelId = 'C123';
+
+      let errorSent = false;
+
+      if (threadTs) {
+        try {
+          await chatUpdate({ channel: channelId, ts: threadTs, text: 'Error' });
+          errorSent = true;
+        } catch {
+          // Fall through
+        }
+      }
+
+      if (!errorSent) {
+        try {
+          await respond({ response_type: 'ephemeral' });
+          errorSent = true;
+        } catch {
+          // Both failed
+        }
+      }
+
+      expect(chatUpdate).toHaveBeenCalledTimes(1);
       expect(respond).toHaveBeenCalledTimes(1);
-      expect(postMessage).not.toHaveBeenCalled();
       expect(errorSent).toBe(true);
     });
 
+    it('should use respond() when threadTs does not exist (early failure)', async () => {
+      const chatUpdate = vi.fn();
+      const respond = vi.fn().mockResolvedValue(undefined);
+      const threadTs: string | undefined = undefined;
+
+      let errorSent = false;
+
+      if (threadTs) {
+        try {
+          await chatUpdate({ channel: 'C123', ts: threadTs, text: 'Error' });
+          errorSent = true;
+        } catch {
+          // Fall through
+        }
+      }
+
+      if (!errorSent) {
+        try {
+          await respond({ response_type: 'ephemeral' });
+          errorSent = true;
+        } catch {
+          // Both failed
+        }
+      }
+
+      expect(chatUpdate).not.toHaveBeenCalled();
+      expect(respond).toHaveBeenCalledTimes(1);
+      expect(errorSent).toBe(true);
+    });
+  });
+
+  describe('error response fallback logic', () => {
     it('should fall back to postMessage when respond() fails', async () => {
-      // This tests the fallback behavior
       const respond = vi.fn().mockRejectedValue(new Error('response_url expired'));
       const postMessage = vi.fn().mockResolvedValue({ ok: true });
 
@@ -258,7 +338,7 @@ describe('Ask command error handling', () => {
       expect(errorSent).toBe(true);
     });
 
-    it('should log CRITICAL when both respond() and postMessage() fail', async () => {
+    it('should log CRITICAL when all error delivery methods fail', async () => {
       const respond = vi.fn().mockRejectedValue(new Error('response_url expired'));
       const postMessage = vi.fn().mockRejectedValue(new Error('channel_not_found'));
       const logError = vi.fn();
