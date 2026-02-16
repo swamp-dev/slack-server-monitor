@@ -50,6 +50,8 @@ const mockToolCalls = [
     input: { container: 'nginx' },
     outputPreview: 'running',
     timestamp: Date.now(),
+    durationMs: null as number | null,
+    success: true,
   },
 ];
 
@@ -65,7 +67,7 @@ vi.mock('../../src/services/conversation-store.js', () => ({
   })),
 }));
 
-import { renderConversation, render404, render401 } from '../../src/web/templates.js';
+import { renderConversation, renderMarkdownExport, render404, render401 } from '../../src/web/templates.js';
 
 // Create a test server that mirrors the real server's behavior
 function createTestServer(authToken: string) {
@@ -99,6 +101,32 @@ function createTestServer(authToken: string) {
         updatedAt: mockConversation.updatedAt,
       });
       res.type('html').send(html);
+    } else {
+      res.status(404).send(render404());
+    }
+  });
+
+  // Markdown export endpoint
+  app.get('/c/:threadTs/:channelId/export/md', (req, res) => {
+    const { threadTs, channelId } = req.params;
+
+    if (!threadTs || !channelId) {
+      res.status(400).send(render404());
+      return;
+    }
+
+    if (threadTs === '1234567890.123456' && channelId === 'C123ABC') {
+      const includeTools = req.query.tools !== 'false';
+      const toolCalls = includeTools ? mockToolCalls : [];
+      const md = renderMarkdownExport(mockConversation.messages, toolCalls, {
+        threadTs: mockConversation.threadTs,
+        channelId: mockConversation.channelId,
+        createdAt: mockConversation.createdAt,
+        updatedAt: mockConversation.updatedAt,
+      });
+      res.type('text/markdown');
+      res.setHeader('Content-Disposition', `attachment; filename="conversation-${threadTs}.md"`);
+      res.send(md);
     } else {
       res.status(404).send(render404());
     }
@@ -193,6 +221,51 @@ describe('web server integration', () => {
 
       const json = await response.json();
       expect(json).toEqual({ status: 'ok' });
+    });
+  });
+
+  describe('markdown export endpoint', () => {
+    it('should return markdown with Content-Disposition header', async () => {
+      const response = await fetch(`${baseUrl}/c/1234567890.123456/C123ABC/export/md?token=${authToken}`);
+      expect(response.status).toBe(200);
+
+      const contentType = response.headers.get('content-type');
+      expect(contentType).toContain('text/markdown');
+
+      const disposition = response.headers.get('content-disposition');
+      expect(disposition).toContain('attachment');
+      expect(disposition).toContain('conversation-1234567890.123456.md');
+
+      const md = await response.text();
+      expect(md).toContain('# Claude Conversation');
+      expect(md).toContain('What is the status?');
+      expect(md).toContain('All systems operational.');
+    });
+
+    it('should include tool calls by default', async () => {
+      const response = await fetch(`${baseUrl}/c/1234567890.123456/C123ABC/export/md?token=${authToken}`);
+      const md = await response.text();
+
+      expect(md).toContain('## Tool Calls');
+      expect(md).toContain('get_container_status');
+    });
+
+    it('should exclude tool calls when tools=false', async () => {
+      const response = await fetch(`${baseUrl}/c/1234567890.123456/C123ABC/export/md?token=${authToken}&tools=false`);
+      const md = await response.text();
+
+      expect(md).toContain('What is the status?');
+      expect(md).not.toContain('## Tool Calls');
+    });
+
+    it('should return 404 for non-existent conversation export', async () => {
+      const response = await fetch(`${baseUrl}/c/9999999999.999999/CNOTFOUND/export/md?token=${authToken}`);
+      expect(response.status).toBe(404);
+    });
+
+    it('should require authentication for export', async () => {
+      const response = await fetch(`${baseUrl}/c/1234567890.123456/C123ABC/export/md`);
+      expect(response.status).toBe(401);
     });
   });
 

@@ -10,7 +10,7 @@ import type { Server } from 'http';
 import { config, type WebConfig } from '../config/index.js';
 import { getConversationStore } from '../services/conversation-store.js';
 import { logger } from '../utils/logger.js';
-import { renderConversation, render404, render401 } from './templates.js';
+import { renderConversation, renderMarkdownExport, render404, render401 } from './templates.js';
 
 let server: Server | null = null;
 
@@ -106,6 +106,50 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       });
     } catch (err) {
       logger.error('Error serving conversation', {
+        error: err instanceof Error ? err.message : String(err),
+        threadTs,
+        channelId,
+      });
+      res.status(500).send(render404());
+    }
+  });
+
+  // Markdown export endpoint: GET /c/:threadTs/:channelId/export/md?token=<authToken>&tools=true|false
+  app.get('/c/:threadTs/:channelId/export/md', (req: Request, res: Response) => {
+    const threadTs = req.params.threadTs;
+    const channelId = req.params.channelId;
+
+    if (!threadTs || !channelId || typeof threadTs !== 'string' || typeof channelId !== 'string') {
+      res.status(400).send(render404());
+      return;
+    }
+
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const conversation = store.getConversation(threadTs, channelId);
+
+      if (!conversation) {
+        res.status(404).send(render404());
+        return;
+      }
+
+      const includeTools = req.query.tools !== 'false';
+      const toolCalls = includeTools ? store.getToolCalls(conversation.id) : [];
+
+      const md = renderMarkdownExport(conversation.messages, toolCalls, {
+        threadTs: conversation.threadTs,
+        channelId: conversation.channelId,
+        createdAt: conversation.createdAt,
+        updatedAt: conversation.updatedAt,
+      });
+
+      res.type('text/markdown');
+      res.setHeader('Content-Disposition', `attachment; filename="conversation-${threadTs}.md"`);
+      res.send(md);
+
+      logger.debug('Served markdown export', { threadTs, channelId, includeTools });
+    } catch (err) {
+      logger.error('Error exporting conversation', {
         error: err instanceof Error ? err.message : String(err),
         threadTs,
         channelId,
