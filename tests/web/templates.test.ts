@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   renderConversation,
+  renderMarkdownExport,
   render404,
   render401,
   renderError,
@@ -116,6 +117,8 @@ describe('web templates', () => {
           input: { mount: '/' },
           outputPreview: '45% used',
           timestamp: Date.now(),
+          durationMs: null,
+          success: true,
         },
       ];
       const metadata = {
@@ -143,6 +146,8 @@ describe('web templates', () => {
           input: { mount: '/' },
           outputPreview: '45% used',
           timestamp: Date.now(),
+          durationMs: null,
+          success: true,
         },
       ];
       const metadata = {
@@ -170,6 +175,8 @@ describe('web templates', () => {
           input: { mount: '/' },
           outputPreview: '45% used',
           timestamp: Date.now(),
+          durationMs: null,
+          success: true,
         },
       ];
       const metadata = {
@@ -196,6 +203,8 @@ describe('web templates', () => {
           input: { mount: '/' },
           outputPreview: '45% used',
           timestamp: fixedTimestamp,
+          durationMs: null,
+          success: true,
         },
       ];
       const metadata = {
@@ -223,6 +232,8 @@ describe('web templates', () => {
           input: { mount: '/' },
           outputPreview: '45% used',
           timestamp: Date.now(),
+          durationMs: null,
+          success: true,
         },
         {
           conversationId: 1,
@@ -230,6 +241,8 @@ describe('web templates', () => {
           input: {},
           outputPreview: 'CPU: 12%',
           timestamp: Date.now() + 1000,
+          durationMs: null,
+          success: true,
         },
       ];
       const metadata = {
@@ -260,6 +273,8 @@ describe('web templates', () => {
           input: { mount: '/' },
           outputPreview: '45% used on /',
           timestamp: Date.now(),
+          durationMs: null,
+          success: true,
         },
       ];
       const metadata = {
@@ -287,6 +302,8 @@ describe('web templates', () => {
           input: { command: 'uptime' },
           outputPreview: '',
           timestamp: Date.now(),
+          durationMs: null,
+          success: true,
         },
       ];
       const metadata = {
@@ -570,6 +587,152 @@ describe('web templates', () => {
       expect(html).toContain('Error');
       expect(html).not.toContain('<script>bad</script>');
       expect(html).toContain('&lt;script&gt;bad&lt;/script&gt;');
+    });
+  });
+
+  describe('renderMarkdownExport', () => {
+    const baseMetadata = {
+      threadTs: '1234567890.123456',
+      channelId: 'C123ABC',
+      createdAt: 1708099200000, // Feb 16, 2024 UTC
+      updatedAt: 1708099260000,
+    };
+
+    it('should format messages as markdown with role headers', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'What is the status of nginx?' },
+        { role: 'assistant', content: 'The nginx container is running.' },
+      ];
+
+      const md = renderMarkdownExport(messages, [], baseMetadata);
+
+      expect(md).toContain('### User');
+      expect(md).toContain('What is the status of nginx?');
+      expect(md).toContain('### Claude');
+      expect(md).toContain('The nginx container is running.');
+    });
+
+    it('should include metadata header', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+
+      const md = renderMarkdownExport(messages, [], baseMetadata);
+
+      expect(md).toContain('# Claude Conversation');
+      expect(md).toContain('Thread: `1234567890.123456`');
+      expect(md).toContain('Channel: `C123ABC`');
+    });
+
+    it('should include tool calls when provided', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Check disk' },
+        { role: 'assistant', content: 'Disk is at 45%.' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'get_disk_usage',
+          input: { mount: '/' },
+          outputPreview: '45% used',
+          timestamp: Date.now(),
+          durationMs: null,
+          success: true,
+        },
+      ];
+
+      const md = renderMarkdownExport(messages, toolCalls, baseMetadata);
+
+      expect(md).toContain('## Tool Calls');
+      expect(md).toContain('get_disk_usage');
+      expect(md).toContain('45% used');
+    });
+
+    it('should exclude tool calls when empty array', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+
+      const md = renderMarkdownExport(messages, [], baseMetadata);
+
+      expect(md).not.toContain('## Tool Calls');
+    });
+
+    it('should format tool call input as JSON code block', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Check disk' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'get_disk_usage',
+          input: { mount: '/' },
+          outputPreview: 'ok',
+          timestamp: Date.now(),
+          durationMs: null,
+          success: true,
+        },
+      ];
+
+      const md = renderMarkdownExport(messages, toolCalls, baseMetadata);
+
+      expect(md).toContain('```json');
+      expect(md).toContain('"mount": "/"');
+    });
+
+    it('should preserve markdown formatting in message content', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: 'Here is **bold** and `code` and\n```bash\necho hello\n```' },
+      ];
+
+      const md = renderMarkdownExport(messages, [], baseMetadata);
+
+      // Content should be preserved as-is (it's already markdown)
+      expect(md).toContain('**bold**');
+      expect(md).toContain('`code`');
+      expect(md).toContain('```bash');
+      expect(md).toContain('echo hello');
+    });
+
+    it('should handle empty conversation', () => {
+      const md = renderMarkdownExport([], [], baseMetadata);
+
+      expect(md).toContain('# Claude Conversation');
+      expect(md).not.toContain('### User');
+      expect(md).not.toContain('### Claude');
+    });
+
+    it('should include multiple tool calls', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Check everything' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'get_disk_usage',
+          input: { mount: '/' },
+          outputPreview: '45% used',
+          timestamp: Date.now(),
+          durationMs: null,
+          success: true,
+        },
+        {
+          conversationId: 1,
+          toolName: 'get_system_resources',
+          input: {},
+          outputPreview: 'CPU: 12%',
+          timestamp: Date.now() + 1000,
+          durationMs: null,
+          success: true,
+        },
+      ];
+
+      const md = renderMarkdownExport(messages, toolCalls, baseMetadata);
+
+      expect(md).toContain('get_disk_usage');
+      expect(md).toContain('get_system_resources');
+      expect(md).toContain('45% used');
+      expect(md).toContain('CPU: 12%');
     });
   });
 });
