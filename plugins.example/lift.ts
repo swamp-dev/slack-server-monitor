@@ -1268,6 +1268,62 @@ function registerLiftCommand(app: App | PluginApp): void {
           break;
         }
 
+        case 'bw':
+        case 'bodyweight': {
+          if (!pluginDb) {
+            await respond(buildResponse([section(':x: Database not initialized')]));
+            return;
+          }
+
+          const unit = getUserUnit(command.user_id, pluginDb);
+          const bwArg = args[1];
+
+          if (bwArg) {
+            // /lift bw <weight> — log bodyweight
+            const weightInput = parseFloat(bwArg);
+            if (isNaN(weightInput) || weightInput <= 0) {
+              await respond(buildResponse([section(':x: Invalid weight. Must be a positive number.')]));
+              return;
+            }
+
+            const weightKg = unit === 'kg' ? weightInput : lbsToKg(weightInput);
+            logBodyweight(command.user_id, weightKg, pluginDb);
+
+            await respond(
+              buildResponse([
+                section(`:white_check_mark: Bodyweight logged: *${formatWeight(weightInput, unit)}*`),
+                context('View trend with `/lift bw`'),
+              ])
+            );
+          } else {
+            // /lift bw — show trend
+            const history = getBodyweightHistory(command.user_id, 30, pluginDb);
+            const trend = formatBodyweightTrend(history, unit);
+
+            if (history.length === 0) {
+              await respond(
+                buildResponse([
+                  section(':scale: ' + trend),
+                  context('Log with `/lift bw <weight>`'),
+                ])
+              );
+            } else {
+              const recentHistory = getBodyweightHistory(command.user_id, 7, pluginDb);
+              const trend7d = formatBodyweightTrend(recentHistory, unit);
+
+              await respond(
+                buildResponse([
+                  header('Bodyweight Trend'),
+                  section(`:scale: *30 day:* ${trend}`),
+                  section(`*7 day:* ${trend7d}`),
+                  context(`${String(history.length)} entries | Unit: ${unit}`),
+                ])
+              );
+            }
+          }
+          break;
+        }
+
         case 'm':
         case 'macros': {
           if (!pluginDb) {
@@ -2074,6 +2130,8 @@ const liftPlugin: Plugin = {
     { command: '/lift dots <total> <bw> <m|f>', description: 'Calculate DOTS score (lbs or kg)', group: 'Lift - Calculators' },
     { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max (lbs or kg)', group: 'Lift - Calculators' },
     { command: '/lift warmup <weight> [weight2]', description: 'Warmup sets with plate loading', group: 'Lift - Calculators' },
+    { command: '/lift bw <weight>', description: 'Log today\'s bodyweight', group: 'Lift - Bodyweight' },
+    { command: '/lift bw', description: 'Show bodyweight trend (7d/30d)', group: 'Lift - Bodyweight' },
     { command: '/lift units [lbs|kg]', description: 'View or set weight unit preference', group: 'Lift - Settings' },
     { command: '/lift a [context]', description: 'Analyze latest food photo in channel', group: 'Lift - Food Analysis' },
     { command: '/lift m c20 p40 f15', description: 'Log macros (carbs/protein/fat in grams)', group: 'Lift - Macros' },
