@@ -15,6 +15,9 @@ import {
   lbsToKg,
   kgToLbs,
   formatWeight,
+  logWorkoutSet,
+  getWorkoutForDate,
+  type WorkoutSet,
 } from '../../plugins.example/lift.js';
 
 // =============================================================================
@@ -209,6 +212,155 @@ describe('lift plugin workout tracking', () => {
 
       it('should format 0 kg', () => {
         expect(formatWeight(0, 'kg')).toBe('0.0 kg');
+      });
+    });
+  });
+
+  // =============================================================================
+  // Step 2: Core DB Operations
+  // =============================================================================
+
+  describe('database operations', () => {
+    let db: Database.Database;
+    let pluginDb: PluginDatabase;
+
+    beforeEach(() => {
+      db = new Database(':memory:');
+      db.pragma('journal_mode = WAL');
+      pluginDb = new PluginDatabase(db, 'lift');
+
+      // Create workout_sets table (matches planned init schema)
+      pluginDb.exec(`
+        CREATE TABLE IF NOT EXISTS plugin_lift_workout_sets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id TEXT NOT NULL,
+          exercise TEXT NOT NULL,
+          weight_kg REAL NOT NULL CHECK(weight_kg >= 0 AND weight_kg < 1000),
+          reps INTEGER NOT NULL CHECK(reps > 0 AND reps <= 100),
+          rpe REAL CHECK(rpe IS NULL OR (rpe >= 1 AND rpe <= 10)),
+          logged_at INTEGER NOT NULL CHECK(logged_at > 0),
+          created_at INTEGER NOT NULL CHECK(created_at > 0)
+        )
+      `);
+      pluginDb.exec(`
+        CREATE INDEX IF NOT EXISTS idx_plugin_lift_workout_sets_user_date
+          ON plugin_lift_workout_sets(user_id, logged_at)
+      `);
+      pluginDb.exec(`
+        CREATE INDEX IF NOT EXISTS idx_plugin_lift_workout_sets_user_exercise
+          ON plugin_lift_workout_sets(user_id, exercise)
+      `);
+    });
+
+    afterEach(() => {
+      db.close();
+    });
+
+    describe('logWorkoutSet', () => {
+      it('should insert a workout set', () => {
+        logWorkoutSet('U123', 'squat', 100, 5, undefined, pluginDb);
+
+        const row = pluginDb.prepare(
+          `SELECT * FROM plugin_lift_workout_sets WHERE user_id = ?`
+        ).get('U123') as Record<string, unknown>;
+
+        expect(row).toBeDefined();
+        expect(row.exercise).toBe('squat');
+        expect(row.weight_kg).toBe(100);
+        expect(row.reps).toBe(5);
+        expect(row.rpe).toBeNull();
+      });
+
+      it('should store exercise name in lowercase', () => {
+        logWorkoutSet('U123', 'Bench Press', 80, 8, undefined, pluginDb);
+
+        const row = pluginDb.prepare(
+          `SELECT exercise FROM plugin_lift_workout_sets WHERE user_id = ?`
+        ).get('U123') as Record<string, unknown>;
+
+        expect(row.exercise).toBe('bench press');
+      });
+
+      it('should store RPE when provided', () => {
+        logWorkoutSet('U123', 'deadlift', 180, 3, 8.5, pluginDb);
+
+        const row = pluginDb.prepare(
+          `SELECT rpe FROM plugin_lift_workout_sets WHERE user_id = ?`
+        ).get('U123') as Record<string, unknown>;
+
+        expect(row.rpe).toBe(8.5);
+      });
+
+      it('should store logged_at and created_at timestamps', () => {
+        const before = Date.now();
+        logWorkoutSet('U123', 'squat', 100, 5, undefined, pluginDb);
+        const after = Date.now();
+
+        const row = pluginDb.prepare(
+          `SELECT logged_at, created_at FROM plugin_lift_workout_sets WHERE user_id = ?`
+        ).get('U123') as { logged_at: number; created_at: number };
+
+        expect(row.logged_at).toBeGreaterThanOrEqual(before);
+        expect(row.logged_at).toBeLessThanOrEqual(after);
+        expect(row.created_at).toBeGreaterThanOrEqual(before);
+        expect(row.created_at).toBeLessThanOrEqual(after);
+      });
+    });
+
+    describe('getWorkoutForDate', () => {
+      it('should return sets for today', () => {
+        logWorkoutSet('U123', 'squat', 100, 5, undefined, pluginDb);
+        logWorkoutSet('U123', 'bench press', 80, 8, 7, pluginDb);
+
+        const sets = getWorkoutForDate('U123', 'today', pluginDb, null);
+        expect(sets).toHaveLength(2);
+        expect(sets[0].exercise).toBe('squat');
+        expect(sets[1].exercise).toBe('bench press');
+      });
+
+      it('should return empty array when no sets', () => {
+        const sets = getWorkoutForDate('U123', 'today', pluginDb, null);
+        expect(sets).toEqual([]);
+      });
+
+      it('should isolate by user_id', () => {
+        logWorkoutSet('U123', 'squat', 100, 5, undefined, pluginDb);
+        logWorkoutSet('U456', 'squat', 120, 3, undefined, pluginDb);
+
+        const sets = getWorkoutForDate('U123', 'today', pluginDb, null);
+        expect(sets).toHaveLength(1);
+        expect(sets[0].weightKg).toBe(100);
+      });
+
+      it('should filter by date using daysAgo', () => {
+        // Insert a set "yesterday" by manipulating logged_at
+        const yesterday = Date.now() - 24 * 60 * 60 * 1000;
+        pluginDb.prepare(
+          `INSERT INTO plugin_lift_workout_sets (user_id, exercise, weight_kg, reps, rpe, logged_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).run('U123', 'squat', 100, 5, null, yesterday, yesterday);
+
+        // Today's set
+        logWorkoutSet('U123', 'bench press', 80, 8, undefined, pluginDb);
+
+        const todaySets = getWorkoutForDate('U123', 'today', pluginDb, null);
+        expect(todaySets).toHaveLength(1);
+        expect(todaySets[0].exercise).toBe('bench press');
+      });
+
+      it('should return WorkoutSet shape', () => {
+        logWorkoutSet('U123', 'squat', 100, 5, 8, pluginDb);
+
+        const sets = getWorkoutForDate('U123', 'today', pluginDb, null);
+        expect(sets).toHaveLength(1);
+
+        const set = sets[0];
+        expect(set).toHaveProperty('id');
+        expect(set).toHaveProperty('exercise', 'squat');
+        expect(set).toHaveProperty('weightKg', 100);
+        expect(set).toHaveProperty('reps', 5);
+        expect(set).toHaveProperty('rpe', 8);
+        expect(set).toHaveProperty('loggedAt');
       });
     });
   });

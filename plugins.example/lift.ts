@@ -365,6 +365,86 @@ export function parseLogArgs(
 }
 
 // =============================================================================
+// Workout Set DB Operations
+// =============================================================================
+
+/**
+ * Log a workout set to the database
+ * Exercise name is lowercased for consistent querying.
+ */
+export function logWorkoutSet(
+  userId: string,
+  exercise: string,
+  weightKg: number,
+  reps: number,
+  rpe: number | undefined,
+  db: PluginDatabase
+): void {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO ${db.prefix}workout_sets (user_id, exercise, weight_kg, reps, rpe, logged_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(userId, exercise.toLowerCase(), weightKg, reps, rpe ?? null, now, now);
+}
+
+/**
+ * DB row shape for workout_sets table
+ */
+interface WorkoutSetRow {
+  id: number;
+  user_id: string;
+  exercise: string;
+  weight_kg: number;
+  reps: number;
+  rpe: number | null;
+  logged_at: number;
+  created_at: number;
+}
+
+function rowToWorkoutSet(row: WorkoutSetRow): WorkoutSet {
+  return {
+    id: row.id,
+    exercise: row.exercise,
+    weightKg: row.weight_kg,
+    reps: row.reps,
+    rpe: row.rpe,
+    loggedAt: row.logged_at,
+  };
+}
+
+/**
+ * Get workout sets for a specific date
+ * @param dateSpec 'today' or a Date object
+ * @param tz User's IANA timezone or null for UTC
+ */
+export function getWorkoutForDate(
+  userId: string,
+  dateSpec: 'today' | Date,
+  db: PluginDatabase,
+  tz: string | null
+): WorkoutSet[] {
+  let startTs: number;
+  let endTs: number;
+
+  if (dateSpec === 'today') {
+    startTs = getStartOfDayInTimezone(tz, 0);
+    endTs = startTs + 24 * 60 * 60 * 1000;
+  } else {
+    startTs = dateToStartOfDayInTimezone(dateSpec, tz);
+    endTs = startTs + 24 * 60 * 60 * 1000;
+  }
+
+  const rows = db.prepare(
+    `SELECT id, user_id, exercise, weight_kg, reps, rpe, logged_at, created_at
+     FROM ${db.prefix}workout_sets
+     WHERE user_id = ? AND logged_at >= ? AND logged_at < ?
+     ORDER BY logged_at ASC`
+  ).all(userId, startTs, endTs) as WorkoutSetRow[];
+
+  return rows.map(rowToWorkoutSet);
+}
+
+// =============================================================================
 // Constants for Warmup Calculator
 // =============================================================================
 
