@@ -1555,7 +1555,7 @@ function registerLiftCommand(app: App | PluginApp): void {
         }
 
         case 'workout':
-        case 'w': {
+        case 'wo': {
           // /lift workout [date] - Show workout for a date
           if (!pluginDb) {
             await respond(buildResponse([section(':x: Database not initialized')]));
@@ -1571,7 +1571,7 @@ function registerLiftCommand(app: App | PluginApp): void {
             await respond(
               buildResponse([
                 section(':warning: Usage: `/lift workout [date]`'),
-                context('Examples: `/lift w`, `/lift w -1`, `/lift w 2/14`'),
+                context('Examples: `/lift wo`, `/lift wo -1`, `/lift wo 2/14`'),
               ])
             );
             return;
