@@ -7,7 +7,7 @@
  * Pure functions are exported from the plugin and tested directly.
  * Database operations use an in-memory SQLite database.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { PluginDatabase } from '../../src/services/plugin-database.js';
 import {
