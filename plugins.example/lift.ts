@@ -1585,18 +1585,15 @@ function registerLiftCommand(app: App | PluginApp): void {
               wSets = getWorkoutForDate(command.user_id, 'today', pluginDb, tz);
               wLabel = 'Today';
               break;
-            case 'relative':
-              if (query.daysAgo === -1) {
-                const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-                wSets = getWorkoutForDate(command.user_id, yesterday, pluginDb, tz);
-                wLabel = 'Yesterday';
-              } else {
-                const daysBack = Math.abs(query.daysAgo!);
-                const targetDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
-                wSets = getWorkoutForDate(command.user_id, targetDate, pluginDb, tz);
-                wLabel = `${daysBack} days ago`;
-              }
+            case 'relative': {
+              const daysBack = Math.abs(query.daysAgo!);
+              // Use timezone-aware start of day to find the correct date
+              const targetTs = getStartOfDayInTimezone(tz, daysBack);
+              const targetDate = new Date(targetTs);
+              wSets = getWorkoutForDate(command.user_id, targetDate, pluginDb, tz);
+              wLabel = daysBack === 1 ? 'Yesterday' : `${daysBack} days ago`;
               break;
+            }
             case 'date':
               wSets = getWorkoutForDate(command.user_id, query.date!, pluginDb, tz);
               wLabel = formatDateLabel(query.date!);
@@ -2144,7 +2141,7 @@ const workoutTool: ToolDefinition = {
       params.push(exercise.toLowerCase());
     }
 
-    query += ' ORDER BY logged_at DESC';
+    query += ' ORDER BY logged_at DESC LIMIT 500';
 
     const rows = pluginDb.prepare(query).all(...params) as {
       exercise: string;
@@ -2158,11 +2155,11 @@ const workoutTool: ToolDefinition = {
     lines.push(`Workout history (last ${daysBack} days): ${rows.length} sets`);
 
     if (rows.length > 0) {
-      // Group by date
+      // Group by date (UTC — user timezone not available in tool context)
       const byDate = new Map<string, typeof rows>();
       for (const row of rows) {
         const d = new Date(row.logged_at);
-        const key = `${d.getMonth() + 1}/${d.getDate()}`;
+        const key = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
         const existing = byDate.get(key);
         if (existing) existing.push(row);
         else byDate.set(key, [row]);
