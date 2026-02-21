@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createProvider, resetProvider, type ProviderConfig } from '../../../src/services/providers/index.js';
 
-// Mock the CliProvider
-vi.mock('../../../src/services/providers/cli-provider.js', () => ({
-  CliProvider: vi.fn().mockImplementation(() => ({
-    name: 'cli',
-    ask: vi.fn(),
-  })),
-}));
+// Mock the CliProvider - vitest 4 requires function/class syntax for constructors
+vi.mock('../../../src/services/providers/cli-provider.js', () => {
+  const CliProvider = vi.fn(function (this: Record<string, unknown>) {
+    this.name = 'cli';
+    this.ask = vi.fn();
+  });
+  return { CliProvider };
+});
 
 // Mock the logger
 vi.mock('../../../src/utils/logger.js', () => ({

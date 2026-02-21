@@ -158,7 +158,7 @@ export async function fetchImageAsBase64(url: string): Promise<FetchedImage> {
     };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Image fetch timed out after ${String(FETCH_TIMEOUT / 1000)} seconds`);
+      throw new Error(`Image fetch timed out after ${String(FETCH_TIMEOUT / 1000)} seconds`, { cause: error });
     }
     throw error;
   } finally {
@@ -262,7 +262,7 @@ export async function downloadImageToFile(
     return mediaType;
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Image fetch timed out after ${String(FETCH_TIMEOUT / 1000)} seconds`);
+      throw new Error(`Image fetch timed out after ${String(FETCH_TIMEOUT / 1000)} seconds`, { cause: error });
     }
     throw error;
   } finally {

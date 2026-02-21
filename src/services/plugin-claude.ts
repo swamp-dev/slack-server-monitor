@@ -9,7 +9,7 @@
  * - Image support (SDK provider only)
  */
 
-import type { ToolDefinition, ToolSpec, ToolConfig } from './tools/types.js';
+import type { ToolDefinition, ToolConfig } from './tools/types.js';
 import type {
   PluginClaude,
   PluginClaudeOptions,
@@ -17,7 +17,6 @@ import type {
   PluginImageInput,
 } from '../plugins/types.js';
 import type { ClaudeProvider, UserConfig, ImageInput } from './providers/types.js';
-import { getToolSpecs } from './tools/index.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -40,7 +39,7 @@ export interface PluginClaudeConfig {
  * Create a PluginClaude instance for a specific plugin
  */
 export function createPluginClaude(config: PluginClaudeConfig): PluginClaude {
-  const { provider, pluginName, pluginTools, checkRateLimit, toolConfig } = config;
+  const { provider, pluginName, checkRateLimit, toolConfig } = config;
 
   return {
     enabled: true,
@@ -63,18 +62,6 @@ export function createPluginClaude(config: PluginClaudeConfig): PluginClaude {
         hasImages: !!options?.images?.length,
         includeBuiltinTools: options?.includeBuiltinTools,
       });
-
-      // Build tools list (for future use when provider supports custom tool sets)
-      let _tools: ToolSpec[] = [];
-
-      // Include plugin's own tools (already namespaced)
-      _tools = pluginTools.map((t) => t.spec);
-
-      // Optionally include built-in tools
-      if (options?.includeBuiltinTools) {
-        const builtinSpecs = getToolSpecs([]);
-        _tools = [..._tools, ...builtinSpecs];
-      }
 
       // Create user config for the provider
       const userConfig: UserConfig = {

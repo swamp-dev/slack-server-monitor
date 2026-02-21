@@ -168,7 +168,7 @@ export async function getContainerDetails(containerName: string): Promise<Contai
     };
   } catch (error) {
     if (error instanceof SyntaxError) {
-      throw new Error('Failed to parse container details');
+      throw new Error('Failed to parse container details', { cause: error });
     }
     throw error;
   }
