@@ -599,6 +599,86 @@ export function formatPersonalRecords(prs: PersonalRecord[], unit: WeightUnit): 
 }
 
 // =============================================================================
+// Bodyweight Tracking
+// =============================================================================
+
+/**
+ * Log a bodyweight entry (one per day, replaces if same day)
+ */
+export function logBodyweight(userId: string, weightKg: number, db: PluginDatabase): void {
+  // Store with start-of-day timestamp (UTC) so one entry per day
+  const now = new Date();
+  const startOfDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  db.prepare(
+    `INSERT OR REPLACE INTO ${db.prefix}bodyweight (user_id, weight_kg, logged_at)
+     VALUES (?, ?, ?)`
+  ).run(userId, weightKg, startOfDay);
+}
+
+/**
+ * Get the most recent bodyweight entry for a user
+ */
+export function getLatestBodyweight(
+  userId: string,
+  db: PluginDatabase
+): { weightKg: number; loggedAt: number } | null {
+  const row = db.prepare(
+    `SELECT weight_kg, logged_at FROM ${db.prefix}bodyweight
+     WHERE user_id = ? ORDER BY logged_at DESC LIMIT 1`
+  ).get(userId) as { weight_kg: number; logged_at: number } | undefined;
+  return row ? { weightKg: row.weight_kg, loggedAt: row.logged_at } : null;
+}
+
+/**
+ * Get bodyweight history for a user over the last N days
+ */
+export function getBodyweightHistory(
+  userId: string,
+  days: number,
+  db: PluginDatabase
+): Array<{ weightKg: number; loggedAt: number }> {
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = db.prepare(
+    `SELECT weight_kg, logged_at FROM ${db.prefix}bodyweight
+     WHERE user_id = ? AND logged_at >= ? ORDER BY logged_at ASC`
+  ).all(userId, since) as Array<{ weight_kg: number; logged_at: number }>;
+  return rows.map((r) => ({ weightKg: r.weight_kg, loggedAt: r.logged_at }));
+}
+
+/**
+ * Format bodyweight trend for display
+ */
+export function formatBodyweightTrend(
+  history: Array<{ weightKg: number; loggedAt: number }>,
+  unit: WeightUnit
+): string {
+  if (history.length === 0) {
+    return 'No bodyweight entries logged yet.';
+  }
+
+  const toDisplay = (kg: number) =>
+    unit === 'kg' ? kg.toFixed(1) : kgToLbs(kg).toFixed(1);
+
+  const latest = history[history.length - 1];
+  const avg = history.reduce((sum, e) => sum + e.weightKg, 0) / history.length;
+
+  let trend = '';
+  if (history.length >= 2) {
+    const first = history[0];
+    const diff = latest.weightKg - first.weightKg;
+    if (diff > 0.2) {
+      trend = ` ↑ +${toDisplay(diff)} ${unit}`;
+    } else if (diff < -0.2) {
+      trend = ` ↓ ${toDisplay(diff)} ${unit}`;
+    } else {
+      trend = ' → stable';
+    }
+  }
+
+  return `*Current:* ${toDisplay(latest.weightKg)} ${unit} | *${String(history.length)}d avg:* ${toDisplay(avg)} ${unit}${trend}`;
+}
+
+// =============================================================================
 // Constants for Warmup Calculator
 // =============================================================================
 
@@ -1330,25 +1410,62 @@ function registerLiftCommand(app: App | PluginApp): void {
     try {
       switch (subcommand) {
         case 'wilks': {
-          // /lift wilks <total> <bodyweight> <m|f>
+          // /lift wilks <total> <m|f>        (uses stored bodyweight)
+          // /lift wilks <total> <bw> <m|f>   (explicit bodyweight)
           const unit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
-          const [, totalStr, bwStr, sex] = args;
-          if (!totalStr || !bwStr || !sex) {
+          const [, totalStr, secondArg, thirdArg] = args;
+
+          // Validate total early (before DB lookup)
+          const totalInput = parseFloat(totalStr);
+          if (isNaN(totalInput) || totalInput <= 0) {
             await respond(
               buildResponse([
-                section(`:warning: Usage: \`/lift wilks <total> <bodyweight> <m|f>\``),
-                context(`Example: \`/lift wilks ${unit === 'lbs' ? '1100 183' : '500 83'} m\` (${unit})`),
+                section(`:warning: Usage: \`/lift wilks <total> <m|f>\` or \`/lift wilks <total> <bw> <m|f>\``),
+                context(`Example: \`/lift wilks ${unit === 'lbs' ? '1100' : '500'} m\` (uses stored bw) or \`/lift wilks ${unit === 'lbs' ? '1100 183' : '500 83'} m\``),
               ])
             );
             return;
           }
 
-          const totalInput = parseFloat(totalStr);
-          const bwInput = parseFloat(bwStr);
-          const isMale = sex.toLowerCase() === 'm';
+          // Determine if second arg is sex (auto-BW) or bodyweight (explicit)
+          let bwInput: number;
+          let isMale: boolean;
+          let usedStoredBw = false;
 
-          if (isNaN(totalInput) || isNaN(bwInput) || totalInput <= 0 || bwInput <= 0) {
-            await respond(buildResponse([section(':x: Invalid numbers. Total and bodyweight must be positive.')]));
+          if (secondArg && (secondArg.toLowerCase() === 'm' || secondArg.toLowerCase() === 'f')) {
+            // /lift wilks <total> <m|f> — use stored bodyweight
+            isMale = secondArg.toLowerCase() === 'm';
+            if (!pluginDb) {
+              await respond(buildResponse([section(':x: Database not initialized')]));
+              return;
+            }
+            const stored = getLatestBodyweight(command.user_id, pluginDb);
+            if (!stored) {
+              await respond(
+                buildResponse([
+                  section(':warning: No bodyweight logged. Log with `/lift bw <weight>` first, or specify explicitly.'),
+                  context(`Usage: \`/lift wilks <total> <bodyweight> <m|f>\``),
+                ])
+              );
+              return;
+            }
+            bwInput = unit === 'kg' ? stored.weightKg : kgToLbs(stored.weightKg);
+            usedStoredBw = true;
+          } else if (secondArg && !isNaN(parseFloat(secondArg)) && thirdArg && (thirdArg.toLowerCase() === 'm' || thirdArg.toLowerCase() === 'f')) {
+            // /lift wilks <total> <bw> <m|f>
+            bwInput = parseFloat(secondArg);
+            isMale = thirdArg.toLowerCase() === 'm';
+            if (bwInput <= 0) {
+              await respond(buildResponse([section(':x: Bodyweight must be positive.')]));
+              return;
+            }
+          } else {
+            await respond(
+              buildResponse([
+                section(`:warning: Usage: \`/lift wilks <total> <m|f>\` or \`/lift wilks <total> <bw> <m|f>\``),
+                context(`Example: \`/lift wilks ${unit === 'lbs' ? '1100' : '500'} m\` (uses stored bw) or \`/lift wilks ${unit === 'lbs' ? '1100 183' : '500 83'} m\``),
+              ])
+            );
             return;
           }
 
@@ -1356,10 +1473,11 @@ function registerLiftCommand(app: App | PluginApp): void {
           const bwKg = unit === 'kg' ? bwInput : lbsToKg(bwInput);
 
           const wilks = calculateWilks(totalKg, bwKg, isMale);
+          const bwNote = usedStoredBw ? ' _(from logged bw)_' : '';
           await respond(
             buildResponse([
               header('Wilks Score'),
-              section(`*Total:* ${formatWeight(totalInput, unit)}\n*Bodyweight:* ${formatWeight(bwInput, unit)}\n*Sex:* ${isMale ? 'Male' : 'Female'}`),
+              section(`*Total:* ${formatWeight(totalInput, unit)}\n*Bodyweight:* ${formatWeight(bwInput, unit)}${bwNote}\n*Sex:* ${isMale ? 'Male' : 'Female'}`),
               divider(),
               section(`:muscle: *Wilks Score: ${wilks.toFixed(2)}*`),
               context('Using Wilks 2020 formula'),
@@ -1369,25 +1487,59 @@ function registerLiftCommand(app: App | PluginApp): void {
         }
 
         case 'dots': {
-          // /lift dots <total> <bodyweight> <m|f>
+          // /lift dots <total> <m|f>        (uses stored bodyweight)
+          // /lift dots <total> <bw> <m|f>   (explicit bodyweight)
           const unit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
-          const [, totalStr, bwStr, sex] = args;
-          if (!totalStr || !bwStr || !sex) {
+          const [, totalStr, secondArg, thirdArg] = args;
+
+          // Validate total early (before DB lookup)
+          const totalInput = parseFloat(totalStr);
+          if (isNaN(totalInput) || totalInput <= 0) {
             await respond(
               buildResponse([
-                section(`:warning: Usage: \`/lift dots <total> <bodyweight> <m|f>\``),
-                context(`Example: \`/lift dots ${unit === 'lbs' ? '1100 183' : '500 83'} m\` (${unit})`),
+                section(`:warning: Usage: \`/lift dots <total> <m|f>\` or \`/lift dots <total> <bw> <m|f>\``),
+                context(`Example: \`/lift dots ${unit === 'lbs' ? '1100' : '500'} m\` (uses stored bw) or \`/lift dots ${unit === 'lbs' ? '1100 183' : '500 83'} m\``),
               ])
             );
             return;
           }
 
-          const totalInput = parseFloat(totalStr);
-          const bwInput = parseFloat(bwStr);
-          const isMale = sex.toLowerCase() === 'm';
+          let bwInput: number;
+          let isMale: boolean;
+          let usedStoredBw = false;
 
-          if (isNaN(totalInput) || isNaN(bwInput) || totalInput <= 0 || bwInput <= 0) {
-            await respond(buildResponse([section(':x: Invalid numbers. Total and bodyweight must be positive.')]));
+          if (secondArg && (secondArg.toLowerCase() === 'm' || secondArg.toLowerCase() === 'f')) {
+            isMale = secondArg.toLowerCase() === 'm';
+            if (!pluginDb) {
+              await respond(buildResponse([section(':x: Database not initialized')]));
+              return;
+            }
+            const stored = getLatestBodyweight(command.user_id, pluginDb);
+            if (!stored) {
+              await respond(
+                buildResponse([
+                  section(':warning: No bodyweight logged. Log with `/lift bw <weight>` first, or specify explicitly.'),
+                  context(`Usage: \`/lift dots <total> <bodyweight> <m|f>\``),
+                ])
+              );
+              return;
+            }
+            bwInput = unit === 'kg' ? stored.weightKg : kgToLbs(stored.weightKg);
+            usedStoredBw = true;
+          } else if (secondArg && !isNaN(parseFloat(secondArg)) && thirdArg && (thirdArg.toLowerCase() === 'm' || thirdArg.toLowerCase() === 'f')) {
+            bwInput = parseFloat(secondArg);
+            isMale = thirdArg.toLowerCase() === 'm';
+            if (bwInput <= 0) {
+              await respond(buildResponse([section(':x: Bodyweight must be positive.')]));
+              return;
+            }
+          } else {
+            await respond(
+              buildResponse([
+                section(`:warning: Usage: \`/lift dots <total> <m|f>\` or \`/lift dots <total> <bw> <m|f>\``),
+                context(`Example: \`/lift dots ${unit === 'lbs' ? '1100' : '500'} m\` (uses stored bw) or \`/lift dots ${unit === 'lbs' ? '1100 183' : '500 83'} m\``),
+              ])
+            );
             return;
           }
 
@@ -1395,10 +1547,11 @@ function registerLiftCommand(app: App | PluginApp): void {
           const bwKg = unit === 'kg' ? bwInput : lbsToKg(bwInput);
 
           const dots = calculateDots(totalKg, bwKg, isMale);
+          const bwNote = usedStoredBw ? ' _(from logged bw)_' : '';
           await respond(
             buildResponse([
               header('DOTS Score'),
-              section(`*Total:* ${formatWeight(totalInput, unit)}\n*Bodyweight:* ${formatWeight(bwInput, unit)}\n*Sex:* ${isMale ? 'Male' : 'Female'}`),
+              section(`*Total:* ${formatWeight(totalInput, unit)}\n*Bodyweight:* ${formatWeight(bwInput, unit)}${bwNote}\n*Sex:* ${isMale ? 'Male' : 'Female'}`),
               divider(),
               section(`:muscle: *DOTS Score: ${dots.toFixed(2)}*`),
               context('DOTS = Dynamic Object Tracking System'),
@@ -1478,6 +1631,62 @@ function registerLiftCommand(app: App | PluginApp): void {
                 context('Example: `/lift units lbs` or `/lift units kg`'),
               ])
             );
+          }
+          break;
+        }
+
+        case 'bw':
+        case 'bodyweight': {
+          if (!pluginDb) {
+            await respond(buildResponse([section(':x: Database not initialized')]));
+            return;
+          }
+
+          const unit = getUserUnit(command.user_id, pluginDb);
+          const bwArg = args[1];
+
+          if (bwArg) {
+            // /lift bw <weight> — log bodyweight
+            const weightInput = parseFloat(bwArg);
+            if (isNaN(weightInput) || weightInput <= 0) {
+              await respond(buildResponse([section(':x: Invalid weight. Must be a positive number.')]));
+              return;
+            }
+
+            const weightKg = unit === 'kg' ? weightInput : lbsToKg(weightInput);
+            logBodyweight(command.user_id, weightKg, pluginDb);
+
+            await respond(
+              buildResponse([
+                section(`:white_check_mark: Bodyweight logged: *${formatWeight(weightInput, unit)}*`),
+                context('View trend with `/lift bw`'),
+              ])
+            );
+          } else {
+            // /lift bw — show trend
+            const history = getBodyweightHistory(command.user_id, 30, pluginDb);
+            const trend = formatBodyweightTrend(history, unit);
+
+            if (history.length === 0) {
+              await respond(
+                buildResponse([
+                  section(':scale: ' + trend),
+                  context('Log with `/lift bw <weight>`'),
+                ])
+              );
+            } else {
+              const recentHistory = getBodyweightHistory(command.user_id, 7, pluginDb);
+              const trend7d = formatBodyweightTrend(recentHistory, unit);
+
+              await respond(
+                buildResponse([
+                  header('Bodyweight Trend'),
+                  section(`:scale: *30 day:* ${trend}`),
+                  section(`*7 day:* ${trend7d}`),
+                  context(`${String(history.length)} entries | Unit: ${unit}`),
+                ])
+              );
+            }
           }
           break;
         }
@@ -2526,6 +2735,58 @@ async function handleCancel(
 }
 
 // =============================================================================
+// Bodyweight History Tool (for Claude AI)
+// =============================================================================
+
+const bodyweightTool: ToolDefinition = {
+  spec: {
+    name: 'get_bodyweight_history',
+    description:
+      'Get a user\'s bodyweight history and trend. ' +
+      'Returns recent bodyweight entries, averages, and direction. ' +
+      'Use this when asked about bodyweight, weight trends, or body composition.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        user_id: {
+          type: 'string',
+          description: 'Slack user ID to query bodyweight for',
+        },
+        days: {
+          type: 'number',
+          description: 'Number of days of history to retrieve (default: 30)',
+        },
+      },
+      required: ['user_id'],
+    },
+  },
+  execute: async (input) => {
+    const { user_id, days = 30 } = input as { user_id: string; days?: number };
+
+    if (!pluginDb) {
+      return 'Bodyweight tracking database not initialized.';
+    }
+
+    const unit = getUserUnit(user_id, pluginDb);
+    const history = getBodyweightHistory(user_id, days, pluginDb);
+    const latest = getLatestBodyweight(user_id, pluginDb);
+
+    if (!latest || history.length === 0) {
+      return `No bodyweight entries found for user. They can log with /lift bw <weight>.`;
+    }
+
+    const trend = formatBodyweightTrend(history, unit);
+    const entries = history.map((e) => {
+      const date = new Date(e.loggedAt).toISOString().split('T')[0];
+      const weight = unit === 'kg' ? e.weightKg.toFixed(1) : kgToLbs(e.weightKg).toFixed(1);
+      return `${date}: ${weight} ${unit}`;
+    }).join('\n');
+
+    return `Bodyweight trend (${String(days)}d): ${trend}\n\nHistory:\n${entries}`;
+  },
+};
+
+// =============================================================================
 // Plugin Export
 // =============================================================================
 
@@ -2541,10 +2802,12 @@ const liftPlugin: Plugin = {
     { command: '/lift workout <date>', description: 'Workout for specific date (M/D)', group: 'Lift - Workouts' },
     { command: '/lift pr', description: 'All personal records', group: 'Lift - Workouts' },
     { command: '/lift pr <exercise>', description: 'PR for specific exercise', group: 'Lift - Workouts' },
-    { command: '/lift wilks <total> <bw> <m|f>', description: 'Calculate Wilks score (lbs or kg)', group: 'Lift - Calculators' },
-    { command: '/lift dots <total> <bw> <m|f>', description: 'Calculate DOTS score (lbs or kg)', group: 'Lift - Calculators' },
+    { command: '/lift wilks <total> [bw] <m|f>', description: 'Wilks score (auto-fills bw if logged)', group: 'Lift - Calculators' },
+    { command: '/lift dots <total> [bw] <m|f>', description: 'DOTS score (auto-fills bw if logged)', group: 'Lift - Calculators' },
     { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max (lbs or kg)', group: 'Lift - Calculators' },
     { command: '/lift warmup <weight> [weight2]', description: 'Warmup sets with plate loading', group: 'Lift - Calculators' },
+    { command: '/lift bw <weight>', description: 'Log today\'s bodyweight', group: 'Lift - Bodyweight' },
+    { command: '/lift bw', description: 'Show bodyweight trend (7d/30d)', group: 'Lift - Bodyweight' },
     { command: '/lift units [lbs|kg]', description: 'View or set weight unit preference', group: 'Lift - Settings' },
     { command: '/lift a [context]', description: 'Analyze latest food photo in channel', group: 'Lift - Food Analysis' },
     { command: '/lift m c20 p40 f15', description: 'Log macros (carbs/protein/fat in grams)', group: 'Lift - Macros' },
@@ -2558,7 +2821,7 @@ const liftPlugin: Plugin = {
 
   registerCommands: registerLiftCommand,
 
-  tools: [powerliftingTool, warmupTool, estimateFoodMacrosTool, workoutTool],
+  tools: [powerliftingTool, warmupTool, estimateFoodMacrosTool, workoutTool, bodyweightTool],
 
   init: async (ctx: PluginContext) => {
     // Store db and claude references for command handlers
@@ -2575,6 +2838,21 @@ const liftPlugin: Plugin = {
         weight_unit TEXT NOT NULL DEFAULT 'lbs' CHECK(weight_unit IN ('lbs', 'kg')),
         updated_at INTEGER NOT NULL
       )
+    `);
+
+    // Bodyweight tracking table (one entry per user per day)
+    ctx.db.exec(`
+      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}bodyweight (
+        user_id TEXT NOT NULL,
+        weight_kg REAL NOT NULL CHECK(weight_kg > 0 AND weight_kg < 500),
+        logged_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, logged_at)
+      )
+    `);
+
+    ctx.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}bodyweight_user
+        ON ${ctx.db.prefix}bodyweight(user_id, logged_at)
     `);
 
     // Workout sets table (flexible per-set tracking)
