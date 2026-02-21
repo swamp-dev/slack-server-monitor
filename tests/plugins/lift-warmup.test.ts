@@ -625,18 +625,4 @@ describe('lift plugin warmup calculator', () => {
     });
   });
 
-  describe('command routing', () => {
-    it('w and warmup should be equivalent (gym warmup)', () => {
-      // Both 'w' and 'warmup' route to the same GYM_PLATES config
-      const commands = ['w', 'warmup'];
-      for (const cmd of commands) {
-        expect(['w', 'warmup']).toContain(cmd);
-      }
-    });
-
-    it('wh should route to home warmup', () => {
-      const cmd = 'wh';
-      expect(cmd).toBe('wh');
-    });
-  });
 });
