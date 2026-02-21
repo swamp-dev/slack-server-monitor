@@ -187,30 +187,6 @@ Confidence levels:
 // =============================================================================
 
 /**
- * Example workout record type
- * This demonstrates the schema created in init() for workout tracking.
- * In a real plugin, you'd use this type with prepared statements:
- *
- * ```typescript
- * const stmt = ctx.db.prepare<[string, string], Workout>(
- *   `SELECT * FROM ${ctx.db.prefix}workouts WHERE user_id = ? AND date = ?`
- * );
- * const workout = stmt.get(userId, date);
- * ```
- */
-export interface Workout {
-  id: number;
-  user_id: string;
-  date: string;
-  squat_kg: number | null;
-  bench_kg: number | null;
-  deadlift_kg: number | null;
-  bodyweight_kg: number | null;
-  notes: string | null;
-  created_at: number;
-}
-
-/**
  * Macro totals for display
  */
 export interface MacroTotals {
@@ -303,6 +279,324 @@ export function setUserUnit(userId: string, unit: WeightUnit, db: PluginDatabase
     `INSERT OR REPLACE INTO ${db.prefix}user_prefs (user_id, weight_unit, updated_at)
      VALUES (?, ?, ?)`
   ).run(userId, unit, Date.now());
+}
+
+// =============================================================================
+// Workout Set Types
+// =============================================================================
+
+export interface WorkoutSet {
+  id: number;
+  exercise: string;
+  weightKg: number;
+  reps: number;
+  rpe: number | null;
+  loggedAt: number;
+}
+
+export interface PersonalRecord {
+  exercise: string;
+  weightKg: number;
+  reps: number;
+  estimated1rmKg: number;
+  loggedAt: number;
+}
+
+// =============================================================================
+// Workout Argument Parsing
+// =============================================================================
+
+/**
+ * Parse workout log arguments: <exercise> <weight> <reps> [@rpe]
+ * Exercise name is everything before the first numeric token.
+ * Returns null if parsing fails validation.
+ */
+export function parseLogArgs(
+  args: string[]
+): { exercise: string; weight: number; reps: number; rpe: number | undefined } | null {
+  if (args.length < 2) return null;
+
+  // Find the first numeric token (start of weight)
+  const firstNumIdx = args.findIndex(a => /^\d/.test(a) || /^-\d/.test(a));
+  if (firstNumIdx < 1) return null; // No exercise name or starts with number
+
+  const exercise = args.slice(0, firstNumIdx).join(' ').toLowerCase();
+  const rest = args.slice(firstNumIdx);
+
+  if (rest.length < 2) return null; // Need at least weight and reps
+
+  const weight = parseFloat(rest[0]);
+  if (isNaN(weight) || weight <= 0 || weight >= 1000) return null;
+
+  const reps = parseFloat(rest[1]);
+  if (isNaN(reps) || reps <= 0 || reps > 100 || !Number.isInteger(reps)) return null;
+
+  let rpe: number | undefined;
+  if (rest.length >= 3 && rest[2].startsWith('@')) {
+    const rpeVal = parseFloat(rest[2].slice(1));
+    if (isNaN(rpeVal) || rpeVal < 1 || rpeVal > 10) return null;
+    rpe = rpeVal;
+  }
+
+  return { exercise, weight, reps, rpe };
+}
+
+// =============================================================================
+// Workout Set DB Operations
+// =============================================================================
+
+/**
+ * Log a workout set to the database
+ * Exercise name is lowercased for consistent querying.
+ */
+export function logWorkoutSet(
+  userId: string,
+  exercise: string,
+  weightKg: number,
+  reps: number,
+  rpe: number | undefined,
+  db: PluginDatabase
+): void {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO ${db.prefix}workout_sets (user_id, exercise, weight_kg, reps, rpe, logged_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(userId, exercise.toLowerCase(), weightKg, reps, rpe ?? null, now, now);
+}
+
+/**
+ * DB row shape for workout_sets table
+ */
+interface WorkoutSetRow {
+  id: number;
+  user_id: string;
+  exercise: string;
+  weight_kg: number;
+  reps: number;
+  rpe: number | null;
+  logged_at: number;
+  created_at: number;
+}
+
+function rowToWorkoutSet(row: WorkoutSetRow): WorkoutSet {
+  return {
+    id: row.id,
+    exercise: row.exercise,
+    weightKg: row.weight_kg,
+    reps: row.reps,
+    rpe: row.rpe,
+    loggedAt: row.logged_at,
+  };
+}
+
+/**
+ * Get workout sets for a specific date
+ * @param dateSpec 'today' or a Date object
+ * @param tz User's IANA timezone or null for UTC
+ */
+export function getWorkoutForDate(
+  userId: string,
+  dateSpec: 'today' | Date,
+  db: PluginDatabase,
+  tz: string | null
+): WorkoutSet[] {
+  let startTs: number;
+  let endTs: number;
+
+  if (dateSpec === 'today') {
+    startTs = getStartOfDayInTimezone(tz, 0);
+    endTs = startTs + 24 * 60 * 60 * 1000;
+  } else {
+    startTs = dateToStartOfDayInTimezone(dateSpec, tz);
+    endTs = startTs + 24 * 60 * 60 * 1000;
+  }
+
+  const rows = db.prepare(
+    `SELECT id, user_id, exercise, weight_kg, reps, rpe, logged_at, created_at
+     FROM ${db.prefix}workout_sets
+     WHERE user_id = ? AND logged_at >= ? AND logged_at < ?
+     ORDER BY logged_at ASC`
+  ).all(userId, startTs, endTs) as WorkoutSetRow[];
+
+  return rows.map(rowToWorkoutSet);
+}
+
+// =============================================================================
+// PR Detection
+// =============================================================================
+
+/**
+ * Check if a new set would be a personal record for the given exercise.
+ * Compares estimated 1RM (Epley) against all previous sets.
+ * First set for an exercise is always a PR.
+ */
+export function checkForPR(
+  userId: string,
+  exercise: string,
+  weightKg: number,
+  reps: number,
+  db: PluginDatabase
+): boolean {
+  const exerciseLower = exercise.toLowerCase();
+  const new1rm = calculate1rm(weightKg, reps);
+
+  // Get the best estimated 1RM for this exercise from existing sets
+  const rows = db.prepare(
+    `SELECT weight_kg, reps FROM ${db.prefix}workout_sets
+     WHERE user_id = ? AND exercise = ?`
+  ).all(userId, exerciseLower) as { weight_kg: number; reps: number }[];
+
+  if (rows.length === 0) return true; // First set is always a PR
+
+  const best1rm = Math.max(...rows.map(r => calculate1rm(r.weight_kg, r.reps)));
+  return new1rm > best1rm;
+}
+
+/**
+ * Get the personal record for a specific exercise
+ * Returns the set with the highest estimated 1RM
+ */
+export function getPersonalRecords(
+  userId: string,
+  exercise: string,
+  db: PluginDatabase
+): PersonalRecord[] {
+  const exerciseLower = exercise.toLowerCase();
+
+  const rows = db.prepare(
+    `SELECT exercise, weight_kg, reps, logged_at FROM ${db.prefix}workout_sets
+     WHERE user_id = ? AND exercise = ?`
+  ).all(userId, exerciseLower) as { exercise: string; weight_kg: number; reps: number; logged_at: number }[];
+
+  if (rows.length === 0) return [];
+
+  // Find the row with highest estimated 1RM
+  let bestRow = rows[0];
+  let best1rm = calculate1rm(bestRow.weight_kg, bestRow.reps);
+
+  for (let i = 1; i < rows.length; i++) {
+    const est = calculate1rm(rows[i].weight_kg, rows[i].reps);
+    if (est > best1rm) {
+      best1rm = est;
+      bestRow = rows[i];
+    }
+  }
+
+  return [{
+    exercise: bestRow.exercise,
+    weightKg: bestRow.weight_kg,
+    reps: bestRow.reps,
+    estimated1rmKg: best1rm,
+    loggedAt: bestRow.logged_at,
+  }];
+}
+
+/**
+ * Get personal records for all exercises, one per exercise, sorted alphabetically
+ */
+export function getAllPersonalRecords(
+  userId: string,
+  db: PluginDatabase
+): PersonalRecord[] {
+  const rows = db.prepare(
+    `SELECT exercise, weight_kg, reps, logged_at FROM ${db.prefix}workout_sets
+     WHERE user_id = ?`
+  ).all(userId) as { exercise: string; weight_kg: number; reps: number; logged_at: number }[];
+
+  if (rows.length === 0) return [];
+
+  // Group by exercise, find best 1RM for each
+  const byExercise = new Map<string, { row: typeof rows[0]; est1rm: number }>();
+  for (const row of rows) {
+    const est = calculate1rm(row.weight_kg, row.reps);
+    const current = byExercise.get(row.exercise);
+    if (!current || est > current.est1rm) {
+      byExercise.set(row.exercise, { row, est1rm: est });
+    }
+  }
+
+  // Sort alphabetically by exercise
+  return Array.from(byExercise.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, { row, est1rm }]) => ({
+      exercise: row.exercise,
+      weightKg: row.weight_kg,
+      reps: row.reps,
+      estimated1rmKg: est1rm,
+      loggedAt: row.logged_at,
+    }));
+}
+
+// =============================================================================
+// Workout Formatting
+// =============================================================================
+
+/**
+ * Title-case an exercise name: "close grip bench" → "Close Grip Bench"
+ */
+function titleCase(str: string): string {
+  return str.replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/**
+ * Format a workout summary for Slack display.
+ * Groups sets by exercise, shows set details and volume totals.
+ * @param sets Array of WorkoutSet from getWorkoutForDate
+ * @param unit Display unit ('kg' or 'lbs')
+ */
+export function formatWorkoutSummary(sets: WorkoutSet[], unit: WeightUnit): string {
+  if (sets.length === 0) return 'No sets logged today.';
+
+  // Group by exercise, preserving order of first appearance
+  const groups = new Map<string, WorkoutSet[]>();
+  for (const set of sets) {
+    const existing = groups.get(set.exercise);
+    if (existing) {
+      existing.push(set);
+    } else {
+      groups.set(set.exercise, [set]);
+    }
+  }
+
+  const lines: string[] = [];
+  for (const [exercise, exerciseSets] of groups) {
+    lines.push(`*${titleCase(exercise)}*`);
+    let volume = 0;
+    for (const s of exerciseSets) {
+      const displayWeight = unit === 'kg' ? s.weightKg : kgToLbs(s.weightKg);
+      const rpeStr = s.rpe != null ? ` @${s.rpe}` : '';
+      lines.push(`  ${displayWeight.toFixed(1)} ${unit} × ${s.reps}${rpeStr}`);
+      volume += s.weightKg * s.reps;
+    }
+    const displayVolume = unit === 'kg' ? volume : kgToLbs(volume);
+    lines.push(`  _Vol: ${Math.round(displayVolume)} ${unit}_`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Format personal records for Slack display.
+ * Shows each exercise's best set with estimated 1RM.
+ * @param prs Array of PersonalRecord (should already be sorted alphabetically)
+ * @param unit Display unit ('kg' or 'lbs')
+ */
+export function formatPersonalRecords(prs: PersonalRecord[], unit: WeightUnit): string {
+  if (prs.length === 0) return 'No personal records yet.';
+
+  const lines: string[] = [];
+  for (const pr of prs) {
+    const displayWeight = unit === 'kg' ? pr.weightKg : kgToLbs(pr.weightKg);
+    const display1rm = unit === 'kg' ? pr.estimated1rmKg : kgToLbs(pr.estimated1rmKg);
+    const date = new Date(pr.loggedAt);
+    const dateStr = `${date.getMonth() + 1}/${date.getDate()}`;
+    lines.push(
+      `*${titleCase(pr.exercise)}*: ${displayWeight.toFixed(1)} ${unit} × ${pr.reps} ` +
+      `(est 1RM: ${display1rm.toFixed(1)} ${unit}) — ${dateStr}`
+    );
+  }
+
+  return lines.join('\n');
 }
 
 // =============================================================================
@@ -1510,6 +1804,145 @@ function registerLiftCommand(app: App | PluginApp): void {
           break;
         }
 
+        case 'log':
+        case 'l': {
+          // /lift log <exercise> <weight> <reps> [@rpe]
+          if (!pluginDb) {
+            await respond(buildResponse([section(':x: Database not initialized')]));
+            return;
+          }
+
+          const parsed = parseLogArgs(args.slice(1));
+          if (!parsed) {
+            await respond(
+              buildResponse([
+                section(':warning: Usage: `/lift log <exercise> <weight> <reps> [@rpe]`'),
+                context('Example: `/lift log squat 100 5 @8`'),
+              ])
+            );
+            return;
+          }
+
+          const logUnit = getUserUnit(command.user_id, pluginDb);
+          const logWeightKg = logUnit === 'kg' ? parsed.weight : lbsToKg(parsed.weight);
+          const tz = await getUserTimezone(command.user_id, client as unknown as SlackClient);
+
+          // Check for PR before logging (so the new set isn't counted against itself)
+          const isPR = checkForPR(command.user_id, parsed.exercise, logWeightKg, parsed.reps, pluginDb);
+
+          logWorkoutSet(command.user_id, parsed.exercise, logWeightKg, parsed.reps, parsed.rpe, pluginDb);
+
+          // Build confirmation
+          const rpeStr = parsed.rpe != null ? ` @${parsed.rpe}` : '';
+          const confirmBlocks: ReturnType<typeof header | typeof section | typeof divider | typeof context>[] = [
+            section(`:white_check_mark: ${formatWeight(parsed.weight, logUnit)} × ${parsed.reps}${rpeStr} — ${titleCase(parsed.exercise)}`),
+          ];
+
+          if (isPR) {
+            const est1rm = calculate1rm(logWeightKg, parsed.reps);
+            const display1rm = logUnit === 'kg' ? est1rm : kgToLbs(est1rm);
+            confirmBlocks.push(
+              section(`:trophy: *New PR!* Est 1RM: ${formatWeight(display1rm, logUnit)}`)
+            );
+          }
+
+          // Show today's workout summary
+          const todaySets = getWorkoutForDate(command.user_id, 'today', pluginDb, tz);
+          if (todaySets.length > 0) {
+            confirmBlocks.push(divider());
+            confirmBlocks.push(header('Today'));
+            confirmBlocks.push(section(formatWorkoutSummary(todaySets, logUnit)));
+          }
+
+          await respond(buildResponse(confirmBlocks));
+          break;
+        }
+
+        case 'workout':
+        case 'wo': {
+          // /lift workout [date] - Show workout for a date
+          if (!pluginDb) {
+            await respond(buildResponse([section(':x: Database not initialized')]));
+            return;
+          }
+
+          const tz = await getUserTimezone(command.user_id, client as unknown as SlackClient);
+          const wUnit = getUserUnit(command.user_id, pluginDb);
+          const queryArgs = args.slice(1);
+          const query = parseQueryArgs(queryArgs);
+
+          if (!query) {
+            await respond(
+              buildResponse([
+                section(':warning: Usage: `/lift workout [date]`'),
+                context('Examples: `/lift wo`, `/lift wo -1`, `/lift wo 2/14`'),
+              ])
+            );
+            return;
+          }
+
+          let wSets: WorkoutSet[];
+          let wLabel: string;
+
+          switch (query.type) {
+            case 'today':
+              wSets = getWorkoutForDate(command.user_id, 'today', pluginDb, tz);
+              wLabel = 'Today';
+              break;
+            case 'relative': {
+              const daysBack = Math.abs(query.daysAgo!);
+              // Use timezone-aware start of day to find the correct date
+              const targetTs = getStartOfDayInTimezone(tz, daysBack);
+              const targetDate = new Date(targetTs);
+              wSets = getWorkoutForDate(command.user_id, targetDate, pluginDb, tz);
+              wLabel = daysBack === 1 ? 'Yesterday' : `${daysBack} days ago`;
+              break;
+            }
+            case 'date':
+              wSets = getWorkoutForDate(command.user_id, query.date!, pluginDb, tz);
+              wLabel = formatDateLabel(query.date!);
+              break;
+            default:
+              wSets = getWorkoutForDate(command.user_id, 'today', pluginDb, tz);
+              wLabel = 'Today';
+          }
+
+          await respond(
+            buildResponse([
+              header(`Workout: ${wLabel}`),
+              section(formatWorkoutSummary(wSets, wUnit)),
+            ])
+          );
+          break;
+        }
+
+        case 'pr': {
+          // /lift pr [exercise] - Show personal records
+          if (!pluginDb) {
+            await respond(buildResponse([section(':x: Database not initialized')]));
+            return;
+          }
+
+          const prUnit = getUserUnit(command.user_id, pluginDb);
+          const exerciseArg = args.slice(1).join(' ').toLowerCase();
+
+          let prs: PersonalRecord[];
+          if (exerciseArg) {
+            prs = getPersonalRecords(command.user_id, exerciseArg, pluginDb);
+          } else {
+            prs = getAllPersonalRecords(command.user_id, pluginDb);
+          }
+
+          const prTitle = exerciseArg ? `PR: ${titleCase(exerciseArg)}` : 'Personal Records';
+          await respond(
+            buildResponse([
+              header(prTitle),
+              section(formatPersonalRecords(prs, prUnit)),
+            ])
+          );
+          break;
+        }
+
         case 'a':
         case 'analyze': {
           // /lift a [context] - Quick food photo analysis from recent channel image
@@ -1639,6 +2072,15 @@ function registerLiftCommand(app: App | PluginApp): void {
           await respond(
             buildResponse([
               header('Lift Plugin'),
+              section('*Workout Tracking:*'),
+              section(
+                '`/lift log <exercise> <weight> <reps> [@rpe]` - Log a set\n' +
+                  '`/lift workout` - Today\'s workout\n' +
+                  '`/lift workout -1` - Yesterday\'s workout\n' +
+                  '`/lift pr` - All personal records\n' +
+                  '`/lift pr squat` - PR for specific exercise'
+              ),
+              divider(),
               section('*Calculators:*'),
               section(
                 '`/lift wilks <total> <bw> <m|f>` - Wilks score\n' +
@@ -1917,6 +2359,109 @@ const estimateFoodMacrosTool: ToolDefinition = {
       ...estimate,
       estimated_calories: calories,
     });
+  },
+};
+
+const workoutTool: ToolDefinition = {
+  spec: {
+    name: 'get_workout_history',
+    description:
+      'Query workout set history for a user. Can filter by exercise and date range. ' +
+      'Returns sets with exercise name, weight, reps, RPE, and personal records.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        user_id: {
+          type: 'string',
+          description: 'Slack user ID to query workout history for',
+        },
+        exercise: {
+          type: 'string',
+          description: 'Filter by exercise name (optional, case-insensitive)',
+        },
+        days_back: {
+          type: 'number',
+          description: 'Number of days back to query (default: 7, max: 90)',
+        },
+        include_prs: {
+          type: 'boolean',
+          description: 'Include personal records summary (default: false)',
+        },
+      },
+      required: ['user_id'],
+    },
+  },
+  execute: async (input) => {
+    if (!pluginDb) return 'Error: Database not initialized';
+
+    const { user_id, exercise, days_back = 7, include_prs = false } = input as {
+      user_id: string;
+      exercise?: string;
+      days_back?: number;
+      include_prs?: boolean;
+    };
+
+    const daysBack = Math.min(Math.max(1, days_back), 90);
+    const startTs = Date.now() - daysBack * 24 * 60 * 60 * 1000;
+
+    let query = `SELECT exercise, weight_kg, reps, rpe, logged_at
+      FROM ${pluginDb.prefix}workout_sets
+      WHERE user_id = ? AND logged_at >= ?`;
+    const params: (string | number)[] = [user_id, startTs];
+
+    if (exercise) {
+      query += ' AND exercise = ?';
+      params.push(exercise.toLowerCase());
+    }
+
+    query += ' ORDER BY logged_at DESC LIMIT 500';
+
+    const rows = pluginDb.prepare(query).all(...params) as {
+      exercise: string;
+      weight_kg: number;
+      reps: number;
+      rpe: number | null;
+      logged_at: number;
+    }[];
+
+    const lines: string[] = [];
+    lines.push(`Workout history (last ${daysBack} days): ${rows.length} sets`);
+
+    if (rows.length > 0) {
+      // Group by date (UTC — user timezone not available in tool context)
+      const byDate = new Map<string, typeof rows>();
+      for (const row of rows) {
+        const d = new Date(row.logged_at);
+        const key = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+        const existing = byDate.get(key);
+        if (existing) existing.push(row);
+        else byDate.set(key, [row]);
+      }
+
+      for (const [date, dateSets] of byDate) {
+        lines.push(`\n${date}:`);
+        for (const s of dateSets) {
+          const rpe = s.rpe != null ? ` @${s.rpe}` : '';
+          const est1rm = calculate1rm(s.weight_kg, s.reps);
+          lines.push(`  ${s.exercise}: ${s.weight_kg}kg × ${s.reps}${rpe} (est 1RM: ${est1rm.toFixed(1)}kg)`);
+        }
+      }
+    }
+
+    if (include_prs) {
+      const prs = exercise
+        ? getPersonalRecords(user_id, exercise, pluginDb)
+        : getAllPersonalRecords(user_id, pluginDb);
+
+      if (prs.length > 0) {
+        lines.push('\nPersonal Records:');
+        for (const pr of prs) {
+          lines.push(`  ${pr.exercise}: ${pr.weightKg}kg × ${pr.reps} (est 1RM: ${pr.estimated1rmKg.toFixed(1)}kg)`);
+        }
+      }
+    }
+
+    return lines.join('\n');
   },
 };
 
@@ -2311,10 +2856,16 @@ const bodyweightTool: ToolDefinition = {
 
 const liftPlugin: Plugin = {
   name: 'lift',
-  version: '2.0.0',
-  description: 'Powerlifting calculator (Wilks, DOTS, 1RM, warmup) with lbs/kg support, macro tracker, and vision',
+  version: '3.0.0',
+  description: 'Powerlifting calculator, workout tracker, macro tracker, and food vision analysis',
 
   helpEntries: [
+    { command: '/lift log <exercise> <weight> <reps> [@rpe]', description: 'Log a workout set', group: 'Lift - Workouts' },
+    { command: '/lift workout', description: "Today's workout summary", group: 'Lift - Workouts' },
+    { command: '/lift workout -1', description: "Yesterday's workout", group: 'Lift - Workouts' },
+    { command: '/lift workout <date>', description: 'Workout for specific date (M/D)', group: 'Lift - Workouts' },
+    { command: '/lift pr', description: 'All personal records', group: 'Lift - Workouts' },
+    { command: '/lift pr <exercise>', description: 'PR for specific exercise', group: 'Lift - Workouts' },
     { command: '/lift wilks <total> [bw] <m|f>', description: 'Wilks score (auto-fills bw if logged)', group: 'Lift - Calculators' },
     { command: '/lift dots <total> [bw] <m|f>', description: 'DOTS score (auto-fills bw if logged)', group: 'Lift - Calculators' },
     { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max (lbs or kg)', group: 'Lift - Calculators' },
@@ -2335,7 +2886,7 @@ const liftPlugin: Plugin = {
 
   registerCommands: registerLiftCommand,
 
-  tools: [powerliftingTool, warmupTool, estimateFoodMacrosTool, bodyweightTool],
+  tools: [powerliftingTool, warmupTool, estimateFoodMacrosTool, workoutTool, bodyweightTool],
 
   init: async (ctx: PluginContext) => {
     // Store db and claude references for command handlers
@@ -2369,24 +2920,27 @@ const liftPlugin: Plugin = {
         ON ${ctx.db.prefix}bodyweight(user_id, logged_at)
     `);
 
-    // Workouts table (example schema)
+    // Workout sets table (flexible per-set tracking)
     ctx.db.exec(`
-      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}workouts (
+      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}workout_sets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,
-        date TEXT NOT NULL,
-        squat_kg REAL,
-        bench_kg REAL,
-        deadlift_kg REAL,
-        bodyweight_kg REAL,
-        notes TEXT,
-        created_at INTEGER NOT NULL
+        exercise TEXT NOT NULL,
+        weight_kg REAL NOT NULL CHECK(weight_kg >= 0 AND weight_kg < 1000),
+        reps INTEGER NOT NULL CHECK(reps > 0 AND reps <= 100),
+        rpe REAL CHECK(rpe IS NULL OR (rpe >= 1 AND rpe <= 10)),
+        logged_at INTEGER NOT NULL CHECK(logged_at > 0),
+        created_at INTEGER NOT NULL CHECK(created_at > 0)
       )
     `);
 
     ctx.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}workouts_user
-        ON ${ctx.db.prefix}workouts(user_id, date)
+      CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}workout_sets_user_date
+        ON ${ctx.db.prefix}workout_sets(user_id, logged_at)
+    `);
+    ctx.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}workout_sets_user_exercise
+        ON ${ctx.db.prefix}workout_sets(user_id, exercise)
     `);
 
     // Macros table for nutrition tracking
