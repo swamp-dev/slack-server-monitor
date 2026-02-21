@@ -445,6 +445,112 @@ export function getWorkoutForDate(
 }
 
 // =============================================================================
+// PR Detection
+// =============================================================================
+
+/**
+ * Check if a new set would be a personal record for the given exercise.
+ * Compares estimated 1RM (Epley) against all previous sets.
+ * First set for an exercise is always a PR.
+ */
+export function checkForPR(
+  userId: string,
+  exercise: string,
+  weightKg: number,
+  reps: number,
+  db: PluginDatabase
+): boolean {
+  const exerciseLower = exercise.toLowerCase();
+  const new1rm = calculate1rm(weightKg, reps);
+
+  // Get the best estimated 1RM for this exercise from existing sets
+  const rows = db.prepare(
+    `SELECT weight_kg, reps FROM ${db.prefix}workout_sets
+     WHERE user_id = ? AND exercise = ?`
+  ).all(userId, exerciseLower) as { weight_kg: number; reps: number }[];
+
+  if (rows.length === 0) return true; // First set is always a PR
+
+  const best1rm = Math.max(...rows.map(r => calculate1rm(r.weight_kg, r.reps)));
+  return new1rm > best1rm;
+}
+
+/**
+ * Get the personal record for a specific exercise
+ * Returns the set with the highest estimated 1RM
+ */
+export function getPersonalRecords(
+  userId: string,
+  exercise: string,
+  db: PluginDatabase
+): PersonalRecord[] {
+  const exerciseLower = exercise.toLowerCase();
+
+  const rows = db.prepare(
+    `SELECT exercise, weight_kg, reps, logged_at FROM ${db.prefix}workout_sets
+     WHERE user_id = ? AND exercise = ?`
+  ).all(userId, exerciseLower) as { exercise: string; weight_kg: number; reps: number; logged_at: number }[];
+
+  if (rows.length === 0) return [];
+
+  // Find the row with highest estimated 1RM
+  let bestRow = rows[0];
+  let best1rm = calculate1rm(bestRow.weight_kg, bestRow.reps);
+
+  for (let i = 1; i < rows.length; i++) {
+    const est = calculate1rm(rows[i].weight_kg, rows[i].reps);
+    if (est > best1rm) {
+      best1rm = est;
+      bestRow = rows[i];
+    }
+  }
+
+  return [{
+    exercise: bestRow.exercise,
+    weightKg: bestRow.weight_kg,
+    reps: bestRow.reps,
+    estimated1rmKg: best1rm,
+    loggedAt: bestRow.logged_at,
+  }];
+}
+
+/**
+ * Get personal records for all exercises, one per exercise, sorted alphabetically
+ */
+export function getAllPersonalRecords(
+  userId: string,
+  db: PluginDatabase
+): PersonalRecord[] {
+  const rows = db.prepare(
+    `SELECT exercise, weight_kg, reps, logged_at FROM ${db.prefix}workout_sets
+     WHERE user_id = ?`
+  ).all(userId) as { exercise: string; weight_kg: number; reps: number; logged_at: number }[];
+
+  if (rows.length === 0) return [];
+
+  // Group by exercise, find best 1RM for each
+  const byExercise = new Map<string, { row: typeof rows[0]; est1rm: number }>();
+  for (const row of rows) {
+    const est = calculate1rm(row.weight_kg, row.reps);
+    const current = byExercise.get(row.exercise);
+    if (!current || est > current.est1rm) {
+      byExercise.set(row.exercise, { row, est1rm: est });
+    }
+  }
+
+  // Sort alphabetically by exercise
+  return Array.from(byExercise.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, { row, est1rm }]) => ({
+      exercise: row.exercise,
+      weightKg: row.weight_kg,
+      reps: row.reps,
+      estimated1rmKg: est1rm,
+      loggedAt: row.logged_at,
+    }));
+}
+
+// =============================================================================
 // Constants for Warmup Calculator
 // =============================================================================
 

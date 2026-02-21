@@ -17,7 +17,11 @@ import {
   formatWeight,
   logWorkoutSet,
   getWorkoutForDate,
+  checkForPR,
+  getPersonalRecords,
+  getAllPersonalRecords,
   type WorkoutSet,
+  type PersonalRecord,
 } from '../../plugins.example/lift.js';
 
 // =============================================================================
@@ -361,6 +365,115 @@ describe('lift plugin workout tracking', () => {
         expect(set).toHaveProperty('reps', 5);
         expect(set).toHaveProperty('rpe', 8);
         expect(set).toHaveProperty('loggedAt');
+      });
+    });
+
+    // =========================================================================
+    // Step 3: PR Detection
+    // =========================================================================
+
+    describe('checkForPR', () => {
+      it('should return true for first set of an exercise (always a PR)', () => {
+        const result = checkForPR('U123', 'squat', 100, 5, pluginDb);
+        expect(result).toBe(true);
+      });
+
+      it('should return true when estimated 1RM is higher than previous best', () => {
+        // Log an initial set: 100kg x 5 → 1RM = 100 * (1 + 5/30) = 116.67
+        logWorkoutSet('U123', 'squat', 100, 5, undefined, pluginDb);
+
+        // New set: 110kg x 5 → 1RM = 110 * (1 + 5/30) = 128.33
+        const result = checkForPR('U123', 'squat', 110, 5, pluginDb);
+        expect(result).toBe(true);
+      });
+
+      it('should return false when estimated 1RM is lower than previous best', () => {
+        // Log an initial set: 100kg x 5 → 1RM = 116.67
+        logWorkoutSet('U123', 'squat', 100, 5, undefined, pluginDb);
+
+        // New set: 90kg x 5 → 1RM = 105.0
+        const result = checkForPR('U123', 'squat', 90, 5, pluginDb);
+        expect(result).toBe(false);
+      });
+
+      it('should return false when estimated 1RM equals previous best', () => {
+        // Log: 100kg x 5 → 1RM = 116.67
+        logWorkoutSet('U123', 'squat', 100, 5, undefined, pluginDb);
+
+        // Same 1RM is not a new PR
+        const result = checkForPR('U123', 'squat', 100, 5, pluginDb);
+        expect(result).toBe(false);
+      });
+
+      it('should isolate by exercise', () => {
+        // Big squat: 200kg x 1 → 1RM = 200
+        logWorkoutSet('U123', 'squat', 200, 1, undefined, pluginDb);
+
+        // Small bench: 80kg x 5 → 1RM = 93.33
+        // Should be PR because no previous bench sets
+        const result = checkForPR('U123', 'bench press', 80, 5, pluginDb);
+        expect(result).toBe(true);
+      });
+
+      it('should detect PR via higher reps at same weight', () => {
+        // 100kg x 3 → 1RM = 110.0
+        logWorkoutSet('U123', 'squat', 100, 3, undefined, pluginDb);
+
+        // 100kg x 5 → 1RM = 116.67 (higher due to more reps)
+        const result = checkForPR('U123', 'squat', 100, 5, pluginDb);
+        expect(result).toBe(true);
+      });
+    });
+
+    describe('getPersonalRecords', () => {
+      it('should return the best set for an exercise', () => {
+        logWorkoutSet('U123', 'squat', 100, 5, undefined, pluginDb);
+        logWorkoutSet('U123', 'squat', 120, 3, undefined, pluginDb);
+        logWorkoutSet('U123', 'squat', 90, 8, undefined, pluginDb);
+
+        const prs = getPersonalRecords('U123', 'squat', pluginDb);
+        expect(prs).toHaveLength(1);
+        // 100x5 → 116.67, 120x3 → 132.0, 90x8 → 114.0
+        // Best is 120x3
+        expect(prs[0].weightKg).toBe(120);
+        expect(prs[0].reps).toBe(3);
+        expect(prs[0].estimated1rmKg).toBeCloseTo(132.0, 0);
+      });
+
+      it('should return empty array for unknown exercise', () => {
+        const prs = getPersonalRecords('U123', 'overhead press', pluginDb);
+        expect(prs).toEqual([]);
+      });
+    });
+
+    describe('getAllPersonalRecords', () => {
+      it('should return best set per exercise', () => {
+        logWorkoutSet('U123', 'squat', 140, 5, undefined, pluginDb);
+        logWorkoutSet('U123', 'squat', 100, 3, undefined, pluginDb);
+        logWorkoutSet('U123', 'bench press', 100, 5, undefined, pluginDb);
+        logWorkoutSet('U123', 'deadlift', 180, 3, undefined, pluginDb);
+
+        const prs = getAllPersonalRecords('U123', pluginDb);
+        expect(prs).toHaveLength(3);
+
+        // Should be sorted alphabetically by exercise
+        expect(prs[0].exercise).toBe('bench press');
+        expect(prs[1].exercise).toBe('deadlift');
+        expect(prs[2].exercise).toBe('squat');
+      });
+
+      it('should return empty array when no sets', () => {
+        const prs = getAllPersonalRecords('U123', pluginDb);
+        expect(prs).toEqual([]);
+      });
+
+      it('should isolate by user', () => {
+        logWorkoutSet('U123', 'squat', 100, 5, undefined, pluginDb);
+        logWorkoutSet('U456', 'squat', 200, 5, undefined, pluginDb);
+
+        const prs = getAllPersonalRecords('U123', pluginDb);
+        expect(prs).toHaveLength(1);
+        expect(prs[0].weightKg).toBe(100);
       });
     });
   });
