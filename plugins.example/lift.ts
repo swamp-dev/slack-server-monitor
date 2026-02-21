@@ -305,6 +305,66 @@ export function setUserUnit(userId: string, unit: WeightUnit, db: PluginDatabase
 }
 
 // =============================================================================
+// Workout Set Types
+// =============================================================================
+
+export interface WorkoutSet {
+  id: number;
+  exercise: string;
+  weightKg: number;
+  reps: number;
+  rpe: number | null;
+  loggedAt: number;
+}
+
+export interface PersonalRecord {
+  exercise: string;
+  weightKg: number;
+  reps: number;
+  estimated1rmKg: number;
+  loggedAt: number;
+}
+
+// =============================================================================
+// Workout Argument Parsing
+// =============================================================================
+
+/**
+ * Parse workout log arguments: <exercise> <weight> <reps> [@rpe]
+ * Exercise name is everything before the first numeric token.
+ * Returns null if parsing fails validation.
+ */
+export function parseLogArgs(
+  args: string[]
+): { exercise: string; weight: number; reps: number; rpe: number | undefined } | null {
+  if (args.length < 2) return null;
+
+  // Find the first numeric token (start of weight)
+  const firstNumIdx = args.findIndex(a => /^\d/.test(a) || /^-\d/.test(a));
+  if (firstNumIdx < 1) return null; // No exercise name or starts with number
+
+  const exercise = args.slice(0, firstNumIdx).join(' ').toLowerCase();
+  const rest = args.slice(firstNumIdx);
+
+  if (rest.length < 2) return null; // Need at least weight and reps
+
+  const weight = parseFloat(rest[0]);
+  if (isNaN(weight) || weight <= 0 || weight >= 1000) return null;
+
+  const reps = parseFloat(rest[1]);
+  if (isNaN(reps) || reps <= 0 || reps > 100 || !Number.isInteger(reps)) return null;
+
+  let rpe: number | undefined;
+  if (rest.length >= 3 && rest[2].startsWith('@')) {
+    const rpeVal = parseFloat(rest[2].slice(1));
+    if (isNaN(rpeVal) || rpeVal < 1 || rpeVal > 10) return null;
+    rpe = rpeVal;
+  }
+
+  return { exercise, weight, reps, rpe };
+}
+
+// =============================================================================
 // Constants for Warmup Calculator
 // =============================================================================
 

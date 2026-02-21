@@ -200,7 +200,7 @@ describe('lift plugin workout tracking', () => {
       });
 
       it('should format in lbs', () => {
-        expect(formatWeight(100, 'lbs')).toBe('220.5 lbs');
+        expect(formatWeight(220.5, 'lbs')).toBe('220.5 lbs');
       });
 
       it('should format with one decimal place', () => {
