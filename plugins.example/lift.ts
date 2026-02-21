@@ -186,30 +186,6 @@ Confidence levels:
 // =============================================================================
 
 /**
- * Example workout record type
- * This demonstrates the schema created in init() for workout tracking.
- * In a real plugin, you'd use this type with prepared statements:
- *
- * ```typescript
- * const stmt = ctx.db.prepare<[string, string], Workout>(
- *   `SELECT * FROM ${ctx.db.prefix}workouts WHERE user_id = ? AND date = ?`
- * );
- * const workout = stmt.get(userId, date);
- * ```
- */
-export interface Workout {
-  id: number;
-  user_id: string;
-  date: string;
-  squat_kg: number | null;
-  bench_kg: number | null;
-  deadlift_kg: number | null;
-  bodyweight_kg: number | null;
-  notes: string | null;
-  created_at: number;
-}
-
-/**
  * Macro totals for display
  */
 export interface MacroTotals {
@@ -1524,6 +1500,148 @@ function registerLiftCommand(app: App | PluginApp): void {
           break;
         }
 
+        case 'log':
+        case 'l': {
+          // /lift log <exercise> <weight> <reps> [@rpe]
+          if (!pluginDb) {
+            await respond(buildResponse([section(':x: Database not initialized')]));
+            return;
+          }
+
+          const parsed = parseLogArgs(args.slice(1));
+          if (!parsed) {
+            await respond(
+              buildResponse([
+                section(':warning: Usage: `/lift log <exercise> <weight> <reps> [@rpe]`'),
+                context('Example: `/lift log squat 100 5 @8`'),
+              ])
+            );
+            return;
+          }
+
+          const logUnit = getUserUnit(command.user_id, pluginDb);
+          const logWeightKg = logUnit === 'kg' ? parsed.weight : lbsToKg(parsed.weight);
+          const tz = await getUserTimezone(command.user_id, client as unknown as SlackClient);
+
+          // Check for PR before logging (so the new set isn't counted against itself)
+          const isPR = checkForPR(command.user_id, parsed.exercise, logWeightKg, parsed.reps, pluginDb);
+
+          logWorkoutSet(command.user_id, parsed.exercise, logWeightKg, parsed.reps, parsed.rpe, pluginDb);
+
+          // Build confirmation
+          const rpeStr = parsed.rpe != null ? ` @${parsed.rpe}` : '';
+          const confirmBlocks: ReturnType<typeof header | typeof section | typeof divider | typeof context>[] = [
+            section(`:white_check_mark: ${formatWeight(parsed.weight, logUnit)} × ${parsed.reps}${rpeStr} — ${titleCase(parsed.exercise)}`),
+          ];
+
+          if (isPR) {
+            const est1rm = calculate1rm(logWeightKg, parsed.reps);
+            const display1rm = logUnit === 'kg' ? est1rm : kgToLbs(est1rm);
+            confirmBlocks.push(
+              section(`:trophy: *New PR!* Est 1RM: ${formatWeight(display1rm, logUnit)}`)
+            );
+          }
+
+          // Show today's workout summary
+          const todaySets = getWorkoutForDate(command.user_id, 'today', pluginDb, tz);
+          if (todaySets.length > 0) {
+            confirmBlocks.push(divider());
+            confirmBlocks.push(header('Today'));
+            confirmBlocks.push(section(formatWorkoutSummary(todaySets, logUnit)));
+          }
+
+          await respond(buildResponse(confirmBlocks));
+          break;
+        }
+
+        case 'workout':
+        case 'w': {
+          // /lift workout [date] - Show workout for a date
+          if (!pluginDb) {
+            await respond(buildResponse([section(':x: Database not initialized')]));
+            return;
+          }
+
+          const tz = await getUserTimezone(command.user_id, client as unknown as SlackClient);
+          const wUnit = getUserUnit(command.user_id, pluginDb);
+          const queryArgs = args.slice(1);
+          const query = parseQueryArgs(queryArgs);
+
+          if (!query) {
+            await respond(
+              buildResponse([
+                section(':warning: Usage: `/lift workout [date]`'),
+                context('Examples: `/lift w`, `/lift w -1`, `/lift w 2/14`'),
+              ])
+            );
+            return;
+          }
+
+          let wSets: WorkoutSet[];
+          let wLabel: string;
+
+          switch (query.type) {
+            case 'today':
+              wSets = getWorkoutForDate(command.user_id, 'today', pluginDb, tz);
+              wLabel = 'Today';
+              break;
+            case 'relative':
+              if (query.daysAgo === -1) {
+                const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+                wSets = getWorkoutForDate(command.user_id, yesterday, pluginDb, tz);
+                wLabel = 'Yesterday';
+              } else {
+                const daysBack = Math.abs(query.daysAgo!);
+                const targetDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
+                wSets = getWorkoutForDate(command.user_id, targetDate, pluginDb, tz);
+                wLabel = `${daysBack} days ago`;
+              }
+              break;
+            case 'date':
+              wSets = getWorkoutForDate(command.user_id, query.date!, pluginDb, tz);
+              wLabel = formatDateLabel(query.date!);
+              break;
+            default:
+              wSets = getWorkoutForDate(command.user_id, 'today', pluginDb, tz);
+              wLabel = 'Today';
+          }
+
+          await respond(
+            buildResponse([
+              header(`Workout: ${wLabel}`),
+              section(formatWorkoutSummary(wSets, wUnit)),
+            ])
+          );
+          break;
+        }
+
+        case 'pr': {
+          // /lift pr [exercise] - Show personal records
+          if (!pluginDb) {
+            await respond(buildResponse([section(':x: Database not initialized')]));
+            return;
+          }
+
+          const prUnit = getUserUnit(command.user_id, pluginDb);
+          const exerciseArg = args.slice(1).join(' ').toLowerCase();
+
+          let prs: PersonalRecord[];
+          if (exerciseArg) {
+            prs = getPersonalRecords(command.user_id, exerciseArg, pluginDb);
+          } else {
+            prs = getAllPersonalRecords(command.user_id, pluginDb);
+          }
+
+          const prTitle = exerciseArg ? `PR: ${titleCase(exerciseArg)}` : 'Personal Records';
+          await respond(
+            buildResponse([
+              header(prTitle),
+              section(formatPersonalRecords(prs, prUnit)),
+            ])
+          );
+          break;
+        }
+
         case 'a':
         case 'analyze': {
           // /lift a [context] - Quick food photo analysis from recent channel image
@@ -1691,6 +1809,15 @@ function registerLiftCommand(app: App | PluginApp): void {
           await respond(
             buildResponse([
               header('Lift Plugin'),
+              section('*Workout Tracking:*'),
+              section(
+                '`/lift log <exercise> <weight> <reps> [@rpe]` - Log a set\n' +
+                  '`/lift workout` - Today\'s workout\n' +
+                  '`/lift workout -1` - Yesterday\'s workout\n' +
+                  '`/lift pr` - All personal records\n' +
+                  '`/lift pr squat` - PR for specific exercise'
+              ),
+              divider(),
               section('*Calculators:*'),
               section(
                 '`/lift wilks <total> <bw> <m|f>` - Wilks score\n' +
@@ -2344,24 +2471,27 @@ const liftPlugin: Plugin = {
       )
     `);
 
-    // Workouts table (example schema)
+    // Workout sets table (flexible per-set tracking)
     ctx.db.exec(`
-      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}workouts (
+      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}workout_sets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,
-        date TEXT NOT NULL,
-        squat_kg REAL,
-        bench_kg REAL,
-        deadlift_kg REAL,
-        bodyweight_kg REAL,
-        notes TEXT,
-        created_at INTEGER NOT NULL
+        exercise TEXT NOT NULL,
+        weight_kg REAL NOT NULL CHECK(weight_kg >= 0 AND weight_kg < 1000),
+        reps INTEGER NOT NULL CHECK(reps > 0 AND reps <= 100),
+        rpe REAL CHECK(rpe IS NULL OR (rpe >= 1 AND rpe <= 10)),
+        logged_at INTEGER NOT NULL CHECK(logged_at > 0),
+        created_at INTEGER NOT NULL CHECK(created_at > 0)
       )
     `);
 
     ctx.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}workouts_user
-        ON ${ctx.db.prefix}workouts(user_id, date)
+      CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}workout_sets_user_date
+        ON ${ctx.db.prefix}workout_sets(user_id, logged_at)
+    `);
+    ctx.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_${ctx.db.prefix}workout_sets_user_exercise
+        ON ${ctx.db.prefix}workout_sets(user_id, exercise)
     `);
 
     // Macros table for nutrition tracking
