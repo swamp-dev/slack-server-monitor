@@ -532,6 +532,8 @@ The plugin loader uses [jiti](https://github.com/unjs/jiti) to dynamically impor
 - Tests in `tests/` directory, mirroring `src/` structure
 - Use Vitest with `describe/it/expect`
 - Security tests are critical - see `tests/utils/shell.test.ts`
+- **100% of tests must pass** - no skipped, pending, or failing tests allowed
+- No coverage thresholds enforced - focus on critical path coverage, not percentages
 - Run `npm test` before committing
 
 ## Deployment
