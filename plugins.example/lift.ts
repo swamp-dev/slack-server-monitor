@@ -12,7 +12,8 @@
  * - /lift wilks <total> <bodyweight> <m|f> - Calculate Wilks score
  * - /lift dots <total> <bodyweight> <m|f> - Calculate DOTS score
  * - /lift 1rm <weight> <reps> - Estimate 1 rep max
- * - /lift warmup <weight> [weight2] ... - Calculate warmup sets with plate loading
+ * - /lift w <weight> [weight2] ... - Calculate warmup sets with plate loading
+ * - /lift wh <weight> [weight2] ... - Home warmup (1 pair per plate)
  * - /lift units [lbs|kg] - View or set weight unit preference (default: lbs)
  * - /lift m c20 p40 f15 - Log macros (carbs, protein, fat in grams)
  * - /lift m - Show today's macro totals
@@ -390,8 +391,27 @@ export function formatBodyweightTrend(
 
 const BAR_WEIGHT = 45; // lbs
 const PLATE_SIZES = [45, 35, 25, 10, 5, 2.5] as const; // descending order
+const HOME_PLATE_SIZES = [55, 45, 35, 25, 10, 5, 2.5, 1.25] as const; // one pair each
 const WARMUP_PERCENTAGES = [0.4, 0.6, 0.8, 1.0] as const;
 const MAX_TARGET_WEIGHT = 1000; // lbs - safety limit to prevent unbounded output
+
+interface PlateConfig {
+  readonly label: string;
+  readonly plateSizes: readonly number[];
+  readonly singlePairOnly: boolean;
+}
+
+const GYM_PLATES: PlateConfig = {
+  label: 'Warmup',
+  plateSizes: PLATE_SIZES,
+  singlePairOnly: false,
+};
+
+const HOME_PLATES: PlateConfig = {
+  label: 'Home Warmup',
+  plateSizes: HOME_PLATE_SIZES,
+  singlePairOnly: true,
+};
 
 // =============================================================================
 // Powerlifting Formulas
@@ -452,9 +472,10 @@ function calculate1rm(weight: number, reps: number): number {
 /**
  * Calculate plate configuration for a given target weight
  * @param targetWeight Target weight in lbs
+ * @param config Plate configuration (gym or home)
  * @returns String describing the plate configuration
  */
-function calculatePlateConfig(targetWeight: number): string {
+function calculatePlateConfig(targetWeight: number, config: PlateConfig = GYM_PLATES): string {
   if (targetWeight < BAR_WEIGHT) {
     // Dumbbell case: round total weight to nearest 10 lbs (5 lb increments per hand)
     // e.g., 32 lbs -> round(32/10)*5 = 15 lbs per hand = 30 lbs total
@@ -463,20 +484,28 @@ function calculatePlateConfig(targetWeight: number): string {
   }
 
   // Greedy algorithm: fill with largest plates first
-  // Note: May not hit exact weight if target isn't achievable with standard plates
-  // (e.g., 46 lbs = bar + 2.5x2 = 50 lbs, can't load exactly 1 lb)
+  // Note: May not hit exact weight if target isn't achievable with available plates
   let remaining = targetWeight - BAR_WEIGHT;
   const plates: string[] = [];
 
-  for (const plateSize of PLATE_SIZES) {
-    let pairCount = 0;
-    while (remaining >= plateSize * 2) {
-      remaining -= plateSize * 2;
-      pairCount++;
-    }
-    if (pairCount > 0) {
-      // Show total plate count (e.g., "45x2" means two 45s total, one per side)
-      plates.push(`${plateSize}x${pairCount * 2}`);
+  for (const plateSize of config.plateSizes) {
+    if (config.singlePairOnly) {
+      // Home gym: max one pair per plate size
+      if (remaining >= plateSize * 2) {
+        remaining -= plateSize * 2;
+        plates.push(`${plateSize}x2`);
+      }
+    } else {
+      // Commercial gym: unlimited pairs
+      let pairCount = 0;
+      while (remaining >= plateSize * 2) {
+        remaining -= plateSize * 2;
+        pairCount++;
+      }
+      if (pairCount > 0) {
+        // Show total plate count (e.g., "45x2" means two 45s total, one per side)
+        plates.push(`${plateSize}x${pairCount * 2}`);
+      }
     }
   }
 
@@ -486,19 +515,20 @@ function calculatePlateConfig(targetWeight: number): string {
 /**
  * Format warmup table for a single target weight
  * @param targetWeight Target weight in lbs
+ * @param config Plate configuration (gym or home)
  * @returns Slack Block Kit blocks for the warmup table
  */
-function formatWarmupTable(targetWeight: number): ReturnType<typeof header | typeof section>[] {
+function formatWarmupTable(targetWeight: number, config: PlateConfig = GYM_PLATES): ReturnType<typeof header | typeof section>[] {
   const rows = WARMUP_PERCENTAGES.map((pct) => {
     const weight = Math.round(targetWeight * pct);
-    const config = calculatePlateConfig(weight);
+    const plateConfig = calculatePlateConfig(weight, config);
     const pctStr = `${Math.round(pct * 100)}%`.padEnd(4);
     const weightStr = `${weight} lbs`.padEnd(8);
-    return `${pctStr} │ ${weightStr} │ ${config}`;
+    return `${pctStr} │ ${weightStr} │ ${plateConfig}`;
   });
 
   return [
-    header(`Warmup: ${targetWeight} lbs`),
+    header(`${config.label}: ${targetWeight} lbs`),
     section(
       '```\n' +
         '%    │ Weight   │ Configuration\n' +
@@ -1103,6 +1133,71 @@ async function handleMacros(
 }
 
 // =============================================================================
+// Warmup Command Helper
+// =============================================================================
+
+/**
+ * Handle warmup command for both gym and home configurations
+ */
+async function handleWarmupCommand(
+  weightArgs: string[],
+  config: PlateConfig,
+  unit: WeightUnit,
+  respond: RespondFn,
+): Promise<void> {
+  const inputWeights = weightArgs
+    .map((w: string) => parseFloat(w))
+    .filter((w: number) => !isNaN(w) && w > 0);
+
+  const cmd = config.singlePairOnly ? 'wh' : 'w';
+  if (inputWeights.length === 0) {
+    await respond(
+      buildResponse([
+        section(`:warning: Usage: \`/lift ${cmd} <weight> [weight2] ...\``),
+        context(`Example: \`/lift ${cmd} ${unit === 'lbs' ? '225' : '100'}\` (${unit})`),
+      ])
+    );
+    return;
+  }
+
+  // Convert to lbs for plate loading calculation
+  const weightsLbs = unit === 'kg'
+    ? inputWeights.map((w: number) => Math.round(kgToLbs(w)))
+    : inputWeights;
+
+  // Validate max weight (in lbs) to prevent unbounded output
+  const invalidWeights = weightsLbs.filter((w: number) => w > MAX_TARGET_WEIGHT);
+  if (invalidWeights.length > 0) {
+    const maxDisplay = unit === 'kg'
+      ? `${Math.round(lbsToKg(MAX_TARGET_WEIGHT))} kg`
+      : `${MAX_TARGET_WEIGHT} lbs`;
+    await respond(
+      buildResponse([
+        section(`:x: Weight(s) exceed maximum of ${maxDisplay}`),
+      ])
+    );
+    return;
+  }
+
+  const blocks: ReturnType<typeof header | typeof section | typeof divider | typeof context>[] = [];
+  for (const targetWeight of weightsLbs) {
+    if (blocks.length > 0) blocks.push(divider());
+    blocks.push(...formatWarmupTable(targetWeight, config));
+  }
+
+  const contextParts = ['Percentages: 40%, 60%, 80%, 100%', 'Bar = 45 lbs', 'Plate count is total (both sides)'];
+  if (config.singlePairOnly) {
+    contextParts.push('1 pair per plate');
+  }
+  if (unit === 'kg') {
+    contextParts.push('Plate loading in lbs (standard plates)');
+  }
+  blocks.push(context(contextParts.join(' | ')));
+
+  await respond(buildResponse(blocks));
+}
+
+// =============================================================================
 // Slack Command Handler
 // =============================================================================
 
@@ -1524,54 +1619,16 @@ function registerLiftCommand(app: App | PluginApp): void {
           break;
         }
 
+        case 'w':
         case 'warmup': {
-          // /lift warmup <weight1> [weight2] ...
           const unit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
-          const inputWeights = args
-            .slice(1)
-            .map((w: string) => parseFloat(w))
-            .filter((w: number) => !isNaN(w) && w > 0);
+          await handleWarmupCommand(args.slice(1), GYM_PLATES, unit, respond);
+          break;
+        }
 
-          if (inputWeights.length === 0) {
-            await respond(
-              buildResponse([
-                section(':warning: Usage: `/lift warmup <weight> [weight2] ...`'),
-                context(`Example: \`/lift warmup ${unit === 'lbs' ? '225' : '100'}\` (${unit})`),
-              ])
-            );
-            return;
-          }
-
-          // Convert to lbs for plate loading calculation
-          const weightsLbs = unit === 'kg'
-            ? inputWeights.map((w: number) => Math.round(kgToLbs(w)))
-            : inputWeights;
-
-          // Validate max weight (in lbs) to prevent unbounded output
-          const invalidWeights = weightsLbs.filter((w: number) => w > MAX_TARGET_WEIGHT);
-          if (invalidWeights.length > 0) {
-            const maxDisplay = unit === 'kg'
-              ? `${Math.round(lbsToKg(MAX_TARGET_WEIGHT))} kg`
-              : `${MAX_TARGET_WEIGHT} lbs`;
-            await respond(
-              buildResponse([
-                section(`:x: Weight(s) exceed maximum of ${maxDisplay}`),
-              ])
-            );
-            return;
-          }
-
-          const blocks: ReturnType<typeof header | typeof section | typeof divider | typeof context>[] = [];
-          for (const targetWeight of weightsLbs) {
-            if (blocks.length > 0) blocks.push(divider());
-            blocks.push(...formatWarmupTable(targetWeight));
-          }
-          const noteText = unit === 'kg'
-            ? 'Percentages: 40%, 60%, 80%, 100% | Bar = 45 lbs | Plate loading in lbs (standard plates)'
-            : 'Percentages: 40%, 60%, 80%, 100% | Bar = 45 lbs | Plate count is total (both sides)';
-          blocks.push(context(noteText));
-
-          await respond(buildResponse(blocks));
+        case 'wh': {
+          const unit = pluginDb ? getUserUnit(command.user_id, pluginDb) : 'lbs';
+          await handleWarmupCommand(args.slice(1), HOME_PLATES, unit, respond);
           break;
         }
 
@@ -1587,7 +1644,8 @@ function registerLiftCommand(app: App | PluginApp): void {
                 '`/lift wilks <total> <bw> <m|f>` - Wilks score\n' +
                   '`/lift dots <total> <bw> <m|f>` - DOTS score\n' +
                   '`/lift 1rm <weight> <reps>` - Estimate 1RM\n' +
-                  '`/lift warmup <weight>` - Warmup sets'
+                  '`/lift w <weight>` - Warmup sets\n' +
+                  '`/lift wh <weight>` - Home warmup (1 pair per plate)'
               ),
               context(`Weights in ${helpUnit} | Change with \`/lift units lbs\` or \`/lift units kg\``),
               divider(),
@@ -1742,7 +1800,8 @@ const warmupTool: ToolDefinition = {
       'Calculate warmup set percentages and plate loading configuration for one or more target weights. ' +
       'Accepts weights in lbs or kg (specify via unit parameter, defaults to lbs). ' +
       'Plate loading is always shown in lbs (standard US gym plates). ' +
-      'Use this when asked about warming up for a lift or what plates to load.',
+      'Use this when asked about warming up for a lift or what plates to load. ' +
+      'Set home=true for home gym with limited plates (one pair each of 55, 45, 35, 25, 10, 5, 2.5, 1.25 lbs).',
     input_schema: {
       type: 'object',
       properties: {
@@ -1756,12 +1815,17 @@ const warmupTool: ToolDefinition = {
           enum: ['lbs', 'kg'],
           description: 'Weight unit for target_weights. Defaults to lbs. Plate loading always shown in lbs.',
         },
+        home: {
+          type: 'boolean',
+          description: 'Use home gym plate set (1 pair each: 55, 45, 35, 25, 10, 5, 2.5, 1.25 lbs)',
+        },
       },
       required: ['target_weights'],
     },
   },
   execute: async (input) => {
-    const { target_weights, unit: inputUnit } = input as { target_weights: number[]; unit?: string };
+    const { target_weights, unit: inputUnit, home } = input as { target_weights: number[]; unit?: string; home?: boolean };
+    const config = home ? HOME_PLATES : GYM_PLATES;
 
     if (!target_weights || target_weights.length === 0) {
       return 'Error: target_weights array is required';
@@ -1784,11 +1848,11 @@ const warmupTool: ToolDefinition = {
       }
 
       const label = unit === 'kg' ? `${inputWeight} kg (~${weightLbs} lbs)` : `${weightLbs} lbs`;
-      const lines: string[] = [`Warmup for ${label}:`];
+      const lines: string[] = [`${config.label} for ${label}:`];
       for (const pct of WARMUP_PERCENTAGES) {
         const weight = Math.round(weightLbs * pct);
-        const config = calculatePlateConfig(weight);
-        lines.push(`  ${Math.round(pct * 100)}%: ${weight} lbs - ${config}`);
+        const plateConfig = calculatePlateConfig(weight, config);
+        lines.push(`  ${Math.round(pct * 100)}%: ${weight} lbs - ${plateConfig}`);
       }
       results.push(lines.join('\n'));
     }
@@ -2254,7 +2318,8 @@ const liftPlugin: Plugin = {
     { command: '/lift wilks <total> [bw] <m|f>', description: 'Wilks score (auto-fills bw if logged)', group: 'Lift - Calculators' },
     { command: '/lift dots <total> [bw] <m|f>', description: 'DOTS score (auto-fills bw if logged)', group: 'Lift - Calculators' },
     { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max (lbs or kg)', group: 'Lift - Calculators' },
-    { command: '/lift warmup <weight> [weight2]', description: 'Warmup sets with plate loading', group: 'Lift - Calculators' },
+    { command: '/lift w <weight> [weight2]', description: 'Warmup sets with plate loading', group: 'Lift - Calculators' },
+    { command: '/lift wh <weight> [weight2]', description: 'Home warmup (1 pair per plate)', group: 'Lift - Calculators' },
     { command: '/lift bw <weight>', description: 'Log today\'s bodyweight', group: 'Lift - Bodyweight' },
     { command: '/lift bw', description: 'Show bodyweight trend (7d/30d)', group: 'Lift - Bodyweight' },
     { command: '/lift units [lbs|kg]', description: 'View or set weight unit preference', group: 'Lift - Settings' },
