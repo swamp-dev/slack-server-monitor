@@ -20,6 +20,8 @@ import {
   checkForPR,
   getPersonalRecords,
   getAllPersonalRecords,
+  formatWorkoutSummary,
+  formatPersonalRecords,
   type WorkoutSet,
   type PersonalRecord,
 } from '../../plugins.example/lift.js';
@@ -475,6 +477,122 @@ describe('lift plugin workout tracking', () => {
         expect(prs).toHaveLength(1);
         expect(prs[0].weightKg).toBe(100);
       });
+    });
+  });
+
+  // =============================================================================
+  // Step 4: Formatting
+  // =============================================================================
+
+  describe('formatWorkoutSummary', () => {
+    it('should group sets by exercise', () => {
+      const sets: WorkoutSet[] = [
+        { id: 1, exercise: 'squat', weightKg: 100, reps: 5, rpe: null, loggedAt: 1000 },
+        { id: 2, exercise: 'squat', weightKg: 110, reps: 3, rpe: 8, loggedAt: 2000 },
+        { id: 3, exercise: 'bench press', weightKg: 80, reps: 8, rpe: null, loggedAt: 3000 },
+      ];
+
+      const result = formatWorkoutSummary(sets, 'kg');
+      expect(result).toContain('Squat');
+      expect(result).toContain('Bench Press');
+    });
+
+    it('should show weight, reps, and RPE for each set', () => {
+      const sets: WorkoutSet[] = [
+        { id: 1, exercise: 'squat', weightKg: 100, reps: 5, rpe: 8, loggedAt: 1000 },
+      ];
+
+      const result = formatWorkoutSummary(sets, 'kg');
+      expect(result).toContain('100.0');
+      expect(result).toContain('5');
+      expect(result).toContain('@8');
+    });
+
+    it('should omit RPE when null', () => {
+      const sets: WorkoutSet[] = [
+        { id: 1, exercise: 'squat', weightKg: 100, reps: 5, rpe: null, loggedAt: 1000 },
+      ];
+
+      const result = formatWorkoutSummary(sets, 'kg');
+      expect(result).not.toContain('@');
+    });
+
+    it('should calculate volume per exercise', () => {
+      const sets: WorkoutSet[] = [
+        { id: 1, exercise: 'squat', weightKg: 100, reps: 5, rpe: null, loggedAt: 1000 },
+        { id: 2, exercise: 'squat', weightKg: 100, reps: 5, rpe: null, loggedAt: 2000 },
+      ];
+
+      const result = formatWorkoutSummary(sets, 'kg');
+      // Volume = 100*5 + 100*5 = 1000 kg
+      expect(result).toContain('1000');
+    });
+
+    it('should convert weight to lbs when unit is lbs', () => {
+      const sets: WorkoutSet[] = [
+        { id: 1, exercise: 'squat', weightKg: 100, reps: 5, rpe: null, loggedAt: 1000 },
+      ];
+
+      const result = formatWorkoutSummary(sets, 'lbs');
+      // 100kg ≈ 220.5 lbs
+      expect(result).toContain('220.5');
+    });
+
+    it('should return empty message for no sets', () => {
+      const result = formatWorkoutSummary([], 'kg');
+      expect(result).toContain('No sets');
+    });
+
+    it('should capitalize exercise names in headers', () => {
+      const sets: WorkoutSet[] = [
+        { id: 1, exercise: 'close grip bench', weightKg: 60, reps: 10, rpe: null, loggedAt: 1000 },
+      ];
+
+      const result = formatWorkoutSummary(sets, 'kg');
+      expect(result).toContain('Close Grip Bench');
+    });
+  });
+
+  describe('formatPersonalRecords', () => {
+    it('should format PRs alphabetically', () => {
+      const prs: PersonalRecord[] = [
+        { exercise: 'bench press', weightKg: 100, reps: 5, estimated1rmKg: 116.67, loggedAt: 1000 },
+        { exercise: 'deadlift', weightKg: 180, reps: 3, estimated1rmKg: 198.0, loggedAt: 2000 },
+        { exercise: 'squat', weightKg: 140, reps: 5, estimated1rmKg: 163.33, loggedAt: 3000 },
+      ];
+
+      const result = formatPersonalRecords(prs, 'kg');
+      const benchIdx = result.indexOf('Bench Press');
+      const deadIdx = result.indexOf('Deadlift');
+      const squatIdx = result.indexOf('Squat');
+      expect(benchIdx).toBeLessThan(deadIdx);
+      expect(deadIdx).toBeLessThan(squatIdx);
+    });
+
+    it('should show weight, reps, and estimated 1RM', () => {
+      const prs: PersonalRecord[] = [
+        { exercise: 'squat', weightKg: 140, reps: 5, estimated1rmKg: 163.33, loggedAt: 1000 },
+      ];
+
+      const result = formatPersonalRecords(prs, 'kg');
+      expect(result).toContain('140.0');
+      expect(result).toContain('5');
+      expect(result).toContain('163.3');
+    });
+
+    it('should convert to lbs when unit is lbs', () => {
+      const prs: PersonalRecord[] = [
+        { exercise: 'squat', weightKg: 100, reps: 5, estimated1rmKg: 116.67, loggedAt: 1000 },
+      ];
+
+      const result = formatPersonalRecords(prs, 'lbs');
+      // 100kg ≈ 220.5 lbs
+      expect(result).toContain('220.5');
+    });
+
+    it('should return empty message for no PRs', () => {
+      const result = formatPersonalRecords([], 'kg');
+      expect(result).toContain('No personal records');
     });
   });
 });
