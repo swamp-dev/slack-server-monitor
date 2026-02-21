@@ -2092,6 +2092,109 @@ const estimateFoodMacrosTool: ToolDefinition = {
   },
 };
 
+const workoutTool: ToolDefinition = {
+  spec: {
+    name: 'get_workout_history',
+    description:
+      'Query workout set history for a user. Can filter by exercise and date range. ' +
+      'Returns sets with exercise name, weight, reps, RPE, and personal records.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        user_id: {
+          type: 'string',
+          description: 'Slack user ID to query workout history for',
+        },
+        exercise: {
+          type: 'string',
+          description: 'Filter by exercise name (optional, case-insensitive)',
+        },
+        days_back: {
+          type: 'number',
+          description: 'Number of days back to query (default: 7, max: 90)',
+        },
+        include_prs: {
+          type: 'boolean',
+          description: 'Include personal records summary (default: false)',
+        },
+      },
+      required: ['user_id'],
+    },
+  },
+  execute: async (input) => {
+    if (!pluginDb) return 'Error: Database not initialized';
+
+    const { user_id, exercise, days_back = 7, include_prs = false } = input as {
+      user_id: string;
+      exercise?: string;
+      days_back?: number;
+      include_prs?: boolean;
+    };
+
+    const daysBack = Math.min(Math.max(1, days_back), 90);
+    const startTs = Date.now() - daysBack * 24 * 60 * 60 * 1000;
+
+    let query = `SELECT exercise, weight_kg, reps, rpe, logged_at
+      FROM ${pluginDb.prefix}workout_sets
+      WHERE user_id = ? AND logged_at >= ?`;
+    const params: (string | number)[] = [user_id, startTs];
+
+    if (exercise) {
+      query += ' AND exercise = ?';
+      params.push(exercise.toLowerCase());
+    }
+
+    query += ' ORDER BY logged_at DESC';
+
+    const rows = pluginDb.prepare(query).all(...params) as {
+      exercise: string;
+      weight_kg: number;
+      reps: number;
+      rpe: number | null;
+      logged_at: number;
+    }[];
+
+    const lines: string[] = [];
+    lines.push(`Workout history (last ${daysBack} days): ${rows.length} sets`);
+
+    if (rows.length > 0) {
+      // Group by date
+      const byDate = new Map<string, typeof rows>();
+      for (const row of rows) {
+        const d = new Date(row.logged_at);
+        const key = `${d.getMonth() + 1}/${d.getDate()}`;
+        const existing = byDate.get(key);
+        if (existing) existing.push(row);
+        else byDate.set(key, [row]);
+      }
+
+      for (const [date, dateSets] of byDate) {
+        lines.push(`\n${date}:`);
+        for (const s of dateSets) {
+          const rpe = s.rpe != null ? ` @${s.rpe}` : '';
+          const est1rm = calculate1rm(s.weight_kg, s.reps);
+          lines.push(`  ${s.exercise}: ${s.weight_kg}kg × ${s.reps}${rpe} (est 1RM: ${est1rm.toFixed(1)}kg)`);
+        }
+      }
+    }
+
+    if (include_prs) {
+      const prs = exercise
+        ? getPersonalRecords(user_id, exercise, pluginDb)
+        : getAllPersonalRecords(user_id, pluginDb);
+
+      if (prs.length > 0) {
+        lines.push('\nPersonal Records:');
+        for (const pr of prs) {
+          lines.push(`  ${pr.exercise}: ${pr.weightKg}kg × ${pr.reps} (est 1RM: ${pr.estimated1rmKg.toFixed(1)}kg)`);
+        }
+      }
+    }
+
+    return lines.join('\n');
+  },
+};
+
 // =============================================================================
 // Image Analysis Functions
 // =============================================================================
@@ -2431,10 +2534,16 @@ async function handleCancel(
 
 const liftPlugin: Plugin = {
   name: 'lift',
-  version: '2.0.0',
-  description: 'Powerlifting calculator (Wilks, DOTS, 1RM, warmup) with lbs/kg support, macro tracker, and vision',
+  version: '3.0.0',
+  description: 'Powerlifting calculator, workout tracker, macro tracker, and food vision analysis',
 
   helpEntries: [
+    { command: '/lift log <exercise> <weight> <reps> [@rpe]', description: 'Log a workout set', group: 'Lift - Workouts' },
+    { command: '/lift workout', description: "Today's workout summary", group: 'Lift - Workouts' },
+    { command: '/lift workout -1', description: "Yesterday's workout", group: 'Lift - Workouts' },
+    { command: '/lift workout <date>', description: 'Workout for specific date (M/D)', group: 'Lift - Workouts' },
+    { command: '/lift pr', description: 'All personal records', group: 'Lift - Workouts' },
+    { command: '/lift pr <exercise>', description: 'PR for specific exercise', group: 'Lift - Workouts' },
     { command: '/lift wilks <total> <bw> <m|f>', description: 'Calculate Wilks score (lbs or kg)', group: 'Lift - Calculators' },
     { command: '/lift dots <total> <bw> <m|f>', description: 'Calculate DOTS score (lbs or kg)', group: 'Lift - Calculators' },
     { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max (lbs or kg)', group: 'Lift - Calculators' },
@@ -2452,7 +2561,7 @@ const liftPlugin: Plugin = {
 
   registerCommands: registerLiftCommand,
 
-  tools: [powerliftingTool, warmupTool, estimateFoodMacrosTool],
+  tools: [powerliftingTool, warmupTool, estimateFoodMacrosTool, workoutTool],
 
   init: async (ctx: PluginContext) => {
     // Store db and claude references for command handlers
