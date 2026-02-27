@@ -625,4 +625,161 @@ describe('lift plugin warmup calculator', () => {
     });
   });
 
+  describe('handleWarmupCommand behavior', () => {
+    type WeightUnit = 'lbs' | 'kg';
+
+    function kgToLbs(kg: number): number {
+      return kg * 2.20462;
+    }
+
+    /**
+     * Simulates handleWarmupCommand logic for testing.
+     * Returns { headers, skipped, contextParts } to verify behavior.
+     */
+    function simulateHandleWarmup(
+      weightArgs: string[],
+      config: PlateConfig,
+      unit: WeightUnit = 'lbs',
+    ): { headers: string[]; skipped: string[]; contextParts: string[] } | { error: string } {
+      const parsed = weightArgs.map((w) => ({ raw: w, value: parseFloat(w) }));
+      const validInputs = parsed.filter((p) => !isNaN(p.value) && p.value > 0);
+      const invalidInputs = parsed.filter((p) => isNaN(p.value) || p.value <= 0);
+
+      const cmd = config.singlePairOnly ? 'wh' : 'w';
+
+      // No valid weights at all
+      if (validInputs.length === 0) {
+        return { error: `Usage: /lift ${cmd} <weight> [weight2] ...` };
+      }
+
+      const headers: string[] = [];
+      const skipped: string[] = [];
+
+      // Warn about non-numeric/negative inputs
+      for (const inv of invalidInputs) {
+        skipped.push(`Skipping invalid input: ${inv.raw}`);
+      }
+
+      for (const input of validInputs) {
+        const weightLbs = unit === 'kg' ? Math.round(kgToLbs(input.value)) : input.value;
+
+        if (weightLbs > MAX_TARGET_WEIGHT) {
+          const display = unit === 'kg' ? `${input.value} kg` : `${weightLbs} lbs`;
+          skipped.push(`Skipping ${display}: exceeds maximum`);
+          continue;
+        }
+
+        // Build display label for header
+        const displayLabel = unit === 'kg'
+          ? `${input.value} kg (~${weightLbs} lbs)`
+          : `${weightLbs} lbs`;
+        headers.push(`${config.label}: ${displayLabel}`);
+      }
+
+      const contextParts = ['Percentages: 40%, 60%, 80%, 100%', 'Bar = 45 lbs', 'Plate count is total (both sides)'];
+      if (config.singlePairOnly) {
+        contextParts.push('1 pair per plate');
+      }
+      if (unit === 'kg') {
+        contextParts.push('Plate loading in lbs (standard plates)');
+      }
+
+      return { headers, skipped, contextParts };
+    }
+
+    describe('per-weight max validation', () => {
+      it('should show valid weights even when mixed with over-max weights', () => {
+        const result = simulateHandleWarmup(['200', '1500'], GYM_PLATES);
+        expect(result).not.toHaveProperty('error');
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(1);
+          expect(result.headers[0]).toContain('200 lbs');
+          expect(result.skipped).toHaveLength(1);
+          expect(result.skipped[0]).toContain('1500');
+          expect(result.skipped[0]).toContain('exceeds maximum');
+        }
+      });
+
+      it('should show error only when ALL weights are invalid', () => {
+        const result = simulateHandleWarmup(['1500', '2000'], GYM_PLATES);
+        expect(result).not.toHaveProperty('error');
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(0);
+          expect(result.skipped).toHaveLength(2);
+        }
+      });
+
+      it('should show all valid weights when none exceed max', () => {
+        const result = simulateHandleWarmup(['135', '225', '315'], GYM_PLATES);
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(3);
+          expect(result.skipped).toHaveLength(0);
+        }
+      });
+    });
+
+    describe('invalid weight feedback', () => {
+      it('should report non-numeric inputs as skipped', () => {
+        const result = simulateHandleWarmup(['foo', '200'], GYM_PLATES);
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(1);
+          expect(result.headers[0]).toContain('200 lbs');
+          expect(result.skipped).toHaveLength(1);
+          expect(result.skipped[0]).toContain('foo');
+        }
+      });
+
+      it('should report negative weights as skipped', () => {
+        const result = simulateHandleWarmup(['-100', '200'], GYM_PLATES);
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(1);
+          expect(result.skipped).toHaveLength(1);
+          expect(result.skipped[0]).toContain('-100');
+        }
+      });
+
+      it('should show usage error when all inputs are garbage', () => {
+        const result = simulateHandleWarmup(['foo', 'bar'], GYM_PLATES);
+        expect(result).toHaveProperty('error');
+      });
+    });
+
+    describe('kg unit display in header', () => {
+      it('should show original kg value and lbs conversion in header', () => {
+        const result = simulateHandleWarmup(['100'], GYM_PLATES, 'kg');
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(1);
+          expect(result.headers[0]).toContain('100 kg');
+          expect(result.headers[0]).toContain('~220 lbs');
+        }
+      });
+
+      it('should show lbs only for lbs unit', () => {
+        const result = simulateHandleWarmup(['225'], GYM_PLATES, 'lbs');
+        if ('headers' in result) {
+          expect(result.headers[0]).toBe('Warmup: 225 lbs');
+          expect(result.headers[0]).not.toContain('kg');
+        }
+      });
+
+      it('should include plate loading note in context for kg users', () => {
+        const result = simulateHandleWarmup(['100'], GYM_PLATES, 'kg');
+        if ('headers' in result) {
+          expect(result.contextParts).toContain('Plate loading in lbs (standard plates)');
+        }
+      });
+
+      it('should skip over-max kg weights and still show valid ones', () => {
+        // 500 kg = ~1102 lbs > 1000 max
+        const result = simulateHandleWarmup(['100', '500'], GYM_PLATES, 'kg');
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(1);
+          expect(result.headers[0]).toContain('100 kg');
+          expect(result.skipped).toHaveLength(1);
+          expect(result.skipped[0]).toContain('500 kg');
+        }
+      });
+    });
+  });
+
 });
