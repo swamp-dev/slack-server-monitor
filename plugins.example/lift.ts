@@ -810,9 +810,10 @@ function calculatePlateConfig(targetWeight: number, config: PlateConfig = GYM_PL
  * Format warmup table for a single target weight
  * @param targetWeight Target weight in lbs
  * @param config Plate configuration (gym or home)
+ * @param displayLabel Optional label for the header (e.g., "100 kg (~220 lbs)"); defaults to "${targetWeight} lbs"
  * @returns Slack Block Kit blocks for the warmup table
  */
-function formatWarmupTable(targetWeight: number, config: PlateConfig = GYM_PLATES): ReturnType<typeof header | typeof section>[] {
+function formatWarmupTable(targetWeight: number, config: PlateConfig = GYM_PLATES, displayLabel?: string): ReturnType<typeof header | typeof section>[] {
   const rows = WARMUP_PERCENTAGES.map((pct) => {
     const weight = Math.round(targetWeight * pct);
     const plateConfig = calculatePlateConfig(weight, config);
@@ -822,7 +823,7 @@ function formatWarmupTable(targetWeight: number, config: PlateConfig = GYM_PLATE
   });
 
   return [
-    header(`${config.label}: ${targetWeight} lbs`),
+    header(`${config.label}: ${displayLabel ?? `${targetWeight} lbs`}`),
     section(
       '```\n' +
         '%    │ Weight   │ Configuration\n' +
@@ -1439,12 +1440,12 @@ async function handleWarmupCommand(
   unit: WeightUnit,
   respond: RespondFn,
 ): Promise<void> {
-  const inputWeights = weightArgs
-    .map((w: string) => parseFloat(w))
-    .filter((w: number) => !isNaN(w) && w > 0);
+  const parsed = weightArgs.map((w) => ({ raw: w, value: parseFloat(w) }));
+  const validInputs = parsed.filter((p) => !isNaN(p.value) && p.value > 0);
+  const invalidInputs = parsed.filter((p) => isNaN(p.value) || p.value <= 0);
 
   const cmd = config.singlePairOnly ? 'wh' : 'w';
-  if (inputWeights.length === 0) {
+  if (validInputs.length === 0) {
     await respond(
       buildResponse([
         section(`:warning: Usage: \`/lift ${cmd} <weight> [weight2] ...\``),
@@ -1454,29 +1455,40 @@ async function handleWarmupCommand(
     return;
   }
 
-  // Convert to lbs for plate loading calculation
-  const weightsLbs = unit === 'kg'
-    ? inputWeights.map((w: number) => Math.round(kgToLbs(w)))
-    : inputWeights;
-
-  // Validate max weight (in lbs) to prevent unbounded output
-  const invalidWeights = weightsLbs.filter((w: number) => w > MAX_TARGET_WEIGHT);
-  if (invalidWeights.length > 0) {
-    const maxDisplay = unit === 'kg'
-      ? `${Math.round(lbsToKg(MAX_TARGET_WEIGHT))} kg`
-      : `${MAX_TARGET_WEIGHT} lbs`;
-    await respond(
-      buildResponse([
-        section(`:x: Weight(s) exceed maximum of ${maxDisplay}`),
-      ])
-    );
-    return;
-  }
+  const maxDisplay = unit === 'kg'
+    ? `${Math.round(lbsToKg(MAX_TARGET_WEIGHT))} kg`
+    : `${MAX_TARGET_WEIGHT} lbs`;
 
   const blocks: ReturnType<typeof header | typeof section | typeof divider | typeof context>[] = [];
-  for (const targetWeight of weightsLbs) {
+  const skipped: string[] = [];
+
+  // Report non-numeric/negative inputs
+  for (const inv of invalidInputs) {
+    skipped.push(`Skipping invalid input: ${inv.raw}`);
+  }
+
+  // Process each valid weight individually
+  for (const input of validInputs) {
+    const weightLbs = unit === 'kg' ? Math.round(kgToLbs(input.value)) : input.value;
+
+    if (weightLbs > MAX_TARGET_WEIGHT) {
+      const display = unit === 'kg' ? `${input.value} kg` : `${weightLbs} lbs`;
+      skipped.push(`Skipping ${display}: exceeds maximum of ${maxDisplay}`);
+      continue;
+    }
+
+    // Build display label preserving original unit for kg users
+    const displayLabel = unit === 'kg'
+      ? `${input.value} kg (~${weightLbs} lbs)`
+      : undefined;
+
     if (blocks.length > 0) blocks.push(divider());
-    blocks.push(...formatWarmupTable(targetWeight, config));
+    blocks.push(...formatWarmupTable(weightLbs, config, displayLabel));
+  }
+
+  // Show skipped warnings before context footer
+  if (skipped.length > 0) {
+    blocks.push(section(`:warning: ${skipped.join('\n')}`));
   }
 
   const contextParts = ['Percentages: 40%, 60%, 80%, 100%', 'Bar = 45 lbs', 'Plate count is total (both sides)'];
