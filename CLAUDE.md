@@ -118,17 +118,20 @@ The `run_command` tool allows Claude to execute read-only diagnostic commands:
 | Category | Commands |
 |----------|----------|
 | **Docker** | docker (ps, inspect, logs, network, images, version, info) |
-| **System** | free, df, top, stat, uptime, hostname, uname, date, id |
+| **System** | free, df, top, stat, uptime, hostname, uname, whoami, date, id |
 | **Process** | ps, pgrep |
-| **Systemd** | systemctl (status, show, list-units, is-active), journalctl |
+| **Systemd** | systemctl (status, show, list-units, list-unit-files, list-sockets, list-timers, list-dependencies, is-active, is-enabled, is-failed, cat), journalctl |
 | **Network** | ss, ip, ping, curl (GET only), dig, host, netstat |
 | **Files** | cat, ls, head, tail, find, grep, wc, file, du |
-| **Security** | fail2ban-client (status), openssl |
+| **Security** | fail2ban-client (status, banned), openssl |
+| **Cloud** | aws (s3 ls) |
+| **Process Managers** | pm2 |
 
 **Restrictions:**
-- Systemctl: Only read-only subcommands (no start/stop/restart)
-- Curl: No POST/PUT/upload flags
+- Systemctl: Only read-only subcommands (no start/stop/restart/enable/disable)
+- Curl: GET only — blocks `-X`, `-d`, `-F`, `-o`, `-T` and other write/upload flags
 - File commands: Restricted to allowed directories, blocks sensitive paths (SSH keys, credentials, .env files)
+- AWS: Only `s3 ls` (read-only bucket listing)
 
 ## Security Architecture
 
@@ -199,11 +202,31 @@ CLAUDE_ENABLED=true
 CLAUDE_ALLOWED_DIRS=/root/ansible,/opt/stacks,/etc/docker
 ```
 
-### Claude Configuration Details
+### Core Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SLACK_BOT_TOKEN` | - | **Required.** Bot User OAuth Token (xoxb-...) |
+| `SLACK_APP_TOKEN` | - | **Required.** App-Level Token (xapp-...) |
+| `AUTHORIZED_USER_IDS` | - | **Required.** Comma-separated Slack user IDs |
+| `AUTHORIZED_CHANNEL_IDS` | - | Restrict commands to specific channel IDs |
+| `RATE_LIMIT_MAX` | 10 | Max commands per user per window |
+| `RATE_LIMIT_WINDOW_SECONDS` | 60 | Rate limit window in seconds |
+| `MONITORED_SERVICES` | - | Comma-separated container names to monitor |
+| `SSL_DOMAINS` | - | Comma-separated domains for SSL checks |
+| `MAX_LOG_LINES` | 50 | Max log lines returned (hard cap: 500) |
+| `BACKUP_DIRS` | - | Comma-separated backup directories to monitor |
+| `S3_BACKUP_BUCKET` | - | S3 bucket name for backup verification |
+| `LOG_LEVEL` | info | Log level: debug, info, warn, error |
+| `AUDIT_LOG_PATH` | - | Path for audit log file |
+| `DOCKER_SOCKET` | /var/run/docker.sock | Docker socket path |
+
+### Claude Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CLAUDE_ENABLED` | false | Set to "true" to enable Claude AI features |
+| `CLAUDE_PROVIDER` | cli | Provider: cli (legacy values auto/sdk accepted for compat) |
 | `CLAUDE_CLI_PATH` | claude | Path to Claude CLI executable |
 | `CLAUDE_CLI_MODEL` | sonnet | Model alias for CLI (sonnet/opus/haiku) |
 | `CLAUDE_ALLOWED_DIRS` | - | Comma-separated paths Claude can read files from |
@@ -211,7 +234,11 @@ CLAUDE_ALLOWED_DIRS=/root/ansible,/opt/stacks,/etc/docker
 | `CLAUDE_MAX_TOOL_CALLS` | 40 | Max tool calls per turn (prevents loops) |
 | `CLAUDE_MAX_ITERATIONS` | 50 | Max agentic loop iterations (defense in depth) |
 | `CLAUDE_RATE_LIMIT_MAX` | 5 | Requests per window per user |
+| `CLAUDE_RATE_LIMIT_WINDOW_SECONDS` | 60 | Claude rate limit window in seconds |
+| `CLAUDE_CONVERSATION_TTL_HOURS` | 24 | Hours to keep conversation history |
 | `CLAUDE_DB_PATH` | ./data/claude.db | SQLite database for conversations |
+| `CLAUDE_MAX_FILE_SIZE_KB` | 100 | Max file size Claude can read (KB) |
+| `CLAUDE_MAX_LOG_LINES` | 50 | Max log lines Claude can request |
 | `CLAUDE_CONTEXT_DIR` | - | Directory containing infrastructure context (see below) |
 | `CLAUDE_CONTEXT_OPTIONS` | - | Comma-separated alias:path pairs for context switching |
 
@@ -235,6 +262,11 @@ When Claude responses exceed Slack's text limit (3000 characters), the bot can h
 ```bash
 openssl rand -hex 16
 ```
+
+**Web UI features:**
+- Collapsible tool call display with duration and output
+- Markdown export (`GET /c/:threadTs/:channelId/export/md?token=...&tools=true|false`)
+- Copy conversation to clipboard
 
 **Security:** The web server listens on `0.0.0.0` for local network access. The auth token is required to view any conversation. Keep the token secret.
 
@@ -380,6 +412,7 @@ export default myPlugin;
 | `name` | Yes | Unique identifier |
 | `version` | Yes | Semver version |
 | `description` | No | Help text |
+| `helpEntries` | No | Structured help entries for `/help` display |
 | `registerCommands` | No | Function to register Slack commands |
 | `tools` | No | Array of Claude AI tool definitions |
 | `init` | No | Async setup hook with `PluginContext` (10s timeout) |
@@ -425,6 +458,36 @@ ctx.db.transaction(() => {
 - Isolation: Plugins can only access `plugin_{name}_*` tables
 - Uses [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) - see docs for full API
 
+### Plugin Claude API
+
+Plugins can access Claude AI via `PluginContext.claude` (undefined if Claude is disabled).
+
+```typescript
+init: async (ctx: PluginContext) => {
+  if (ctx.claude?.enabled) {
+    const result = await ctx.claude.ask(
+      'What containers are running?',
+      userId,
+      {
+        includeBuiltinTools: true,      // Access server monitoring tools
+        systemPromptAddition: '...',    // Custom context
+        maxTokens: 2048,                // Response limit
+        images: [{ data: '...', mediaType: 'image/png' }],
+      }
+    );
+    // result.response, result.toolCalls, result.usage
+  }
+},
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `includeBuiltinTools` | false | Include server monitoring tools |
+| `systemPromptAddition` | - | Additional context for system prompt |
+| `maxTokens` | plugin default | Max response tokens |
+| `images` | - | Base64-encoded images for multimodal requests |
+| `localImagePath` | - | Local image file path (CLI provider only) |
+
 ### Plugin Security
 
 **IMPORTANT:** Plugins run with full process privileges. Only install plugins from trusted sources.
@@ -469,6 +532,7 @@ Before a plugin loads, its tools are validated:
 - Tool names can only contain letters, numbers, and underscores
 - Must have `description` and `input_schema.properties`
 - Must have an `execute` function
+- Cannot conflict with built-in tool names (get_container_status, get_container_logs, get_system_resources, get_disk_usage, get_network_info, run_command, read_file)
 
 Invalid tools cause the entire plugin to be rejected.
 
@@ -481,15 +545,28 @@ Invalid tools cause the entire plugin to be rejected.
 5. **Handle errors gracefully** - Don't leak stack traces
 6. **Test your plugin** - Write tests in `tests/plugins/`
 
-### Example Plugin
+### Example Plugins
 
-See `plugins.example/lift.ts` for a complete example with:
-- Slash command (`/lift`) with subcommands
-- Claude AI tool integration
-- Using Block Kit formatters
+**`plugins.example/lift.ts`** — Powerlifting calculator and training tracker:
+
+| Command | Description |
+|---------|-------------|
+| `/lift wilks <total> <bw> <gender>` | Calculate Wilks score |
+| `/lift dots <total> <bw> <gender>` | Calculate DOTS score |
+| `/lift 1rm <weight> <reps>` | Estimate 1 rep max |
+| `/lift w <weight> [weight2...]` | Warmup sets (gym plates) |
+| `/lift wh <weight> [weight2...]` | Warmup sets (home gym, 1 pair per plate) |
+| `/lift bw [weight]` | Log or view bodyweight trends |
+| `/lift units [lbs\|kg]` | View or set weight unit preference |
+| `/lift m [calories protein carbs fat]` | Log or view macros |
+| `/lift wo log <exercise> <weight> <reps>` | Log a workout set |
+
+Features: per-user unit preferences (lbs/kg), bodyweight tracking with trends, workout set logging with PR detection, Claude AI tool integration.
+
+**`plugins.example/health.ts`** — Family health tracker (medications, appointments, vaccinations).
 
 ```bash
-# To test the example plugin:
+# To test example plugins:
 mkdir plugins.local
 cp plugins.example/lift.ts plugins.local/
 npm run dev
@@ -571,3 +648,4 @@ docker run -d \
 7. **Tool outputs are scrubbed** - but scrubbing isn't perfect
 8. **Conversations stored in SQLite** - auto-cleaned after `CLAUDE_CONVERSATION_TTL_HOURS`
 9. **Tool call limits** - prevents infinite loops (default: max 40 tools per turn, max 50 iterations)
+10. **Tool call analytics** - duration (ms) and success/failure tracked per tool call for diagnostics
