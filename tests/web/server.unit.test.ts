@@ -12,6 +12,8 @@ vi.mock('../../src/config/index.js', () => ({
       port: 0,
       baseUrl: 'http://test.local:8080',
       authToken: 'test-auth-token-minimum16',
+      userTokens: [],
+      sessionTtlHours: 72,
     },
   },
 }));
@@ -36,6 +38,29 @@ vi.mock('../../src/services/conversation-store.js', () => ({
   })),
 }));
 
+// Mock session store
+const mockCreateSession = vi.fn().mockReturnValue({
+  sessionId: 'mock-session-id',
+  userId: 'admin',
+  isAdmin: true,
+  createdAt: Date.now(),
+  expiresAt: Date.now() + 72 * 60 * 60 * 1000,
+});
+const mockGetSession = vi.fn();
+const mockDeleteSession = vi.fn();
+const mockCleanupExpired = vi.fn().mockReturnValue(0);
+const mockCloseSession = vi.fn();
+vi.mock('../../src/services/session-store.js', () => ({
+  getSessionStore: vi.fn(() => ({
+    createSession: mockCreateSession,
+    getSession: mockGetSession,
+    deleteSession: mockDeleteSession,
+    cleanupExpired: mockCleanupExpired,
+    close: mockCloseSession,
+  })),
+  closeSessionStore: vi.fn(),
+}));
+
 // Now import the server module
 import { startWebServer, stopWebServer, getConversationUrl } from '../../src/web/server.js';
 import type { WebConfig } from '../../src/config/index.js';
@@ -48,6 +73,8 @@ describe('web server', () => {
         port: 8080,
         baseUrl: 'http://myserver.local:8080',
         authToken: 'my-secret-token-1234',
+        userTokens: [],
+        sessionTtlHours: 72,
       };
 
       const url = getConversationUrl('1234.5678', 'C123', webConfig);
@@ -60,6 +87,8 @@ describe('web server', () => {
         enabled: true,
         port: 9000,
         authToken: 'fallback-token-12345',
+        userTokens: [],
+        sessionTtlHours: 72,
       };
 
       const url = getConversationUrl('1234.5678', 'C123', webConfig);
@@ -73,11 +102,47 @@ describe('web server', () => {
         port: 8080,
         baseUrl: 'http://test.local:8080',
         authToken: 'token+with&special=chars',
+        userTokens: [],
+        sessionTtlHours: 72,
       };
 
       const url = getConversationUrl('1234.5678', 'C123', webConfig);
 
       expect(url).toContain('token=token%2Bwith%26special%3Dchars');
+    });
+
+    it('should use per-user token when userId matches', () => {
+      const webConfig: WebConfig = {
+        enabled: true,
+        port: 8080,
+        baseUrl: 'http://test.local:8080',
+        authToken: 'admin-token-minimum16',
+        userTokens: [
+          { userId: 'U01ABC123', token: 'user1-token-minimum16' },
+        ],
+        sessionTtlHours: 72,
+      };
+
+      const url = getConversationUrl('1234.5678', 'C123', webConfig, 'U01ABC123');
+
+      expect(url).toContain('token=user1-token-minimum16');
+    });
+
+    it('should fall back to admin token when userId has no matching token', () => {
+      const webConfig: WebConfig = {
+        enabled: true,
+        port: 8080,
+        baseUrl: 'http://test.local:8080',
+        authToken: 'admin-token-minimum16',
+        userTokens: [
+          { userId: 'U01ABC123', token: 'user1-token-minimum16' },
+        ],
+        sessionTtlHours: 72,
+      };
+
+      const url = getConversationUrl('1234.5678', 'C123', webConfig, 'U99UNKNOWN');
+
+      expect(url).toContain('token=admin-token-minimum16');
     });
   });
 
@@ -97,6 +162,8 @@ describe('web server', () => {
         port: 0, // Let OS pick a port
         baseUrl: 'http://test.local:8080',
         authToken: 'test-auth-token-minimum16',
+        userTokens: [],
+        sessionTtlHours: 72,
       };
 
       // Start should not throw
@@ -112,6 +179,8 @@ describe('web server', () => {
         port: 0,
         baseUrl: 'http://test.local:8080',
         authToken: 'test-auth-token-minimum16',
+        userTokens: [],
+        sessionTtlHours: 72,
       };
 
       await startWebServer(webConfig);
