@@ -7,5 +7,7 @@ export {
   renderConversation,
   render404,
   render401,
+  renderLogin,
   renderError,
 } from './templates.js';
+export { resolveToken, parseCookies, type TokenIdentity } from './auth.js';
