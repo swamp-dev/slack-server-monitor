@@ -84,7 +84,7 @@ const ContextOptionSchema = z.object({
  */
 const UserTokenSchema = z.object({
   /** Slack user ID */
-  userId: z.string().min(1),
+  userId: SlackUserIdSchema,
   /** Authentication token (min 16 chars for security) */
   token: z.string().min(16, 'User token must be at least 16 characters'),
 });
