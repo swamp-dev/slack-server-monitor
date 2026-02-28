@@ -518,12 +518,6 @@ export function renderConversation(
   <script>
     hljs.highlightAll();
     (function() {
-      var params = new URLSearchParams(window.location.search);
-      var token = params.get('token');
-      var exportLink = document.getElementById('export-md');
-      if (exportLink && token) {
-        exportLink.href = window.location.pathname + '/export/md?token=' + encodeURIComponent(token);
-      }
       var copyBtn = document.getElementById('copy-clipboard');
       if (copyBtn) {
         copyBtn.addEventListener('click', function() {
