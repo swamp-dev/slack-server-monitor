@@ -13,7 +13,7 @@
  * - /lift dots <total> <bodyweight> <m|f> - Calculate DOTS score
  * - /lift 1rm <weight> <reps> - Estimate 1 rep max
  * - /lift w <weight> [weight2] ... - Calculate warmup sets with plate loading
- * - /lift wh <weight> [weight2] ... - Home warmup (1 pair per plate)
+ * - /lift wh <weight> [weight2] ... - Home warmup (5lb bar)
  * - /lift units [lbs|kg] - View or set weight unit preference (default: lbs)
  * - /lift m c20 p40 f15 - Log macros (carbs, protein, fat in grams)
  * - /lift m - Show today's macro totals
@@ -683,28 +683,31 @@ export function formatBodyweightTrend(
 // Constants for Warmup Calculator
 // =============================================================================
 
-const BAR_WEIGHT = 45; // lbs
-const PLATE_SIZES = [45, 35, 25, 10, 5, 2.5] as const; // descending order
-const HOME_PLATE_SIZES = [55, 45, 35, 25, 10, 5, 2.5, 1.25] as const; // one pair each
-const WARMUP_PERCENTAGES = [0.4, 0.6, 0.8, 1.0] as const;
-const MAX_TARGET_WEIGHT = 1000; // lbs - safety limit to prevent unbounded output
+export const BAR_WEIGHT = 45; // lbs
+export const PLATE_SIZES = [45, 35, 25, 10, 5, 2.5] as const; // descending order
+export const HOME_PLATE_SIZES = [55, 45, 35, 25, 15, 10, 5, 2.5, 1.25] as const; // one pair each
+export const WARMUP_PERCENTAGES = [0.4, 0.6, 0.8, 1.0] as const;
+export const MAX_TARGET_WEIGHT = 1000; // lbs - safety limit to prevent unbounded output
 
-interface PlateConfig {
+export interface PlateConfig {
   readonly label: string;
   readonly plateSizes: readonly number[];
   readonly singlePairOnly: boolean;
+  readonly barWeight: number;
 }
 
-const GYM_PLATES: PlateConfig = {
+export const GYM_PLATES: PlateConfig = {
   label: 'Warmup',
   plateSizes: PLATE_SIZES,
   singlePairOnly: false,
+  barWeight: BAR_WEIGHT,
 };
 
-const HOME_PLATES: PlateConfig = {
+export const HOME_PLATES: PlateConfig = {
   label: 'Home Warmup',
   plateSizes: HOME_PLATE_SIZES,
   singlePairOnly: true,
+  barWeight: 5,
 };
 
 // =============================================================================
@@ -769,17 +772,22 @@ function calculate1rm(weight: number, reps: number): number {
  * @param config Plate configuration (gym or home)
  * @returns String describing the plate configuration
  */
-function calculatePlateConfig(targetWeight: number, config: PlateConfig = GYM_PLATES): string {
-  if (targetWeight < BAR_WEIGHT) {
-    // Dumbbell case: round total weight to nearest 10 lbs (5 lb increments per hand)
-    // e.g., 32 lbs -> round(32/10)*5 = 15 lbs per hand = 30 lbs total
-    const perHandWeight = Math.round(targetWeight / 10) * 5;
-    return `2x${perHandWeight}lb DBs`;
+export function calculatePlateConfig(targetWeight: number, config: PlateConfig = GYM_PLATES): string {
+  const barWt = config.barWeight;
+
+  if (targetWeight < barWt) {
+    if (barWt === BAR_WEIGHT) {
+      // Gym: dumbbell fallback
+      const perHandWeight = Math.round(targetWeight / 10) * 5;
+      return `2x${perHandWeight}lb DBs`;
+    }
+    // Home: bar only (no dumbbells)
+    return `${barWt}lb bar only`;
   }
 
   // Greedy algorithm: fill with largest plates first
   // Note: May not hit exact weight if target isn't achievable with available plates
-  let remaining = targetWeight - BAR_WEIGHT;
+  let remaining = targetWeight - barWt;
   const plates: string[] = [];
 
   for (const plateSize of config.plateSizes) {
@@ -803,7 +811,8 @@ function calculatePlateConfig(targetWeight: number, config: PlateConfig = GYM_PL
     }
   }
 
-  return plates.length > 0 ? `Bar + ${plates.join(' + ')}` : 'Bar only';
+  const barLabel = barWt === BAR_WEIGHT ? 'Bar' : `${barWt}lb bar`;
+  return plates.length > 0 ? `${barLabel} + ${plates.join(' + ')}` : `${barLabel} only`;
 }
 
 /**
@@ -1491,7 +1500,13 @@ async function handleWarmupCommand(
     blocks.push(section(`:warning: ${skipped.join('\n')}`));
   }
 
-  const contextParts = ['Percentages: 40%, 60%, 80%, 100%', 'Bar = 45 lbs', 'Plate count is total (both sides)'];
+  // Only show bar weight in footer for gym config (rows say "Bar", not "45lb bar")
+  // Home config rows already include weight in label (e.g., "5lb bar")
+  const contextParts = ['Percentages: 40%, 60%, 80%, 100%'];
+  if (config.barWeight === BAR_WEIGHT) {
+    contextParts.push(`Bar = ${config.barWeight} lbs`);
+  }
+  contextParts.push('Plate count is total (both sides)');
   if (config.singlePairOnly) {
     contextParts.push('1 pair per plate');
   }
@@ -2099,7 +2114,7 @@ function registerLiftCommand(app: App | PluginApp): void {
                   '`/lift dots <total> <bw> <m|f>` - DOTS score\n' +
                   '`/lift 1rm <weight> <reps>` - Estimate 1RM\n' +
                   '`/lift w <weight>` - Warmup sets\n' +
-                  '`/lift wh <weight>` - Home warmup (1 pair per plate)'
+                  '`/lift wh <weight>` - Home warmup (5lb bar)'
               ),
               context(`Weights in ${helpUnit} | Change with \`/lift units lbs\` or \`/lift units kg\``),
               divider(),
@@ -2255,7 +2270,7 @@ const warmupTool: ToolDefinition = {
       'Accepts weights in lbs or kg (specify via unit parameter, defaults to lbs). ' +
       'Plate loading is always shown in lbs (standard US gym plates). ' +
       'Use this when asked about warming up for a lift or what plates to load. ' +
-      'Set home=true for home gym with limited plates (one pair each of 55, 45, 35, 25, 10, 5, 2.5, 1.25 lbs).',
+      'Set home=true for home gym (5lb bar, one pair each of 55, 45, 35, 25, 15, 10, 5, 2.5, 1.25 lbs).',
     input_schema: {
       type: 'object',
       properties: {
@@ -2271,7 +2286,7 @@ const warmupTool: ToolDefinition = {
         },
         home: {
           type: 'boolean',
-          description: 'Use home gym plate set (1 pair each: 55, 45, 35, 25, 10, 5, 2.5, 1.25 lbs)',
+          description: 'Use home gym (5lb bar, plates: 55, 45, 35, 25, 15, 10, 5, 2.5, 1.25 lbs, 1 pair each)',
         },
       },
       required: ['target_weights'],
@@ -2882,7 +2897,7 @@ const liftPlugin: Plugin = {
     { command: '/lift dots <total> [bw] <m|f>', description: 'DOTS score (auto-fills bw if logged)', group: 'Lift - Calculators' },
     { command: '/lift 1rm <weight> <reps>', description: 'Estimate 1 rep max (lbs or kg)', group: 'Lift - Calculators' },
     { command: '/lift w <weight> [weight2]', description: 'Warmup sets with plate loading', group: 'Lift - Calculators' },
-    { command: '/lift wh <weight> [weight2]', description: 'Home warmup (1 pair per plate)', group: 'Lift - Calculators' },
+    { command: '/lift wh <weight> [weight2]', description: 'Home warmup (5lb bar)', group: 'Lift - Calculators' },
     { command: '/lift bw <weight>', description: 'Log today\'s bodyweight', group: 'Lift - Bodyweight' },
     { command: '/lift bw', description: 'Show bodyweight trend (7d/30d)', group: 'Lift - Bodyweight' },
     { command: '/lift units [lbs|kg]', description: 'View or set weight unit preference', group: 'Lift - Settings' },
