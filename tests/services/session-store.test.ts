@@ -99,6 +99,24 @@ describe('SessionStore', () => {
     });
   });
 
+  describe('deleteSessionsForUser', () => {
+    it('should delete all sessions for a specific user', () => {
+      store.createSession('UTARGET', false);
+      store.createSession('UTARGET', false);
+      const otherSession = store.createSession('UOTHER', false);
+
+      store.deleteSessionsForUser('UTARGET');
+
+      // Other user's session should remain
+      const other = store.getSession(otherSession.sessionId);
+      expect(other).not.toBeNull();
+    });
+
+    it('should not throw for user with no sessions', () => {
+      expect(() => store.deleteSessionsForUser('UNOSESSIONS')).not.toThrow();
+    });
+  });
+
   describe('cleanupExpired', () => {
     it('should remove expired sessions', () => {
       // Create a store with 0-hour TTL

@@ -77,13 +77,14 @@ function sessionAuthMiddleware(webConfig: WebConfig, dbPath: string) {
     if (typeof queryToken === 'string' && queryToken) {
       const identity = resolveToken(queryToken, webConfig);
       if (identity) {
-        // Create session and set cookie
+        // Invalidate existing sessions for this user, then create a new one
+        sessionStore.deleteSessionsForUser(identity.userId);
         const session = sessionStore.createSession(identity.userId, identity.isAdmin);
         const maxAge = webConfig.sessionTtlHours * 60 * 60;
         res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; ${buildCookieOptions(webConfig, maxAge)}`);
 
         // Redirect to strip token from URL (prevents token leaking in browser history/referrer)
-        const url = new URL(req.originalUrl, `http://${req.headers.host ?? 'localhost'}`);
+        const url = new URL(req.originalUrl, 'http://localhost');
         url.searchParams.delete('token');
         const cleanPath = url.pathname + (url.search || '');
         res.redirect(302, cleanPath);
@@ -155,8 +156,9 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       return;
     }
 
-    // Create session and set cookie
+    // Invalidate existing sessions for this user, then create a new one
     const sessionStore = getSessionStore(dbPath, webConfig.sessionTtlHours);
+    sessionStore.deleteSessionsForUser(identity.userId);
     const session = sessionStore.createSession(identity.userId, identity.isAdmin);
     const maxAge = webConfig.sessionTtlHours * 60 * 60;
     res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; ${buildCookieOptions(webConfig, maxAge)}`);
@@ -287,6 +289,7 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   cleanupTimer = setInterval(() => {
     sessionStore.cleanupExpired();
   }, CLEANUP_INTERVAL_MS);
+  cleanupTimer.unref();
 
   return new Promise((resolve, reject) => {
     try {

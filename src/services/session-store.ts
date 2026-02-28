@@ -116,6 +116,15 @@ export class SessionStore {
   }
 
   /**
+   * Delete all sessions for a user (prevents session accumulation on repeated logins)
+   */
+  deleteSessionsForUser(userId: string): void {
+    this.db
+      .prepare('DELETE FROM web_sessions WHERE user_id = ?')
+      .run(userId);
+  }
+
+  /**
    * Remove all expired sessions
    * Returns the number of sessions cleaned up
    */

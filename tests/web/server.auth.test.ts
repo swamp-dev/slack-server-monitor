@@ -70,6 +70,7 @@ function createAuthTestServer(sessionStore: SessionStore) {
       return;
     }
 
+    sessionStore.deleteSessionsForUser(identity.userId);
     const session = sessionStore.createSession(identity.userId, identity.isAdmin);
     const maxAge = webConfig.sessionTtlHours * 60 * 60;
     res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${String(maxAge)}`);
@@ -110,11 +111,12 @@ function createAuthTestServer(sessionStore: SessionStore) {
     if (typeof queryToken === 'string' && queryToken) {
       const identity = resolveToken(queryToken, webConfig);
       if (identity) {
+        sessionStore.deleteSessionsForUser(identity.userId);
         const session = sessionStore.createSession(identity.userId, identity.isAdmin);
         const maxAge = webConfig.sessionTtlHours * 60 * 60;
         res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${String(maxAge)}`);
         // Redirect to strip token from URL
-        const url = new URL(req.originalUrl, `http://${req.headers.host ?? 'localhost'}`);
+        const url = new URL(req.originalUrl, 'http://localhost');
         url.searchParams.delete('token');
         const cleanPath = url.pathname + (url.search || '');
         res.redirect(302, cleanPath);
