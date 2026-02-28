@@ -163,8 +163,8 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
 
     logger.info('User logged in via form', { userId: identity.userId, isAdmin: identity.isAdmin });
 
-    // Redirect to return_to or home (only allow relative paths)
-    const redirectTo = returnTo?.startsWith('/') ? returnTo : '/';
+    // Redirect to return_to or home (only allow relative paths, block protocol-relative //evil.com)
+    const redirectTo = returnTo && /^\/[^/]/.test(returnTo) ? returnTo : '/';
     res.redirect(302, redirectTo);
   });
 

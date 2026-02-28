@@ -73,7 +73,7 @@ function createAuthTestServer(sessionStore: SessionStore) {
     const session = sessionStore.createSession(identity.userId, identity.isAdmin);
     const maxAge = webConfig.sessionTtlHours * 60 * 60;
     res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${String(maxAge)}`);
-    const redirectTo = returnTo && returnTo.startsWith('/') ? returnTo : '/';
+    const redirectTo = returnTo && /^\/[^/]/.test(returnTo) ? returnTo : '/';
     res.redirect(302, redirectTo);
   });
 
@@ -410,6 +410,18 @@ describe('web server auth integration', () => {
 
       expect(response.status).toBe(302);
       // Should redirect to / instead of external URL
+      expect(response.headers.get('location')).toBe('/');
+    });
+
+    it('should not redirect to protocol-relative URLs (//evil.com)', async () => {
+      const response = await fetch(`${baseUrl}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `token=${webConfig.authToken}&return_to=//evil.com`,
+        redirect: 'manual',
+      });
+
+      expect(response.status).toBe(302);
       expect(response.headers.get('location')).toBe('/');
     });
   });
