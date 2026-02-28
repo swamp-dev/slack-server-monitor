@@ -144,8 +144,9 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
 
   // Login form submission
   app.post('/login', (req: Request, res: Response) => {
-    const token = typeof req.body?.token === 'string' ? req.body.token : '';
-    const returnTo = typeof req.body?.return_to === 'string' ? req.body.return_to : undefined;
+    const body = req.body as Record<string, unknown>;
+    const token = typeof body.token === 'string' ? body.token : '';
+    const returnTo = typeof body.return_to === 'string' ? body.return_to : undefined;
 
     const identity = resolveToken(token, webConfig);
     if (!identity) {
@@ -162,8 +163,8 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
 
     logger.info('User logged in via form', { userId: identity.userId, isAdmin: identity.isAdmin });
 
-    // Redirect to return_to or home
-    const redirectTo = returnTo && returnTo.startsWith('/') ? returnTo : '/';
+    // Redirect to return_to or home (only allow relative paths)
+    const redirectTo = returnTo?.startsWith('/') ? returnTo : '/';
     res.redirect(302, redirectTo);
   });
 
