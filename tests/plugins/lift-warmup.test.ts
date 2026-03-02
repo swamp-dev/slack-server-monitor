@@ -714,7 +714,7 @@ describe('lift plugin warmup calculator', () => {
       }
       contextParts.push('Plate count is total (both sides)');
       if (config.singlePairOnly) {
-        contextParts.push('1 pair per plate');
+        contextParts.push('1 pair per plate (2 pairs of 5lb)');
       }
       if (unit === 'kg') {
         contextParts.push('Plate loading in lbs (standard plates)');
@@ -736,7 +736,7 @@ describe('lift plugin warmup calculator', () => {
         }
       });
 
-      it('should show error only when ALL weights are invalid', () => {
+      it('should skip all weights when all exceed max (no error)', () => {
         const result = simulateHandleWarmup(['1500', '2000'], GYM_PLATES);
         expect(result).not.toHaveProperty('error');
         if ('headers' in result) {

@@ -1534,7 +1534,7 @@ async function handleWarmupCommand(
   }
   contextParts.push('Plate count is total (both sides)');
   if (config.singlePairOnly) {
-    contextParts.push('1 pair per plate');
+    contextParts.push('1 pair per plate (2 pairs of 5lb)');
   }
   if (unit === 'kg') {
     contextParts.push('Plate loading in lbs (standard plates)');
