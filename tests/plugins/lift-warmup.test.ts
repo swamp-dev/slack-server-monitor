@@ -5,67 +5,17 @@
  * without needing to test Slack integration.
  */
 import { describe, it, expect } from 'vitest';
-
-// Constants matching lift.ts
-const BAR_WEIGHT = 45;
-const PLATE_SIZES = [45, 35, 25, 10, 5, 2.5] as const;
-const HOME_PLATE_SIZES = [55, 45, 35, 25, 10, 5, 2.5, 1.25] as const;
-const WARMUP_PERCENTAGES = [0.4, 0.6, 0.8, 1.0] as const;
-const MAX_TARGET_WEIGHT = 1000;
-
-interface PlateConfig {
-  readonly label: string;
-  readonly plateSizes: readonly number[];
-  readonly singlePairOnly: boolean;
-}
-
-const GYM_PLATES: PlateConfig = {
-  label: 'Warmup',
-  plateSizes: PLATE_SIZES,
-  singlePairOnly: false,
-};
-
-const HOME_PLATES: PlateConfig = {
-  label: 'Home Warmup',
-  plateSizes: HOME_PLATE_SIZES,
-  singlePairOnly: true,
-};
-
-/**
- * Calculate plate configuration for a given target weight
- * This is a copy of the function from lift.ts for testing
- */
-function calculatePlateConfig(targetWeight: number, config: PlateConfig = GYM_PLATES): string {
-  if (targetWeight < BAR_WEIGHT) {
-    // Dumbbell case: round total weight to nearest 10 lbs (5 lb increments per hand)
-    const perHandWeight = Math.round(targetWeight / 10) * 5;
-    return `2x${perHandWeight}lb DBs`;
-  }
-
-  // Greedy algorithm: fill with largest plates first
-  let remaining = targetWeight - BAR_WEIGHT;
-  const plates: string[] = [];
-
-  for (const plateSize of config.plateSizes) {
-    if (config.singlePairOnly) {
-      if (remaining >= plateSize * 2) {
-        remaining -= plateSize * 2;
-        plates.push(`${plateSize}x2`);
-      }
-    } else {
-      let pairCount = 0;
-      while (remaining >= plateSize * 2) {
-        remaining -= plateSize * 2;
-        pairCount++;
-      }
-      if (pairCount > 0) {
-        plates.push(`${plateSize}x${pairCount * 2}`);
-      }
-    }
-  }
-
-  return plates.length > 0 ? `Bar + ${plates.join(' + ')}` : 'Bar only';
-}
+import {
+  PLATE_SIZES,
+  HOME_PLATE_SIZES,
+  HOME_LIGHT_PLATE_SIZES,
+  WARMUP_PERCENTAGES,
+  MAX_TARGET_WEIGHT,
+  GYM_PLATES,
+  HOME_PLATES,
+  calculatePlateConfig,
+} from '../../plugins.example/lift.js';
+import type { PlateConfig } from '../../plugins.example/lift.js';
 
 /**
  * Calculate warmup sets for a target weight
@@ -85,31 +35,31 @@ describe('lift plugin warmup calculator', () => {
   describe('calculatePlateConfig', () => {
     describe('dumbbell cases (weight < 45 lbs)', () => {
       it('should return dumbbells for weights under 45 lbs', () => {
-        expect(calculatePlateConfig(40)).toBe('2x20lb DBs');
+        expect(calculatePlateConfig(40, GYM_PLATES)).toBe('2x20lb DBs');
       });
 
       it('should round dumbbell weight to nearest 5 lbs', () => {
-        expect(calculatePlateConfig(32)).toBe('2x15lb DBs');
-        expect(calculatePlateConfig(38)).toBe('2x20lb DBs');
+        expect(calculatePlateConfig(32, GYM_PLATES)).toBe('2x15lb DBs');
+        expect(calculatePlateConfig(38, GYM_PLATES)).toBe('2x20lb DBs');
       });
 
       it('should handle very light weights', () => {
-        expect(calculatePlateConfig(10)).toBe('2x5lb DBs');
-        expect(calculatePlateConfig(20)).toBe('2x10lb DBs');
+        expect(calculatePlateConfig(10, GYM_PLATES)).toBe('2x5lb DBs');
+        expect(calculatePlateConfig(20, GYM_PLATES)).toBe('2x10lb DBs');
       });
 
       it('should handle edge case of 0 lbs', () => {
         // 0 lbs -> round(0/10)*5 = 0 lbs per hand
-        expect(calculatePlateConfig(0)).toBe('2x0lb DBs');
+        expect(calculatePlateConfig(0, GYM_PLATES)).toBe('2x0lb DBs');
       });
 
       it('should handle edge case of 5 lbs', () => {
         // 5 lbs -> round(5/10)*5 = round(0.5)*5 = 5 lbs per hand
-        expect(calculatePlateConfig(5)).toBe('2x5lb DBs');
+        expect(calculatePlateConfig(5, GYM_PLATES)).toBe('2x5lb DBs');
       });
 
       it('should handle edge case near 45 lbs', () => {
-        expect(calculatePlateConfig(44)).toBe('2x20lb DBs');
+        expect(calculatePlateConfig(44, GYM_PLATES)).toBe('2x20lb DBs');
       });
     });
 
@@ -402,157 +352,219 @@ describe('lift plugin warmup calculator', () => {
 
   describe('home warmup plate config', () => {
     describe('home plate sizes constant', () => {
-      it('should be in descending order', () => {
+      it('should be in non-increasing order', () => {
         for (let i = 0; i < HOME_PLATE_SIZES.length - 1; i++) {
-          expect(HOME_PLATE_SIZES[i]).toBeGreaterThan(HOME_PLATE_SIZES[i + 1]);
+          expect(HOME_PLATE_SIZES[i]).toBeGreaterThanOrEqual(HOME_PLATE_SIZES[i + 1]);
         }
       });
 
-      it('should include 55 lb plates and 1.25 lb plates', () => {
+      it('should include 55 lb plates, 15 lb plates, and 1.25 lb plates', () => {
         expect(HOME_PLATE_SIZES).toContain(55);
+        expect(HOME_PLATE_SIZES).toContain(15);
         expect(HOME_PLATE_SIZES).toContain(1.25);
       });
 
-      it('should have exactly 8 plate sizes', () => {
-        expect(HOME_PLATE_SIZES).toHaveLength(8);
+      it('should have exactly 10 entries (5 lb appears twice for 2 pairs)', () => {
+        expect(HOME_PLATE_SIZES).toHaveLength(10);
+        const fives = [...HOME_PLATE_SIZES].filter((s) => s === 5);
+        expect(fives).toHaveLength(2);
       });
     });
 
-    describe('dumbbell cases (same behavior as gym)', () => {
-      it('should return dumbbells for weights under 45 lbs', () => {
-        expect(calculatePlateConfig(40, HOME_PLATES)).toBe('2x20lb DBs');
-        expect(calculatePlateConfig(32, HOME_PLATES)).toBe('2x15lb DBs');
+    describe('home light plate sizes constant', () => {
+      it('should be in non-increasing order', () => {
+        for (let i = 0; i < HOME_LIGHT_PLATE_SIZES.length - 1; i++) {
+          expect(HOME_LIGHT_PLATE_SIZES[i]).toBeGreaterThanOrEqual(HOME_LIGHT_PLATE_SIZES[i + 1]);
+        }
+      });
+
+      it('should contain plates that fit on the 5lb bar (max 25 lb)', () => {
+        for (const size of HOME_LIGHT_PLATE_SIZES) {
+          expect(size).toBeLessThanOrEqual(25);
+        }
+      });
+
+      it('should have 6 entries', () => {
+        expect(HOME_LIGHT_PLATE_SIZES).toHaveLength(6);
       });
     });
 
-    describe('bar only with home plates', () => {
-      it('should return bar only for exactly 45 lbs', () => {
+    describe('PlateConfig barWeight and lightBar', () => {
+      it('should have 45 lb bar for gym config', () => {
+        expect(GYM_PLATES.barWeight).toBe(45);
+      });
+
+      it('should have 45 lb bar (olympic) as primary for home config', () => {
+        expect(HOME_PLATES.barWeight).toBe(45);
+      });
+
+      it('should have lightBar config for home with 5lb bar and 45lb threshold', () => {
+        const { lightBar } = HOME_PLATES;
+        expect(lightBar).toBeDefined();
+        expect(lightBar?.weight).toBe(5);
+        expect(lightBar?.threshold).toBe(45);
+      });
+
+      it('should not have lightBar for gym config', () => {
+        expect(GYM_PLATES.lightBar).toBeUndefined();
+      });
+    });
+
+    describe('light bar range (target < 45 lbs)', () => {
+      it('should return 5lb bar only for weights under 5 lbs', () => {
+        expect(calculatePlateConfig(3, HOME_PLATES)).toBe('5lb bar only');
+      });
+
+      it('should return 5lb bar only when no plates fit', () => {
+        expect(calculatePlateConfig(5, HOME_PLATES)).toBe('5lb bar only');
+        expect(calculatePlateConfig(6, HOME_PLATES)).toBe('5lb bar only');
+        expect(calculatePlateConfig(7, HOME_PLATES)).toBe('5lb bar only');
+      });
+
+      it('should load light plates on 5lb bar', () => {
+        expect(calculatePlateConfig(7.5, HOME_PLATES)).toBe('5lb bar + 1.25x2');
+        expect(calculatePlateConfig(10, HOME_PLATES)).toBe('5lb bar + 2.5x2');
+        expect(calculatePlateConfig(15, HOME_PLATES)).toBe('5lb bar + 5x2');
+        expect(calculatePlateConfig(25, HOME_PLATES)).toBe('5lb bar + 10x2');
+        expect(calculatePlateConfig(35, HOME_PLATES)).toBe('5lb bar + 15x2');
+      });
+
+      it('should load combination plates on 5lb bar', () => {
+        // 40 - 5 = 35. 25? No. 15x2=30 -> 5. 2.5x2=5 -> 0
+        expect(calculatePlateConfig(40, HOME_PLATES)).toBe('5lb bar + 15x2 + 2.5x2');
+        // 32 - 5 = 27. 25? No. 15? No. 10x2=20 -> 7. 5? No. 2.5x2=5 -> 2. 1.25? No
+        expect(calculatePlateConfig(32, HOME_PLATES)).toBe('5lb bar + 10x2 + 2.5x2');
+      });
+
+      it('should skip plates too large for remaining weight', () => {
+        // 25 lbs: 25 - 5 = 20. 25x2=50? No. 15x2=30? No. 10x2=20 -> 0
+        expect(calculatePlateConfig(25, HOME_PLATES)).toBe('5lb bar + 10x2');
+        // 30 lbs: 30 - 5 = 25. 25x2=50? No. 15x2=30? No. 10x2=20 -> 5. 5x2=10? No. 2.5x2=5 -> 0
+        expect(calculatePlateConfig(30, HOME_PLATES)).toBe('5lb bar + 10x2 + 2.5x2');
+      });
+
+      it('should handle max light bar weight (44 lbs)', () => {
+        // 44 - 5 = 39. 25x2=50? No. 15x2=30 -> 9. 10x2=20? No. 5x2=10? No. 2.5x2=5 -> 4. 1.25x2=2.5 -> 1.5 (dropped)
+        expect(calculatePlateConfig(44, HOME_PLATES)).toBe('5lb bar + 15x2 + 2.5x2 + 1.25x2');
+      });
+    });
+
+    describe('heavy bar range (target >= 45 lbs)', () => {
+      it('should return Bar only for exactly 45 lbs', () => {
         expect(calculatePlateConfig(45, HOME_PLATES)).toBe('Bar only');
       });
 
-      it('should return bar only when smallest pair (1.25x2=2.5) cannot fit', () => {
-        expect(calculatePlateConfig(46, HOME_PLATES)).toBe('Bar only');
-        expect(calculatePlateConfig(47, HOME_PLATES)).toBe('Bar only');
-      });
-
-      it('should load 1.25 plates at 47.5 lbs', () => {
-        expect(calculatePlateConfig(47.5, HOME_PLATES)).toBe('Bar + 1.25x2');
-      });
-    });
-
-    describe('simple home plate configurations', () => {
-      it('should calculate bar + 1.25 plates', () => {
-        expect(calculatePlateConfig(47.5, HOME_PLATES)).toBe('Bar + 1.25x2');
-      });
-
-      it('should calculate bar + 2.5 plates', () => {
-        expect(calculatePlateConfig(50, HOME_PLATES)).toBe('Bar + 2.5x2');
-      });
-
-      it('should calculate bar + 5 plates', () => {
+      it('should calculate simple plate configs on 45lb bar', () => {
+        // 55 - 45 = 10. 5x2=10 -> 0
         expect(calculatePlateConfig(55, HOME_PLATES)).toBe('Bar + 5x2');
-      });
-
-      it('should calculate bar + 10 plates', () => {
-        expect(calculatePlateConfig(65, HOME_PLATES)).toBe('Bar + 10x2');
-      });
-
-      it('should calculate bar + 25 plates', () => {
+        // 75 - 45 = 30. 15x2=30 -> 0
+        expect(calculatePlateConfig(75, HOME_PLATES)).toBe('Bar + 15x2');
+        // 95 - 45 = 50. 25x2=50 -> 0
         expect(calculatePlateConfig(95, HOME_PLATES)).toBe('Bar + 25x2');
-      });
-
-      it('should calculate bar + 35 plates', () => {
+        // 115 - 45 = 70. 35x2=70 -> 0
         expect(calculatePlateConfig(115, HOME_PLATES)).toBe('Bar + 35x2');
-      });
-
-      it('should calculate bar + 45 plates', () => {
+        // 135 - 45 = 90. 45x2=90 -> 0
         expect(calculatePlateConfig(135, HOME_PLATES)).toBe('Bar + 45x2');
-      });
-
-      it('should calculate bar + 55 plates', () => {
+        // 155 - 45 = 110. 55x2=110 -> 0
         expect(calculatePlateConfig(155, HOME_PLATES)).toBe('Bar + 55x2');
       });
     });
 
-    describe('single-pair constraint', () => {
-      it('should differ from gym for 225 lbs (gym: 45x4, home: 55+45+10+2.5)', () => {
+    describe('single-pair constraint (heavy bar)', () => {
+      it('should differ from gym for 225 lbs', () => {
         // Gym: 225 - 45 = 180. 45x2=90 -> 90 left, 45x2=90 -> 0. 45x4
         expect(calculatePlateConfig(225, GYM_PLATES)).toBe('Bar + 45x4');
-        // Home: 225 - 45 = 180. 55x2=110 -> 70, 45x2=90? No. 35x2=70 -> 0
+        // Home: 225 - 45 = 180. 55x2=110 -> 70. 35x2=70 -> 0
         expect(calculatePlateConfig(225, HOME_PLATES)).toBe('Bar + 55x2 + 35x2');
       });
 
-      it('should differ from gym for 315 lbs (gym: 45x6, home: 55+45+35)', () => {
+      it('should differ from gym for 315 lbs', () => {
         // Gym: 315 - 45 = 270. 45x2=90 three times -> 0. 45x6
         expect(calculatePlateConfig(315, GYM_PLATES)).toBe('Bar + 45x6');
-        // Home: 315 - 45 = 270. 55x2=110 -> 160, 45x2=90 -> 70, 35x2=70 -> 0
+        // Home: 315 - 45 = 270. 55x2=110 -> 160. 45x2=90 -> 70. 35x2=70 -> 0
         expect(calculatePlateConfig(315, HOME_PLATES)).toBe('Bar + 55x2 + 45x2 + 35x2');
       });
 
-      it('should prefer 55 over 45+10 for 155 lbs', () => {
+      it('should differ from gym for 155 lbs', () => {
         // Home: 155 - 45 = 110. 55x2=110 -> 0
         expect(calculatePlateConfig(155, HOME_PLATES)).toBe('Bar + 55x2');
         // Gym: 155 - 45 = 110. 45x2=90 -> 20, 10x2=20 -> 0
         expect(calculatePlateConfig(155, GYM_PLATES)).toBe('Bar + 45x2 + 10x2');
       });
 
-      it('should use 1.25 plates for fine-grained loading (52.5 lbs)', () => {
-        // 52.5 - 45 = 7.5. 55? No. 45? No. 35? No. 25? No. 10? No. 5x2=10? No (7.5 < 10). 2.5x2=5 -> 2.5. 1.25x2=2.5 -> 0
+      it('should use 1.25 plates for fine-grained loading (52.5 lbs on heavy bar)', () => {
+        // 52.5 >= 45, heavy bar. 52.5 - 45 = 7.5. 2.5x2=5 -> 2.5. 1.25x2=2.5 -> 0
         expect(calculatePlateConfig(52.5, HOME_PLATES)).toBe('Bar + 2.5x2 + 1.25x2');
       });
 
-      it('should use max plates for heavy load (all 8 sizes)', () => {
-        // Need: 55+45+35+25+10+5+2.5+1.25 = 178.75 per side = 357.5 + 45 bar = 402.5
-        const allPlatesWeight = 45 + (55 + 45 + 35 + 25 + 10 + 5 + 2.5 + 1.25) * 2;
-        expect(allPlatesWeight).toBe(402.5);
+      it('should use all plates for heavy load (45lb bar + all 10 entries)', () => {
+        // 45 + (55+45+35+25+15+10+5+5+2.5+1.25)*2 = 45 + 198.75*2 = 45 + 397.5 = 442.5
+        const allPlatesWeight = 45 + (55 + 45 + 35 + 25 + 15 + 10 + 5 + 5 + 2.5 + 1.25) * 2;
+        expect(allPlatesWeight).toBe(442.5);
         expect(calculatePlateConfig(allPlatesWeight, HOME_PLATES)).toBe(
-          'Bar + 55x2 + 45x2 + 35x2 + 25x2 + 10x2 + 5x2 + 2.5x2 + 1.25x2'
+          'Bar + 55x2 + 45x2 + 35x2 + 25x2 + 15x2 + 10x2 + 5x4 + 2.5x2 + 1.25x2'
         );
       });
 
-      it('should document greedy suboptimality for 200 lbs', () => {
-        // Home greedy: 200 - 45 = 155. 55x2=110 -> 45. 45x2=90? No. 35x2=70? No.
-        // 25x2=50? No. 10x2=20 -> 25. 5x2=10 -> 15. 2.5x2=5 -> 10. 1.25x2=2.5 -> 7.5
-        // Result: 55+10+5+2.5+1.25 = 73.75 per side = 147.5 + bar = 192.5 (not 200)
-        // An exact solution exists: 45+25+5+2.5 per side = 77.5 per side = 155 + 45 = 200
-        // But greedy picks 55 first, which prevents reaching exactly 200
+      it('should merge two pairs of 5lb plates as 5x4', () => {
+        // 435 - 45 = 390. 55x2=110 -> 280. 45x2=90 -> 190. 35x2=70 -> 120. 25x2=50 -> 70.
+        // 15x2=30 -> 40. 10x2=20 -> 20. 5x2=10 -> 10. 5x2=10 -> 0
+        expect(calculatePlateConfig(435, HOME_PLATES)).toBe(
+          'Bar + 55x2 + 45x2 + 35x2 + 25x2 + 15x2 + 10x2 + 5x4'
+        );
+      });
+
+      it('should document greedy algorithm for 200 lbs (exact with 45lb bar)', () => {
+        // Home: 200 - 45 = 155. 55x2=110 -> 45. 15x2=30 -> 15. 5x2=10 -> 5. 2.5x2=5 -> 0
+        // Result: 45 + 110 + 30 + 10 + 5 = 200 (exact!)
         expect(calculatePlateConfig(200, HOME_PLATES)).toBe(
-          'Bar + 55x2 + 10x2 + 5x2 + 2.5x2 + 1.25x2'
+          'Bar + 55x2 + 15x2 + 5x2 + 2.5x2'
         );
       });
     });
 
-    describe('home warmup sets', () => {
+    describe('home warmup sets (heavy bar, all >= 45)', () => {
       it('should calculate warmup sets for 225 lbs with home plates', () => {
         const sets = calculateWarmupSets(225, HOME_PLATES);
 
         expect(sets).toHaveLength(4);
-        // 40% of 225 = 90: 90 - 45 = 45. 55? No. 45? No (45 < 45*2=90). 35? No. 25? No.
-        // 10x2=20 -> 25. 5x2=10 -> 15. 2.5x2=5 -> 10. 1.25x2=2.5 -> 7.5
-        expect(sets[0]).toEqual({ percent: 40, weight: 90, config: 'Bar + 10x2 + 5x2 + 2.5x2 + 1.25x2' });
-        // 60% of 225 = 135: 135 - 45 = 90. 55? No (90 < 110). 45x2=90 -> 0
+        // 40% of 225 = 90: 90 - 45 = 45. 15x2=30 -> 15. 5x2=10 -> 5. 2.5x2=5 -> 0
+        expect(sets[0]).toEqual({ percent: 40, weight: 90, config: 'Bar + 15x2 + 5x2 + 2.5x2' });
+        // 60% of 225 = 135: 135 - 45 = 90. 45x2=90 -> 0
         expect(sets[1]).toEqual({ percent: 60, weight: 135, config: 'Bar + 45x2' });
-        // 80% of 225 = 180: 180 - 45 = 135. 55x2=110 -> 25. 45? No. 35? No. 25? No (25 < 50).
-        // 10x2=20 -> 5. 5? No (5 < 10). 2.5x2=5 -> 0
+        // 80% of 225 = 180: 180 - 45 = 135. 55x2=110 -> 25. 10x2=20 -> 5. 2.5x2=5 -> 0
         expect(sets[2]).toEqual({ percent: 80, weight: 180, config: 'Bar + 55x2 + 10x2 + 2.5x2' });
-        // 100% of 225 = 225: 225 - 45 = 180. 55x2=110 -> 70. 45? No (70 < 90). 35x2=70 -> 0
+        // 100% of 225 = 225: 225 - 45 = 180. 55x2=110 -> 70. 35x2=70 -> 0
         expect(sets[3]).toEqual({ percent: 100, weight: 225, config: 'Bar + 55x2 + 35x2' });
       });
 
       it('should calculate warmup sets for 315 lbs with home plates', () => {
         const sets = calculateWarmupSets(315, HOME_PLATES);
 
-        // 40% of 315 = 126: 126 - 45 = 81. 55? No (81 < 110). 45? No (81 < 90).
-        // 35x2=70 -> 11. 25? No. 10? No. 5x2=10 -> 1. 2.5? No. 1.25? No.
+        // 40% of 315 = 126: 126 - 45 = 81. 35x2=70 -> 11. 5x2=10 -> 1 (dropped)
         expect(sets[0]).toEqual({ percent: 40, weight: 126, config: 'Bar + 35x2 + 5x2' });
-        // 60% of 315 = 189: 189 - 45 = 144. 55x2=110 -> 34. 45? No. 35? No.
-        // 25? No (34 < 50). 10x2=20 -> 14. 5x2=10 -> 4. 2.5? No (4 < 5). 1.25x2=2.5 -> 1.5
-        expect(sets[1]).toEqual({ percent: 60, weight: 189, config: 'Bar + 55x2 + 10x2 + 5x2 + 1.25x2' });
-        // 80% of 315 = 252: 252 - 45 = 207. 55x2=110 -> 97. 45x2=90 -> 7.
-        // 35? No. 25? No. 10? No. 5? No. 2.5x2=5 -> 2. 1.25? No.
+        // 60% of 315 = 189: 189 - 45 = 144. 55x2=110 -> 34. 15x2=30 -> 4. 1.25x2=2.5 -> 1.5 (dropped)
+        expect(sets[1]).toEqual({ percent: 60, weight: 189, config: 'Bar + 55x2 + 15x2 + 1.25x2' });
+        // 80% of 315 = 252: 252 - 45 = 207. 55x2=110 -> 97. 45x2=90 -> 7. 2.5x2=5 -> 2 (dropped)
         expect(sets[2]).toEqual({ percent: 80, weight: 252, config: 'Bar + 55x2 + 45x2 + 2.5x2' });
-        // 100% of 315 = 315: 315 - 45 = 270. 55x2=110 -> 160. 45x2=90 -> 70. 35x2=70 -> 0.
+        // 100% of 315 = 315: 315 - 45 = 270. 55x2=110 -> 160. 45x2=90 -> 70. 35x2=70 -> 0
         expect(sets[3]).toEqual({ percent: 100, weight: 315, config: 'Bar + 55x2 + 45x2 + 35x2' });
+      });
+    });
+
+    describe('mixed light/heavy bar warmup sets', () => {
+      it('should use light bar for low percentages and heavy bar for high', () => {
+        const sets = calculateWarmupSets(100, HOME_PLATES);
+
+        expect(sets).toHaveLength(4);
+        // 40% of 100 = 40: < 45, light bar. 40-5=35. 25x2=50? No. 15x2=30 -> 5. 2.5x2=5 -> 0
+        expect(sets[0]).toEqual({ percent: 40, weight: 40, config: '5lb bar + 15x2 + 2.5x2' });
+        // 60% of 100 = 60: >= 45, heavy bar. 60-45=15. 5x2=10 -> 5. 2.5x2=5 -> 0
+        expect(sets[1]).toEqual({ percent: 60, weight: 60, config: 'Bar + 5x2 + 2.5x2' });
+        // 80% of 100 = 80: >= 45, heavy bar. 80-45=35. 15x2=30 -> 5. 2.5x2=5 -> 0
+        expect(sets[2]).toEqual({ percent: 80, weight: 80, config: 'Bar + 15x2 + 2.5x2' });
+        // 100% of 100 = 100: >= 45, heavy bar. 100-45=55. 25x2=50 -> 5. 2.5x2=5 -> 0
+        expect(sets[3]).toEqual({ percent: 100, weight: 100, config: 'Bar + 25x2 + 2.5x2' });
       });
     });
 
@@ -562,13 +574,29 @@ describe('lift plugin warmup calculator', () => {
         const gymConfig = calculatePlateConfig(225, GYM_PLATES);
         const homeConfig = calculatePlateConfig(225, HOME_PLATES);
         expect(gymConfig).toContain('45x4');
-        expect(homeConfig).not.toContain('x4');
+        expect(homeConfig).not.toContain('45x4');
       });
 
-      it('identical results for weights needing only one pair each', () => {
-        // 135: both need just one pair of 45s
+      it('135 lbs is the same for gym and home (both use 45lb bar)', () => {
+        // Both use 45lb bar: 135 - 45 = 90. 45x2=90 -> 0
         expect(calculatePlateConfig(135, GYM_PLATES)).toBe('Bar + 45x2');
         expect(calculatePlateConfig(135, HOME_PLATES)).toBe('Bar + 45x2');
+      });
+
+      it('225 lbs differs due to single-pair constraint', () => {
+        // Gym: 225 - 45 = 180. 45x4
+        expect(calculatePlateConfig(225, GYM_PLATES)).toBe('Bar + 45x4');
+        // Home: 225 - 45 = 180. 55x2=110, 35x2=70
+        expect(calculatePlateConfig(225, HOME_PLATES)).toBe('Bar + 55x2 + 35x2');
+      });
+
+      it('home uses 5x4 (two pairs) while gym uses unlimited pairs', () => {
+        // 435 home: uses both 5lb pairs -> 5x4
+        expect(calculatePlateConfig(435, HOME_PLATES)).toBe(
+          'Bar + 55x2 + 45x2 + 35x2 + 25x2 + 15x2 + 10x2 + 5x4'
+        );
+        // 435 gym: 435-45=390. 45x8=360 -> 30. 10x2=20 -> 10. 5x2=10 -> 0
+        expect(calculatePlateConfig(435, GYM_PLATES)).toBe('Bar + 45x8 + 10x2 + 5x2');
       });
     });
   });
@@ -622,6 +650,187 @@ describe('lift plugin warmup calculator', () => {
       const result = simulateWarmupToolWithConfig([135, 225], HOME_PLATES);
       expect(result).toContain('Home Warmup for 135 lbs');
       expect(result).toContain('Home Warmup for 225 lbs');
+    });
+  });
+
+  describe('handleWarmupCommand behavior', () => {
+    type WeightUnit = 'lbs' | 'kg';
+
+    function kgToLbs(kg: number): number {
+      return kg * 2.20462;
+    }
+
+    /**
+     * Simulates handleWarmupCommand logic for testing.
+     * Returns { headers, skipped, contextParts } to verify behavior.
+     */
+    function simulateHandleWarmup(
+      weightArgs: string[],
+      config: PlateConfig,
+      unit: WeightUnit = 'lbs',
+    ): { headers: string[]; skipped: string[]; contextParts: string[] } | { error: string } {
+      const parsed = weightArgs.map((w) => ({ raw: w, value: parseFloat(w) }));
+      const validInputs = parsed.filter((p) => !isNaN(p.value) && p.value > 0);
+      const invalidInputs = parsed.filter((p) => isNaN(p.value) || p.value <= 0);
+
+      const cmd = config.singlePairOnly ? 'wh' : 'w';
+
+      // No valid weights at all
+      if (validInputs.length === 0) {
+        return { error: `Usage: /lift ${cmd} <weight> [weight2] ...` };
+      }
+
+      const headers: string[] = [];
+      const skipped: string[] = [];
+
+      // Warn about non-numeric/negative inputs
+      for (const inv of invalidInputs) {
+        skipped.push(`Skipping invalid input: ${inv.raw}`);
+      }
+
+      for (const input of validInputs) {
+        const weightLbs = unit === 'kg' ? Math.round(kgToLbs(input.value)) : input.value;
+
+        if (weightLbs > MAX_TARGET_WEIGHT) {
+          const display = unit === 'kg' ? `${input.value} kg` : `${weightLbs} lbs`;
+          skipped.push(`Skipping ${display}: exceeds maximum`);
+          continue;
+        }
+
+        // Build display label for header
+        const displayLabel = unit === 'kg'
+          ? `${input.value} kg (~${weightLbs} lbs)`
+          : `${weightLbs} lbs`;
+        headers.push(`${config.label}: ${displayLabel}`);
+      }
+
+      const contextParts = ['Percentages: 40%, 60%, 80%, 100%'];
+      if (config.lightBar) {
+        contextParts.push(
+          `${config.lightBar.weight}lb bar (<${config.lightBar.threshold} lbs) / Bar = ${config.barWeight} lbs`
+        );
+      } else if (config.barWeight === 45) {
+        contextParts.push(`Bar = ${config.barWeight} lbs`);
+      }
+      contextParts.push('Plate count is total (both sides)');
+      if (config.singlePairOnly) {
+        contextParts.push('1 pair per plate (2 pairs of 5lb)');
+      }
+      if (unit === 'kg') {
+        contextParts.push('Plate loading in lbs (standard plates)');
+      }
+
+      return { headers, skipped, contextParts };
+    }
+
+    describe('per-weight max validation', () => {
+      it('should show valid weights even when mixed with over-max weights', () => {
+        const result = simulateHandleWarmup(['200', '1500'], GYM_PLATES);
+        expect(result).not.toHaveProperty('error');
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(1);
+          expect(result.headers[0]).toContain('200 lbs');
+          expect(result.skipped).toHaveLength(1);
+          expect(result.skipped[0]).toContain('1500');
+          expect(result.skipped[0]).toContain('exceeds maximum');
+        }
+      });
+
+      it('should skip all weights when all exceed max (no error)', () => {
+        const result = simulateHandleWarmup(['1500', '2000'], GYM_PLATES);
+        expect(result).not.toHaveProperty('error');
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(0);
+          expect(result.skipped).toHaveLength(2);
+        }
+      });
+
+      it('should show all valid weights when none exceed max', () => {
+        const result = simulateHandleWarmup(['135', '225', '315'], GYM_PLATES);
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(3);
+          expect(result.skipped).toHaveLength(0);
+        }
+      });
+    });
+
+    describe('invalid weight feedback', () => {
+      it('should report non-numeric inputs as skipped', () => {
+        const result = simulateHandleWarmup(['foo', '200'], GYM_PLATES);
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(1);
+          expect(result.headers[0]).toContain('200 lbs');
+          expect(result.skipped).toHaveLength(1);
+          expect(result.skipped[0]).toContain('foo');
+        }
+      });
+
+      it('should report negative weights as skipped', () => {
+        const result = simulateHandleWarmup(['-100', '200'], GYM_PLATES);
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(1);
+          expect(result.skipped).toHaveLength(1);
+          expect(result.skipped[0]).toContain('-100');
+        }
+      });
+
+      it('should show usage error when all inputs are garbage', () => {
+        const result = simulateHandleWarmup(['foo', 'bar'], GYM_PLATES);
+        expect(result).toHaveProperty('error');
+      });
+    });
+
+    describe('kg unit display in header', () => {
+      it('should show original kg value and lbs conversion in header', () => {
+        const result = simulateHandleWarmup(['100'], GYM_PLATES, 'kg');
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(1);
+          expect(result.headers[0]).toContain('100 kg');
+          expect(result.headers[0]).toContain('~220 lbs');
+        }
+      });
+
+      it('should show lbs only for lbs unit', () => {
+        const result = simulateHandleWarmup(['225'], GYM_PLATES, 'lbs');
+        if ('headers' in result) {
+          expect(result.headers[0]).toBe('Warmup: 225 lbs');
+          expect(result.headers[0]).not.toContain('kg');
+        }
+      });
+
+      it('should include plate loading note in context for kg users', () => {
+        const result = simulateHandleWarmup(['100'], GYM_PLATES, 'kg');
+        if ('headers' in result) {
+          expect(result.contextParts).toContain('Plate loading in lbs (standard plates)');
+        }
+      });
+
+      it('should skip over-max kg weights and still show valid ones', () => {
+        // 500 kg = ~1102 lbs > 1000 max
+        const result = simulateHandleWarmup(['100', '500'], GYM_PLATES, 'kg');
+        if ('headers' in result) {
+          expect(result.headers).toHaveLength(1);
+          expect(result.headers[0]).toContain('100 kg');
+          expect(result.skipped).toHaveLength(1);
+          expect(result.skipped[0]).toContain('500 kg');
+        }
+      });
+    });
+
+    describe('footer context for gym vs home', () => {
+      it('should include Bar = 45 lbs for gym config', () => {
+        const result = simulateHandleWarmup(['225'], GYM_PLATES);
+        if ('headers' in result) {
+          expect(result.contextParts).toContain('Bar = 45 lbs');
+        }
+      });
+
+      it('should include dual-bar info for home config', () => {
+        const result = simulateHandleWarmup(['225'], HOME_PLATES);
+        if ('headers' in result) {
+          expect(result.contextParts).toContain('5lb bar (<45 lbs) / Bar = 45 lbs');
+        }
+      });
     });
   });
 
