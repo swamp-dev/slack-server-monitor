@@ -518,12 +518,6 @@ export function renderConversation(
   <script>
     hljs.highlightAll();
     (function() {
-      var params = new URLSearchParams(window.location.search);
-      var token = params.get('token');
-      var exportLink = document.getElementById('export-md');
-      if (exportLink && token) {
-        exportLink.href = window.location.pathname + '/export/md?token=' + encodeURIComponent(token);
-      }
       var copyBtn = document.getElementById('copy-clipboard');
       if (copyBtn) {
         copyBtn.addEventListener('click', function() {
@@ -629,9 +623,10 @@ export function render404(): string {
 }
 
 /**
- * Render a 401 unauthorized page
+ * Render a 401 unauthorized page with redirect to login
  */
-export function render401(): string {
+export function render401(returnTo?: string): string {
+  const loginUrl = returnTo ? `/login?return_to=${encodeURIComponent(returnTo)}` : '/login';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -644,8 +639,108 @@ export function render401(): string {
   <main class="container">
     <div class="empty" style="margin-top: 100px;">
       <h1 style="font-size: 3rem; margin-bottom: 20px;">401</h1>
-      <p>Authentication required. Please use the link provided in Slack.</p>
+      <p>Authentication required.</p>
+      <p style="margin-top: 16px;"><a href="${escapeHtml(loginUrl)}">Log in</a> or use the link provided in Slack.</p>
     </div>
+  </main>
+</body>
+</html>`;
+}
+
+/**
+ * Render the login page
+ */
+export function renderLogin(error?: string, returnTo?: string): string {
+  const errorHtml = error
+    ? `<div class="login-error">${escapeHtml(error)}</div>`
+    : '';
+  const returnToInput = returnTo
+    ? `<input type="hidden" name="return_to" value="${escapeHtml(returnTo)}">`
+    : '';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Login - Server Monitor</title>
+  <style>
+    ${styles}
+    .login-form {
+      max-width: 400px;
+      margin: 80px auto 0;
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 32px;
+    }
+    .login-form h1 {
+      font-size: 1.5rem;
+      margin-bottom: 8px;
+    }
+    .login-form p {
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      margin-bottom: 24px;
+    }
+    .login-form label {
+      display: block;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .login-form input[type="password"] {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 0.9375rem;
+      font-family: 'SF Mono', monospace;
+      background: var(--code-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-color);
+      outline: none;
+    }
+    .login-form input[type="password"]:focus {
+      border-color: var(--accent-color);
+    }
+    .login-form button {
+      width: 100%;
+      margin-top: 16px;
+      padding: 10px;
+      font-size: 0.9375rem;
+      font-family: inherit;
+      color: #fff;
+      background: var(--accent-color);
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .login-form button:hover {
+      opacity: 0.9;
+    }
+    .login-error {
+      background: rgba(233, 69, 96, 0.15);
+      border: 1px solid var(--accent-color);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+      font-size: 0.875rem;
+      color: var(--accent-color);
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <form class="login-form" method="POST" action="/login">
+      <h1>Server Monitor</h1>
+      <p>Enter your access token to continue.</p>
+      ${errorHtml}
+      <label for="token">Access Token</label>
+      <input type="password" id="token" name="token" required autocomplete="off" autofocus>
+      ${returnToInput}
+      <button type="submit">Log in</button>
+    </form>
   </main>
 </body>
 </html>`;

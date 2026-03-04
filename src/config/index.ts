@@ -64,6 +64,51 @@ export function parseContextOptions(value: string | undefined): { alias: string;
 }
 
 /**
+ * Parse per-user token entries from a comma-separated string of userId:token pairs
+ * Example: "U01ABC123:abcdef0123456789,U02DEF456:9876543210fedcba"
+ *
+ * @throws Error if format is invalid, userId/token is empty, or duplicates are found
+ */
+export function parseUserTokens(value: string | undefined): { userId: string; token: string }[] {
+  if (!value) return [];
+
+  const pairs = value
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  const seenUserIds = new Set<string>();
+  const seenTokens = new Set<string>();
+
+  return pairs.map((pair) => {
+    const colonIndex = pair.indexOf(':');
+    if (colonIndex === -1) {
+      throw new Error(`Invalid user token format: "${pair}". Expected "userId:token".`);
+    }
+
+    const userId = pair.slice(0, colonIndex).trim();
+    const token = pair.slice(colonIndex + 1).trim();
+
+    if (!userId || !token) {
+      throw new Error(`Both userId and token are required in "${pair}".`);
+    }
+
+    if (seenUserIds.has(userId)) {
+      throw new Error(`Duplicate userId detected: "${userId}".`);
+    }
+
+    if (seenTokens.has(token)) {
+      throw new Error(`Duplicate token detected.`);
+    }
+
+    seenUserIds.add(userId);
+    seenTokens.add(token);
+
+    return { userId, token };
+  });
+}
+
+/**
  * Load and validate configuration from environment variables
  */
 function loadConfig(): Config {
@@ -121,6 +166,8 @@ function loadConfig(): Config {
           port: parseIntWithDefault(process.env.WEB_PORT, 8080),
           baseUrl: process.env.WEB_BASE_URL ?? undefined,
           authToken: process.env.WEB_AUTH_TOKEN ?? '',
+          userTokens: parseUserTokens(process.env.WEB_USER_TOKENS),
+          sessionTtlHours: parseIntWithDefault(process.env.WEB_SESSION_TTL_HOURS, 72),
         }
       : undefined,
   };
