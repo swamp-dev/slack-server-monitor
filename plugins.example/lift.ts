@@ -1,25 +1,45 @@
 /**
- * Lift Plugin - Powerlifting Calculator & Macro Tracker
+ * Lift Plugin - Powerlifting Calculator, Workout Tracker & Macro Tracker
  *
  * Example plugin demonstrating:
  * - Slash command registration (/lift)
- * - Subcommands (wilks, dots, 1rm, warmup, m/macros)
+ * - Subcommands (log, workout, pr, wilks, dots, 1rm, w, wh, bw, a, m, units)
  * - Claude AI tool integration
  * - Database access via PluginContext (see init() for schema setup)
  * - Using formatters (header, section, divider, context)
  *
  * Commands:
- * - /lift wilks <total> <bodyweight> <m|f> - Calculate Wilks score
- * - /lift dots <total> <bodyweight> <m|f> - Calculate DOTS score
- * - /lift 1rm <weight> <reps> - Estimate 1 rep max
- * - /lift w <weight> [weight2] ... - Calculate warmup sets with plate loading
- * - /lift wh <weight> [weight2] ... - Home warmup (5lb/45lb bar)
- * - /lift units [lbs|kg] - View or set weight unit preference (default: lbs)
- * - /lift m c20 p40 f15 - Log macros (carbs, protein, fat in grams)
- * - /lift m - Show today's macro totals
- * - /lift m -1 - Show yesterday's totals
- * - /lift m 1/15 - Show specific date
- * - /lift m 1/10-1/15 - Show date range
+ *
+ * Workout Tracking:
+ * - /lift log <exercise> <weight> <reps> [@rpe] - Log a workout set
+ * - /lift workout [date]                        - Today's workout (or -1, M/D)
+ * - /lift pr [exercise]                         - Personal records
+ *
+ * Calculators:
+ * - /lift wilks <total> [bw] <m|f> - Wilks score (auto-fills bw if logged)
+ * - /lift dots <total> [bw] <m|f>  - DOTS score (auto-fills bw if logged)
+ * - /lift 1rm <weight> <reps>      - Estimate 1 rep max
+ * - /lift w <weight> [weight2] ... - Warmup sets with plate loading (gym)
+ * - /lift wh <weight> [weight2]... - Home warmup (5lb bar <45 lbs, 45lb bar above)
+ *
+ * Food Analysis:
+ * - /lift a [context]              - Analyze latest food photo in channel
+ *
+ * Macro Tracking:
+ * - /lift m c20 p40 f15            - Log macros (carbs, protein, fat in grams)
+ * - /lift m                        - Today's macro totals
+ * - /lift m -1                     - Yesterday's totals
+ * - /lift m 1/15                   - Specific date
+ * - /lift m 1/10-1/15              - Date range
+ * - /lift m confirm                - Log pending food analysis estimate
+ * - /lift m adjust c<g> p<g> f<g>  - Adjust and log estimate
+ *
+ * Bodyweight:
+ * - /lift bw <weight>              - Log today's bodyweight
+ * - /lift bw                       - Show bodyweight trend (7d/30d)
+ *
+ * Settings:
+ * - /lift units [lbs|kg]           - View or set weight unit preference
  *
  * SECURITY NOTE: Plugins run with full process privileges.
  * This example is safe - it only performs math calculations.
@@ -2159,6 +2179,12 @@ function registerLiftCommand(app: App | PluginApp): void {
                   '`/lift m 1/10-1/15` - Date range\n' +
                   '`/lift m confirm` - Confirm pending estimate\n' +
                   '`/lift m adjust c50 p30 f15` - Adjust and log'
+              ),
+              divider(),
+              section('*Bodyweight:*'),
+              section(
+                '`/lift bw <weight>` - Log today\'s bodyweight\n' +
+                  '`/lift bw` - Show trend (7d/30d)'
               ),
               divider(),
               section('*Settings:*'),
