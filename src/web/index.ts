@@ -5,6 +5,7 @@
 export { startWebServer, stopWebServer, getConversationUrl } from './server.js';
 export {
   renderConversation,
+  renderSessionList,
   render404,
   render401,
   renderLogin,

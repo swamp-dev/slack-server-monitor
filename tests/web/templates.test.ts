@@ -349,7 +349,7 @@ describe('web templates', () => {
 
       const html = renderConversation(messages, toolCalls, metadata);
 
-      expect(html).toContain('<a href="https://example.com/docs" rel="noopener">the docs</a>');
+      expect(html).toContain('<a href="https://example.com/docs" rel="noopener noreferrer">the docs</a>');
     });
 
     it('should not render javascript: links', () => {
