@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { ConfigSchema, type Config } from './schema.js';
 
 /**
@@ -10,7 +10,7 @@ import { ConfigSchema, type Config } from './schema.js';
 function validateCliBinary(cliPath: string): void {
   try {
     // Use 'which' on Unix-like systems to check if command exists
-    execSync(`which "${cliPath}"`, { stdio: 'ignore', timeout: 5000 });
+    execFileSync('which', [cliPath], { stdio: 'ignore', timeout: 5000 });
   } catch {
     throw new Error(
       `Claude CLI not found at '${cliPath}'. ` +
@@ -109,6 +109,22 @@ export function parseUserTokens(value: string | undefined): { userId: string; to
 }
 
 /**
+ * Parse a JSON string into a record, returning empty object on failure
+ */
+export function parseJsonRecord(value: string | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Load and validate configuration from environment variables
  */
 function loadConfig(): Config {
@@ -124,6 +140,7 @@ function loadConfig(): Config {
     rateLimit: {
       max: parseIntWithDefault(process.env.RATE_LIMIT_MAX, 10),
       windowSeconds: parseIntWithDefault(process.env.RATE_LIMIT_WINDOW_SECONDS, 60),
+      commands: parseJsonRecord(process.env.RATE_LIMIT_COMMANDS),
     },
     server: {
       dockerSocket: process.env.DOCKER_SOCKET ?? '/var/run/docker.sock',
@@ -157,6 +174,10 @@ function loadConfig(): Config {
           maxLogLines: parseIntWithDefault(process.env.CLAUDE_MAX_LOG_LINES, 50),
           contextDir: process.env.CLAUDE_CONTEXT_DIR ?? undefined,
           contextOptions: parseContextOptions(process.env.CLAUDE_CONTEXT_OPTIONS),
+          dbBackupEnabled: process.env.CLAUDE_DB_BACKUP_ENABLED === 'true',
+          dbBackupIntervalHours: parseIntWithDefault(process.env.CLAUDE_DB_BACKUP_INTERVAL_HOURS, 6),
+          dbBackupDir: process.env.CLAUDE_DB_BACKUP_DIR ?? undefined,
+          dbBackupRetain: parseIntWithDefault(process.env.CLAUDE_DB_BACKUP_RETAIN, 3),
         }
       : undefined,
     // Enable web server if WEB_ENABLED is set to true

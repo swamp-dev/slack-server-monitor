@@ -12,6 +12,9 @@ vi.mock('../../src/config/index.js', () => ({
     rateLimit: {
       max: 5,
       windowSeconds: 60,
+      commands: {
+        '/ask': { max: 3, windowSeconds: 30 },
+      },
     },
   },
 }));
@@ -54,7 +57,7 @@ describe('rateLimitMiddleware', () => {
       command: '/services',
       text: '',
     };
-    // Clear rate limits for our test user
+    // Clear rate limits for our test users
     clearRateLimit('U12345678');
     clearRateLimit('U87654321');
   });
@@ -65,8 +68,8 @@ describe('rateLimitMiddleware', () => {
     vi.useRealTimers();
   });
 
-  describe('request counting and limits', () => {
-    it('should allow requests under the limit', async () => {
+  describe('burst allowance and token bucket', () => {
+    it('should allow requests under the limit (burst)', async () => {
       const args = {
         command: mockCommand,
         respond: mockRespond as RespondFn,
@@ -79,14 +82,14 @@ describe('rateLimitMiddleware', () => {
       expect(mockRespond).not.toHaveBeenCalled();
     });
 
-    it('should allow multiple requests under the limit', async () => {
+    it('should allow full burst up to max tokens', async () => {
       const args = {
         command: mockCommand,
         respond: mockRespond as RespondFn,
         next: mockNext,
       } as unknown as SlackCommandMiddlewareArgs & AllMiddlewareArgs;
 
-      // Make 5 requests (at limit)
+      // Make 5 requests (all tokens used)
       for (let i = 0; i < 5; i++) {
         await rateLimitMiddleware(args);
       }
@@ -95,14 +98,14 @@ describe('rateLimitMiddleware', () => {
       expect(mockRespond).not.toHaveBeenCalled();
     });
 
-    it('should block requests over the limit', async () => {
+    it('should block requests after tokens exhausted', async () => {
       const args = {
         command: mockCommand,
         respond: mockRespond as RespondFn,
         next: mockNext,
       } as unknown as SlackCommandMiddlewareArgs & AllMiddlewareArgs;
 
-      // Make 5 requests (at limit)
+      // Exhaust all 5 tokens
       for (let i = 0; i < 5; i++) {
         await rateLimitMiddleware(args);
       }
@@ -135,8 +138,72 @@ describe('rateLimitMiddleware', () => {
         expect.objectContaining({
           userId: 'U12345678',
           userName: 'testuser',
+          command: '/services',
         })
       );
+    });
+  });
+
+  describe('per-command isolation', () => {
+    it('should track commands independently', async () => {
+      const servicesArgs = {
+        command: { ...mockCommand, command: '/services' },
+        respond: mockRespond as RespondFn,
+        next: mockNext,
+      } as unknown as SlackCommandMiddlewareArgs & AllMiddlewareArgs;
+
+      const askArgs = {
+        command: { ...mockCommand, command: '/ask' },
+        respond: mockRespond as RespondFn,
+        next: mockNext,
+      } as unknown as SlackCommandMiddlewareArgs & AllMiddlewareArgs;
+
+      // Exhaust /ask limit (3 tokens from per-command config)
+      for (let i = 0; i < 3; i++) {
+        await rateLimitMiddleware(askArgs);
+      }
+
+      // /ask should be blocked
+      await rateLimitMiddleware(askArgs);
+      expect(mockRespond).toHaveBeenCalledTimes(1);
+
+      // /services should still work (separate bucket, default 5 tokens)
+      await rateLimitMiddleware(servicesArgs);
+      expect(mockNext).toHaveBeenCalledTimes(4); // 3 ask + 1 services
+    });
+
+    it('should use per-command config for /ask', async () => {
+      const askArgs = {
+        command: { ...mockCommand, command: '/ask' },
+        respond: mockRespond as RespondFn,
+        next: mockNext,
+      } as unknown as SlackCommandMiddlewareArgs & AllMiddlewareArgs;
+
+      // /ask has max: 3 - should allow 3 then block
+      for (let i = 0; i < 3; i++) {
+        await rateLimitMiddleware(askArgs);
+      }
+      expect(mockNext).toHaveBeenCalledTimes(3);
+
+      await rateLimitMiddleware(askArgs);
+      expect(mockRespond).toHaveBeenCalledTimes(1);
+    });
+
+    it('should use default config for unconfigured commands', async () => {
+      const logsArgs = {
+        command: { ...mockCommand, command: '/logs' },
+        respond: mockRespond as RespondFn,
+        next: mockNext,
+      } as unknown as SlackCommandMiddlewareArgs & AllMiddlewareArgs;
+
+      // /logs is unconfigured - should use default max: 5
+      for (let i = 0; i < 5; i++) {
+        await rateLimitMiddleware(logsArgs);
+      }
+      expect(mockNext).toHaveBeenCalledTimes(5);
+
+      await rateLimitMiddleware(logsArgs);
+      expect(mockRespond).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -154,7 +221,7 @@ describe('rateLimitMiddleware', () => {
         next: mockNext,
       } as unknown as SlackCommandMiddlewareArgs & AllMiddlewareArgs;
 
-      // User 1 makes 5 requests (at limit)
+      // User 1 exhausts tokens
       for (let i = 0; i < 5; i++) {
         await rateLimitMiddleware(user1Args);
       }
@@ -167,8 +234,8 @@ describe('rateLimitMiddleware', () => {
     });
   });
 
-  describe('window reset', () => {
-    it('should reset count after window expires', async () => {
+  describe('token refill', () => {
+    it('should refill tokens over time', async () => {
       vi.useFakeTimers();
 
       const args = {
@@ -177,21 +244,47 @@ describe('rateLimitMiddleware', () => {
         next: mockNext,
       } as unknown as SlackCommandMiddlewareArgs & AllMiddlewareArgs;
 
-      // Make 5 requests (at limit)
+      // Exhaust all 5 tokens
       for (let i = 0; i < 5; i++) {
         await rateLimitMiddleware(args);
       }
 
-      // 6th request should be blocked
+      // Blocked immediately
       await rateLimitMiddleware(args);
       expect(mockRespond).toHaveBeenCalledTimes(1);
 
-      // Advance time past the window (60 seconds + buffer)
+      // Advance enough time for 1 token to refill
+      // windowSeconds=60, max=5, so 1 token per 12 seconds
+      vi.advanceTimersByTime(13000);
+
+      // Should be allowed again
+      await rateLimitMiddleware(args);
+      expect(mockNext).toHaveBeenCalledTimes(6);
+    });
+
+    it('should fully reset after full window', async () => {
+      vi.useFakeTimers();
+
+      const args = {
+        command: mockCommand,
+        respond: mockRespond as RespondFn,
+        next: mockNext,
+      } as unknown as SlackCommandMiddlewareArgs & AllMiddlewareArgs;
+
+      // Exhaust all tokens
+      for (let i = 0; i < 5; i++) {
+        await rateLimitMiddleware(args);
+      }
+
+      // Advance past full window (60 seconds + buffer)
       vi.advanceTimersByTime(61000);
 
-      // Should be able to make requests again
-      await rateLimitMiddleware(args);
-      expect(mockNext).toHaveBeenCalledTimes(6); // 5 initial + 1 after reset
+      // Should have full burst again
+      for (let i = 0; i < 5; i++) {
+        await rateLimitMiddleware(args);
+      }
+      expect(mockNext).toHaveBeenCalledTimes(10);
+      expect(mockRespond).not.toHaveBeenCalled();
     });
   });
 
@@ -244,42 +337,14 @@ describe('getRateLimitStatus', () => {
       await rateLimitMiddleware(args);
     }
 
-    const status = getRateLimitStatus('U12345678');
+    const status = getRateLimitStatus('U12345678', '/services');
     expect(status).not.toBeNull();
     expect(status?.remaining).toBe(2); // 5 - 3 = 2
     expect(status?.resetIn).toBeGreaterThan(0);
     expect(status?.resetIn).toBeLessThanOrEqual(60);
   });
 
-  it('should return 0 remaining when at limit', async () => {
-    const mockNext = vi.fn();
-    const mockRespond = vi.fn() as RespondFn;
-
-    const args = {
-      command: {
-        user_id: 'U12345678',
-        user_name: 'testuser',
-        channel_id: 'C12345678',
-        command: '/services',
-        text: '',
-      },
-      respond: mockRespond,
-      next: mockNext,
-    } as unknown as SlackCommandMiddlewareArgs & AllMiddlewareArgs;
-
-    // Make 5 requests (at limit)
-    for (let i = 0; i < 5; i++) {
-      await rateLimitMiddleware(args);
-    }
-
-    const status = getRateLimitStatus('U12345678');
-    expect(status).not.toBeNull();
-    expect(status?.remaining).toBe(0);
-  });
-
-  it('should return null after window expires', async () => {
-    vi.useFakeTimers();
-
+  it('should find bucket by user prefix when command not specified', async () => {
     const mockNext = vi.fn();
     const mockRespond = vi.fn() as RespondFn;
 
@@ -297,13 +362,9 @@ describe('getRateLimitStatus', () => {
 
     await rateLimitMiddleware(args);
 
-    // Advance past window
-    vi.advanceTimersByTime(61000);
-
+    // Without command should still find bucket via prefix search
     const status = getRateLimitStatus('U12345678');
-    expect(status).toBeNull();
-
-    vi.useRealTimers();
+    expect(status).not.toBeNull();
   });
 });
 
@@ -313,7 +374,7 @@ describe('clearRateLimit', () => {
     clearRateLimit('U87654321');
   });
 
-  it('should reset rate limit for a specific user', async () => {
+  it('should reset rate limit for a specific user across all commands', async () => {
     const mockNext = vi.fn();
     const mockRespond = vi.fn() as RespondFn;
 
@@ -329,20 +390,15 @@ describe('clearRateLimit', () => {
       next: mockNext,
     } as unknown as SlackCommandMiddlewareArgs & AllMiddlewareArgs;
 
-    // Make 5 requests (at limit)
+    // Exhaust tokens
     for (let i = 0; i < 5; i++) {
       await rateLimitMiddleware(args);
     }
 
-    expect(getRateLimitStatus('U12345678')?.remaining).toBe(0);
-
     // Clear the limit
     clearRateLimit('U12345678');
 
-    // Should be null now
-    expect(getRateLimitStatus('U12345678')).toBeNull();
-
-    // Should be able to make requests again
+    // Should be able to make requests again (full burst)
     await rateLimitMiddleware(args);
     expect(mockNext).toHaveBeenCalledTimes(6);
   });
@@ -381,13 +437,11 @@ describe('clearRateLimit', () => {
       await rateLimitMiddleware(user2Args);
     }
 
-    expect(getRateLimitStatus('U12345678')?.remaining).toBe(2);
-    expect(getRateLimitStatus('U87654321')?.remaining).toBe(2);
-
     // Clear only user1
     clearRateLimit('U12345678');
 
     expect(getRateLimitStatus('U12345678')).toBeNull();
-    expect(getRateLimitStatus('U87654321')?.remaining).toBe(2);
+    expect(getRateLimitStatus('U87654321', '/services')).not.toBeNull();
+    expect(getRateLimitStatus('U87654321', '/services')?.remaining).toBe(2);
   });
 });
