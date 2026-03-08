@@ -73,7 +73,7 @@ async function handleList(
   store: ReturnType<typeof getConversationStore>,
   userId?: string
 ): Promise<void> {
-  const sessions = store.listRecentSessions(20, userId);
+  const sessions = store.listRecentSessions(20, 0, userId);
 
   if (sessions.length === 0) {
     await respond({

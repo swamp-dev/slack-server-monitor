@@ -98,7 +98,7 @@ describe('SessionsCommand', () => {
       store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
       store.createConversation('3333.0003', 'C123ABC', 'U456DEF', []);
 
-      const sessions = store.listRecentSessions(20, 'U456DEF');
+      const sessions = store.listRecentSessions(20, 0, 'U456DEF');
 
       expect(sessions).toHaveLength(2);
       expect(sessions.every((s) => s.userId === 'U456DEF')).toBe(true);

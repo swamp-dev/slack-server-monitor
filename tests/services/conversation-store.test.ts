@@ -171,7 +171,7 @@ describe('ConversationStore', () => {
       store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
       store.createConversation('3333.0003', 'C123ABC', 'U456DEF', []);
 
-      const sessions = store.listRecentSessions(20, 'U456DEF');
+      const sessions = store.listRecentSessions(20, 0, 'U456DEF');
 
       expect(sessions).toHaveLength(2);
       expect(sessions.every((s) => s.userId === 'U456DEF')).toBe(true);
@@ -446,6 +446,151 @@ describe('ConversationStore', () => {
       try { fs.unlinkSync(oldDbPath); } catch { /* ignore */ }
       try { fs.unlinkSync(oldDbPath + '-wal'); } catch { /* ignore */ }
       try { fs.unlinkSync(oldDbPath + '-shm'); } catch { /* ignore */ }
+    });
+  });
+
+  describe('pagination', () => {
+    it('listRecentSessions supports offset for pagination', () => {
+      // Create 5 conversations
+      for (let i = 1; i <= 5; i++) {
+        store.createConversation(`${String(i)}000.000${String(i)}`, 'C123ABC', 'U456DEF', []);
+      }
+
+      const page1 = store.listRecentSessions(2, 0);
+      const page2 = store.listRecentSessions(2, 2);
+      const page3 = store.listRecentSessions(2, 4);
+
+      expect(page1).toHaveLength(2);
+      expect(page2).toHaveLength(2);
+      expect(page3).toHaveLength(1);
+
+      // Pages should have different conversations
+      const allIds = [...page1, ...page2, ...page3].map((s) => s.id);
+      expect(new Set(allIds).size).toBe(5);
+    });
+
+    it('countSessions returns total count', () => {
+      store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+      store.createConversation('3333.0003', 'C123ABC', 'U456DEF', []);
+
+      expect(store.countSessions()).toBe(3);
+      expect(store.countSessions('U456DEF')).toBe(2);
+      expect(store.countSessions('U789GHI')).toBe(1);
+    });
+
+    it('countSessions excludes archived conversations', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+
+      // Archive one
+      store.getDatabase().prepare('UPDATE conversations SET archived_at = ? WHERE id = ?')
+        .run(Date.now(), conv.id);
+
+      expect(store.countSessions()).toBe(1);
+    });
+  });
+
+  describe('archiving', () => {
+    it('listRecentSessions excludes archived conversations', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+
+      // Archive one
+      store.getDatabase().prepare('UPDATE conversations SET archived_at = ? WHERE id = ?')
+        .run(Date.now(), conv.id);
+
+      const sessions = store.listRecentSessions();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.threadTs).toBe('2222.0002');
+    });
+
+    it('listArchivedSessions returns only archived conversations', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+
+      // Archive one
+      store.getDatabase().prepare('UPDATE conversations SET archived_at = ? WHERE id = ?')
+        .run(Date.now(), conv.id);
+
+      const archived = store.listArchivedSessions();
+      expect(archived).toHaveLength(1);
+      expect(archived[0]?.threadTs).toBe('1111.0001');
+    });
+
+    it('countArchivedSessions returns correct count', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+
+      expect(store.countArchivedSessions()).toBe(0);
+
+      store.getDatabase().prepare('UPDATE conversations SET archived_at = ? WHERE id = ?')
+        .run(Date.now(), conv.id);
+
+      expect(store.countArchivedSessions()).toBe(1);
+    });
+
+    it('unarchiveConversation restores from archive', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      // Archive it
+      store.getDatabase().prepare('UPDATE conversations SET archived_at = ? WHERE id = ?')
+        .run(Date.now(), conv.id);
+      expect(store.listRecentSessions()).toHaveLength(0);
+
+      // Unarchive it
+      const result = store.unarchiveConversation(conv.id);
+      expect(result).toBe(true);
+      expect(store.listRecentSessions()).toHaveLength(1);
+    });
+
+    it('unarchiveConversation returns false for non-archived conversation', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      const result = store.unarchiveConversation(conv.id);
+      expect(result).toBe(false);
+    });
+
+    it('archiveExpired archives conversations past TTL', () => {
+      // Create a store with 1 hour TTL
+      const shortTtlStore = new ConversationStore(testDbPath, 1);
+
+      // Create a conversation and backdate it
+      shortTtlStore.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      shortTtlStore.getDatabase().prepare('UPDATE conversations SET updated_at = ? WHERE thread_ts = ?')
+        .run(Date.now() - 2 * 60 * 60 * 1000, '1111.0001'); // 2 hours ago
+
+      // Create a recent one
+      shortTtlStore.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+
+      const archived = shortTtlStore.archiveExpired();
+      expect(archived).toBe(1);
+
+      expect(shortTtlStore.listRecentSessions()).toHaveLength(1);
+      expect(shortTtlStore.listArchivedSessions()).toHaveLength(1);
+    });
+
+    it('cleanupExpired does two-phase: archive then hard-delete', () => {
+      // Create a store with 1 hour TTL
+      const shortTtlStore = new ConversationStore(testDbPath, 1);
+
+      // Create a conversation that's already archived and past TTL
+      shortTtlStore.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      shortTtlStore.getDatabase().prepare('UPDATE conversations SET updated_at = ?, archived_at = ? WHERE thread_ts = ?')
+        .run(Date.now() - 3 * 60 * 60 * 1000, Date.now() - 2 * 60 * 60 * 1000, '1111.0001');
+
+      // Create a recent one
+      shortTtlStore.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+
+      const cleaned = shortTtlStore.cleanupExpired();
+      expect(cleaned).toBeGreaterThanOrEqual(1);
+
+      // Archived conversation should be hard-deleted
+      const conv = shortTtlStore.getConversation('1111.0001', 'C123ABC');
+      expect(conv).toBeNull();
+
+      // Recent one should still exist
+      expect(shortTtlStore.getConversation('2222.0002', 'C123ABC')).not.toBeNull();
     });
   });
 });
