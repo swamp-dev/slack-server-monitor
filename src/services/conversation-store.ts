@@ -39,6 +39,17 @@ export interface Conversation {
   messages: ConversationMessage[];
   createdAt: number;
   updatedAt: number;
+  archivedAt: number | null;
+}
+
+/**
+ * Pagination metadata
+ */
+export interface PaginationInfo {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
 }
 
 /**
@@ -67,6 +78,7 @@ export interface SessionSummary {
   toolCallCount: number;
   createdAt: number;
   updatedAt: number;
+  archivedAt: number | null;
   isActive: boolean; // updatedAt within last 5 minutes
 }
 
@@ -150,15 +162,25 @@ export class ConversationStore {
     `);
 
     // Migrate: add duration_ms and success columns if missing
-    const columns = this.db
+    const toolColumns = this.db
       .prepare("PRAGMA table_info(tool_calls)")
       .all() as { name: string }[];
-    const columnNames = new Set(columns.map((c) => c.name));
-    if (!columnNames.has('duration_ms')) {
+    const toolColumnNames = new Set(toolColumns.map((c) => c.name));
+    if (!toolColumnNames.has('duration_ms')) {
       this.db.exec('ALTER TABLE tool_calls ADD COLUMN duration_ms INTEGER');
     }
-    if (!columnNames.has('success')) {
+    if (!toolColumnNames.has('success')) {
       this.db.exec('ALTER TABLE tool_calls ADD COLUMN success INTEGER NOT NULL DEFAULT 1');
+    }
+
+    // Migrate: add archived_at column if missing
+    const convColumns = this.db
+      .prepare("PRAGMA table_info(conversations)")
+      .all() as { name: string }[];
+    const convColumnNames = new Set(convColumns.map((c) => c.name));
+    if (!convColumnNames.has('archived_at')) {
+      this.db.exec('ALTER TABLE conversations ADD COLUMN archived_at INTEGER');
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_conversations_archived ON conversations(archived_at)');
     }
 
     logger.debug('Conversation store schema initialized');
@@ -178,6 +200,7 @@ export class ConversationStore {
         messages: string;
         created_at: number;
         updated_at: number;
+        archived_at: number | null;
       } | undefined;
 
     if (!row) {
@@ -192,6 +215,7 @@ export class ConversationStore {
       messages: JSON.parse(row.messages) as ConversationMessage[],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      archivedAt: row.archived_at,
     };
   }
 
@@ -222,6 +246,7 @@ export class ConversationStore {
       messages,
       createdAt: now,
       updatedAt: now,
+      archivedAt: null,
     };
   }
 
@@ -286,6 +311,7 @@ export class ConversationStore {
         messages: string;
         created_at: number;
         updated_at: number;
+        archived_at: number | null;
       } | undefined;
 
     if (!row) {
@@ -300,6 +326,7 @@ export class ConversationStore {
       messages: JSON.parse(row.messages) as ConversationMessage[],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      archivedAt: row.archived_at,
     };
   }
 
@@ -327,62 +354,94 @@ export class ConversationStore {
   }
 
   /**
-   * Clean up expired conversations
+   * Clean up expired conversations (two-phase: archive then hard-delete)
+   *
+   * Phase 1: Archive active conversations past TTL (soft-delete)
+   * Phase 2: Hard-delete conversations archived for longer than TTL
    */
   cleanupExpired(): number {
     const cutoff = Date.now() - this.ttlHours * 60 * 60 * 1000;
 
-    // Delete tool calls for expired conversations
-    this.db
-      .prepare(`
-        DELETE FROM tool_calls
-        WHERE conversation_id IN (
-          SELECT id FROM conversations WHERE updated_at < ?
-        )
-      `)
-      .run(cutoff);
+    // Phase 1: Archive expired active conversations
+    const archived = this.archiveExpired();
 
-    // Delete expired conversations
-    const result = this.db
-      .prepare('DELETE FROM conversations WHERE updated_at < ?')
-      .run(cutoff);
+    // Phase 2: Hard-delete conversations that have been archived past TTL
+    const archiveCutoff = cutoff;
+    const deleteArchived = this.db.transaction(() => {
+      this.db.prepare(`
+        DELETE FROM tool_calls WHERE conversation_id IN (
+          SELECT id FROM conversations WHERE archived_at IS NOT NULL AND archived_at < ?
+        )
+      `).run(archiveCutoff);
+      return this.db.prepare('DELETE FROM conversations WHERE archived_at IS NOT NULL AND archived_at < ?')
+        .run(archiveCutoff);
+    });
+    const result = deleteArchived();
 
     if (result.changes > 0) {
-      logger.info('Cleaned up expired conversations', { count: result.changes });
+      logger.info('Hard-deleted archived conversations', { count: result.changes });
+    }
+
+    return archived + result.changes;
+  }
+
+  /**
+   * Archive expired conversations (soft-delete)
+   * Sets archived_at = now for active conversations past TTL
+   */
+  archiveExpired(): number {
+    const cutoff = Date.now() - this.ttlHours * 60 * 60 * 1000;
+    const now = Date.now();
+
+    const result = this.db
+      .prepare('UPDATE conversations SET archived_at = ? WHERE archived_at IS NULL AND updated_at < ?')
+      .run(now, cutoff);
+
+    if (result.changes > 0) {
+      logger.info('Archived expired conversations', { count: result.changes });
     }
 
     return result.changes;
   }
 
   /**
-   * List recent sessions with metrics
+   * Unarchive a conversation (restore from archive)
+   */
+  unarchiveConversation(id: number): boolean {
+    const result = this.db
+      .prepare('UPDATE conversations SET archived_at = NULL WHERE id = ? AND archived_at IS NOT NULL')
+      .run(id);
+    return result.changes > 0;
+  }
+
+  /**
+   * List recent sessions with metrics (excludes archived)
    *
    * @param limit - Maximum number of sessions to return (default: 20)
+   * @param offset - Number of sessions to skip (default: 0)
    * @param userId - Filter to sessions started by this user (optional)
    */
-  listRecentSessions(limit = 20, userId?: string): SessionSummary[] {
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000; // Last 24 hours
+  listRecentSessions(limit = 20, offset = 0, userId?: string): SessionSummary[] {
     const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
 
-    // Use LEFT JOIN instead of correlated subquery to avoid N+1 queries
     const rows = this.db
       .prepare(`
         SELECT
           c.id, c.thread_ts, c.channel_id, c.user_id,
-          c.messages, c.created_at, c.updated_at,
+          c.messages, c.created_at, c.updated_at, c.archived_at,
           COUNT(tc.id) as tool_call_count
         FROM conversations c
         LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
         WHERE ($userId IS NULL OR c.user_id = $userId)
-          AND c.updated_at > $cutoff
+          AND c.archived_at IS NULL
         GROUP BY c.id
         ORDER BY c.updated_at DESC, c.id DESC
-        LIMIT $limit
+        LIMIT $limit OFFSET $offset
       `)
       .all({
         userId: userId ?? null,
-        cutoff,
         limit,
+        offset,
       }) as {
         id: number;
         thread_ts: string;
@@ -391,6 +450,7 @@ export class ConversationStore {
         messages: string;
         created_at: number;
         updated_at: number;
+        archived_at: number | null;
         tool_call_count: number;
       }[];
 
@@ -405,9 +465,82 @@ export class ConversationStore {
         toolCallCount: row.tool_call_count,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
+        archivedAt: row.archived_at,
         isActive: row.updated_at > activeThreshold,
       };
     });
+  }
+
+  /**
+   * Count total sessions (excludes archived)
+   */
+  countSessions(userId?: string): number {
+    const row = this.db
+      .prepare(`
+        SELECT COUNT(*) as count FROM conversations
+        WHERE ($userId IS NULL OR user_id = $userId)
+          AND archived_at IS NULL
+      `)
+      .get({ userId: userId ?? null }) as { count: number };
+    return row.count;
+  }
+
+  /**
+   * List archived sessions with pagination
+   */
+  listArchivedSessions(limit = 20, offset = 0): SessionSummary[] {
+    const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
+
+    const rows = this.db
+      .prepare(`
+        SELECT
+          c.id, c.thread_ts, c.channel_id, c.user_id,
+          c.messages, c.created_at, c.updated_at, c.archived_at,
+          COUNT(tc.id) as tool_call_count
+        FROM conversations c
+        LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
+        WHERE c.archived_at IS NOT NULL
+        GROUP BY c.id
+        ORDER BY c.archived_at DESC, c.id DESC
+        LIMIT $limit OFFSET $offset
+      `)
+      .all({ limit, offset }) as {
+        id: number;
+        thread_ts: string;
+        channel_id: string;
+        user_id: string;
+        messages: string;
+        created_at: number;
+        updated_at: number;
+        archived_at: number | null;
+        tool_call_count: number;
+      }[];
+
+    return rows.map((row) => {
+      const messages = JSON.parse(row.messages) as ConversationMessage[];
+      return {
+        id: row.id,
+        threadTs: row.thread_ts,
+        channelId: row.channel_id,
+        userId: row.user_id,
+        messageCount: messages.length,
+        toolCallCount: row.tool_call_count,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        archivedAt: row.archived_at,
+        isActive: row.updated_at > activeThreshold,
+      };
+    });
+  }
+
+  /**
+   * Count archived sessions
+   */
+  countArchivedSessions(): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) as count FROM conversations WHERE archived_at IS NOT NULL')
+      .get() as { count: number };
+    return row.count;
   }
 
   /**
@@ -439,6 +572,7 @@ export class ConversationStore {
       toolCallCount: countRow.count,
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
+      archivedAt: conversation.archivedAt,
       isActive: conversation.updatedAt > activeThreshold,
       recentToolCalls: toolCalls,
     };
@@ -570,6 +704,13 @@ export class ConversationStore {
       durationMs: row.duration_ms,
       success: row.success !== 0,
     }));
+  }
+
+  /**
+   * Get the underlying database instance (for backup service)
+   */
+  getDatabase(): Database.Database {
+    return this.db;
   }
 
   /**

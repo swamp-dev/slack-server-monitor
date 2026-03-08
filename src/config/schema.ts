@@ -130,6 +130,14 @@ export const ConfigSchema = z.object({
     max: z.number().int().positive().default(10),
     /** Rate limit window in seconds */
     windowSeconds: z.number().int().positive().default(60),
+    /** Per-command rate limit overrides */
+    commands: z.record(
+      z.string(),
+      z.object({
+        max: z.number().int().positive(),
+        windowSeconds: z.number().int().positive(),
+      })
+    ).default({}),
   }),
 
   server: z.object({
@@ -189,6 +197,14 @@ export const ConfigSchema = z.object({
     contextDir: z.string().optional(),
     /** Available context directories that can be switched per-channel */
     contextOptions: z.array(ContextOptionSchema).default([]),
+    /** Enable periodic database backups */
+    dbBackupEnabled: z.boolean().default(false),
+    /** Interval between backups in hours */
+    dbBackupIntervalHours: z.number().int().positive().default(6),
+    /** Directory to store backup files */
+    dbBackupDir: z.string().optional(),
+    /** Number of backup files to retain */
+    dbBackupRetain: z.number().int().positive().default(3),
   }).optional(),
 
   /** Web server for hosting long Claude responses */

@@ -1,11 +1,15 @@
+import path from 'path';
 import { App, LogLevel } from '@slack/bolt';
 import { config } from './config/index.js';
-import { authorizeMiddleware, rateLimitMiddleware, auditLogMiddleware } from './middleware/index.js';
+import { authorizeMiddleware, rateLimitMiddleware, auditLogMiddleware, stopRateLimitCleanup } from './middleware/index.js';
 import { registerCommands } from './commands/index.js';
 import { destroyPlugins } from './plugins/index.js';
 import { logger } from './utils/logger.js';
 import { closeConversationStore, getConversationStore } from './services/conversation-store.js';
+import { startBackupSchedule } from './services/db-backup.js';
 import { startWebServer, stopWebServer } from './web/index.js';
+
+let stopBackupSchedule: (() => void) | null = null;
 
 /**
  * Slack Server Monitor
@@ -62,6 +66,8 @@ async function shutdown(signal: string): Promise<void> {
   logger.info(`Received ${signal}, shutting down gracefully...`);
 
   try {
+    stopBackupSchedule?.();
+    stopRateLimitCleanup();
     await app.stop();
     await stopWebServer();
     await destroyPlugins();
@@ -90,6 +96,17 @@ async function main(): Promise<void> {
       if (cleaned > 0) {
         logger.info('Cleaned up expired conversations on startup', { count: cleaned });
       }
+    }
+
+    // Start database backup schedule if enabled
+    if (config.claude?.dbBackupEnabled) {
+      const store = getConversationStore(config.claude.dbPath, config.claude.conversationTtlHours);
+      const backupDir = config.claude.dbBackupDir ?? path.join(path.dirname(config.claude.dbPath), 'backups');
+      stopBackupSchedule = startBackupSchedule(store.getDatabase(), {
+        intervalHours: config.claude.dbBackupIntervalHours,
+        backupDir,
+        retain: config.claude.dbBackupRetain,
+      });
     }
 
     // Start web server if enabled

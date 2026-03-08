@@ -33,12 +33,12 @@ function escapeMarkdown(text: string): string {
  * Custom marked renderer for security and styling
  */
 const renderer: Partial<Renderer> = {
-  // Restrict links to http/https only, add rel="noopener", escape all values
+  // Restrict links to http/https only, add rel="noopener noreferrer", escape all values
   link({ href, text }: Tokens.Link) {
     if (!href.startsWith('http://') && !href.startsWith('https://')) {
       return escapeHtml(text);
     }
-    return `<a href="${escapeHtml(href)}" rel="noopener">${escapeHtml(text)}</a>`;
+    return `<a href="${escapeHtml(href)}" rel="noopener noreferrer">${escapeHtml(text)}</a>`;
   },
   // Block raw HTML to prevent XSS
   html({ text }: Tokens.HTML) {
@@ -392,6 +392,147 @@ const styles = `
     }
   }
 `;
+
+/**
+ * Additional styles for the session list page
+ */
+const sessionListStyles = `
+  .nav-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--border-color);
+    margin-bottom: 24px;
+  }
+  .nav-tabs a {
+    padding: 10px 20px;
+    color: var(--text-muted);
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    font-size: 0.9375rem;
+  }
+  .nav-tabs a.active {
+    color: var(--accent-color);
+    border-bottom-color: var(--accent-color);
+  }
+  .nav-tabs a:hover:not(.active) {
+    color: var(--text-color);
+  }
+  .session-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-color);
+    text-decoration: none;
+    color: var(--text-color);
+  }
+  .session-row:hover {
+    background: var(--user-bg);
+  }
+  .session-meta {
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+  }
+  .session-stats {
+    text-align: right;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+  .pagination {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    margin-top: 24px;
+    padding: 16px 0;
+  }
+  .pagination a, .pagination span {
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    text-decoration: none;
+  }
+  .pagination a {
+    background: var(--card-bg);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+  }
+  .pagination a:hover {
+    background: var(--user-bg);
+  }
+  .pagination span {
+    color: var(--text-muted);
+  }
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+  }
+`;
+
+import type { SessionSummary, PaginationInfo } from '../services/conversation-store.js';
+
+/**
+ * Render the session list page
+ */
+export function renderSessionList(
+  sessions: SessionSummary[],
+  pagination: PaginationInfo,
+  options: { archived?: boolean } = {}
+): string {
+  const isArchived = options.archived ?? false;
+  const title = isArchived ? 'Archived Conversations' : 'Conversations';
+  const basePath = isArchived ? '/c/archived' : '/c';
+
+  const sessionRows = sessions.length === 0
+    ? '<div class="empty-state"><p>No conversations found.</p></div>'
+    : sessions.map((s) => {
+        const link = `/c/${encodeURIComponent(s.threadTs)}/${encodeURIComponent(s.channelId)}`;
+        const date = formatTimestamp(s.updatedAt);
+        return `<a href="${escapeHtml(link)}" class="session-row">
+          <div>
+            <div>${escapeHtml(s.userId)} &middot; ${escapeHtml(s.channelId)}</div>
+            <div class="session-meta">${date}</div>
+          </div>
+          <div class="session-stats">
+            ${String(s.messageCount)} msgs &middot; ${String(s.toolCallCount)} tools
+          </div>
+        </a>`;
+      }).join('\n');
+
+  const paginationHtml = pagination.totalPages > 1
+    ? `<div class="pagination">
+        ${pagination.page > 1
+          ? `<a href="${basePath}?page=${String(pagination.page - 1)}&pageSize=${String(pagination.pageSize)}">Previous</a>`
+          : '<span>Previous</span>'}
+        <span>Page ${String(pagination.page)} of ${String(pagination.totalPages)}</span>
+        ${pagination.page < pagination.totalPages
+          ? `<a href="${basePath}?page=${String(pagination.page + 1)}&pageSize=${String(pagination.pageSize)}">Next</a>`
+          : '<span>Next</span>'}
+      </div>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(title)}</title>
+  <style>${styles}${sessionListStyles}</style>
+</head>
+<body>
+  <main class="container">
+    <h1>${escapeHtml(title)}</h1>
+    <nav class="nav-tabs">
+      <a href="/c" class="${isArchived ? '' : 'active'}">Active</a>
+      <a href="/c/archived" class="${isArchived ? 'active' : ''}">Archived</a>
+    </nav>
+    ${sessionRows}
+    ${paginationHtml}
+  </main>
+</body>
+</html>`;
+}
 
 /**
  * Render a single message

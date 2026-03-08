@@ -19,7 +19,7 @@ import { getConversationStore } from '../services/conversation-store.js';
 import { getSessionStore, closeSessionStore } from '../services/session-store.js';
 import { resolveToken, parseCookies } from './auth.js';
 import { logger } from '../utils/logger.js';
-import { renderConversation, renderMarkdownExport, render404, render401, renderLogin } from './templates.js';
+import { renderConversation, renderMarkdownExport, renderSessionList, render404, render401, renderLogin, renderError } from './templates.js';
 
 const SESSION_COOKIE = 'ssm_session';
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -187,6 +187,50 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   // Apply session auth middleware to conversation routes
   app.use('/c', sessionAuthMiddleware(webConfig, dbPath));
 
+  // Session list endpoint: GET /c
+  app.get('/c', (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const page = typeof req.query.page === 'string' ? Math.max(1, parseInt(req.query.page, 10) || 1) : 1;
+      const pageSize = typeof req.query.pageSize === 'string' ? Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 20)) : 20;
+      const offset = (page - 1) * pageSize;
+
+      const sessions = store.listRecentSessions(pageSize, offset);
+      const totalItems = store.countSessions();
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+
+      const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages });
+      res.type('html').send(html);
+    } catch (err) {
+      logger.error('Error serving session list', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).send(renderError('Failed to load conversations.'));
+    }
+  });
+
+  // Archived session list endpoint: GET /c/archived
+  app.get('/c/archived', (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const page = typeof req.query.page === 'string' ? Math.max(1, parseInt(req.query.page, 10) || 1) : 1;
+      const pageSize = typeof req.query.pageSize === 'string' ? Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 20)) : 20;
+      const offset = (page - 1) * pageSize;
+
+      const sessions = store.listArchivedSessions(pageSize, offset);
+      const totalItems = store.countArchivedSessions();
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+
+      const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages }, { archived: true });
+      res.type('html').send(html);
+    } catch (err) {
+      logger.error('Error serving archived session list', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).send(renderError('Failed to load archived conversations.'));
+    }
+  });
+
   // Conversation endpoint: GET /c/:threadTs/:channelId
   app.get('/c/:threadTs/:channelId', (req: Request, res: Response) => {
     const threadTs = req.params.threadTs;
@@ -230,7 +274,7 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         threadTs,
         channelId,
       });
-      res.status(500).send(render404());
+      res.status(500).send(renderError('An unexpected error occurred.'));
     }
   });
 
@@ -274,7 +318,7 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         threadTs,
         channelId,
       });
-      res.status(500).send(render404());
+      res.status(500).send(renderError('An unexpected error occurred.'));
     }
   });
 
