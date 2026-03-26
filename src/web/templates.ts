@@ -571,8 +571,11 @@ const sessionListStyles = `
   }
   .favorite-star {
     color: var(--text-muted);
-    font-size: 1rem;
+    font-size: 1.4rem;
+    padding: 4px 6px;
     cursor: pointer;
+    display: inline-block;
+    line-height: 1;
   }
   .favorite-star.active {
     color: #ffd93d;
@@ -690,9 +693,10 @@ export function renderSessionList(
         const tagPills = (s.tags ?? []).map((t) =>
           `<span class="tag">${escapeHtml(t)}</span>`
         ).join('');
+        const title = s.firstMessage ? escapeHtml(s.firstMessage) : `${escapeHtml(s.userId)} &middot; ${escapeHtml(s.channelId)}`;
         return `<a href="${escapeHtml(link)}" class="session-row">
           <div>
-            <div><span class="${starClass}" data-id="${String(s.id)}">&#9733;</span> ${escapeHtml(s.userId)} &middot; ${escapeHtml(s.channelId)}</div>
+            <div><span class="${starClass}" data-id="${String(s.id)}">&#9733;</span> ${title}</div>
             <div class="session-meta">${date}${tagPills ? ` ${tagPills}` : ''}</div>
           </div>
           <div class="session-stats">
@@ -747,6 +751,26 @@ export function renderSessionList(
     </div>
     ${paginationHtml}
   </main>
+  <script>
+  (function() {
+    document.querySelectorAll('.favorite-star').forEach(function(star) {
+      star.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var id = star.getAttribute('data-id');
+        fetch('/c/' + id + '/favorite', { method: 'POST', credentials: 'same-origin' })
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            if (data.isFavorited) {
+              star.classList.add('active');
+            } else {
+              star.classList.remove('active');
+            }
+          });
+      });
+    });
+  })();
+  </script>
 </body>
 </html>`;
 }
@@ -888,6 +912,107 @@ function renderContinueScript(): string {
 /**
  * Render the full conversation page
  */
+/**
+ * Additional styles for the conversation detail page
+ */
+const conversationDetailStyles = `
+  .nav-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border-color);
+  }
+  .nav-bar a {
+    color: #64ffda;
+    text-decoration: none;
+    font-size: 0.875rem;
+  }
+  .nav-bar a:hover {
+    text-decoration: underline;
+  }
+  .nav-bar .app-name {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+  }
+  .detail-favorite-star {
+    color: var(--text-muted);
+    font-size: 1.4rem;
+    padding: 4px 6px;
+    cursor: pointer;
+    display: inline-block;
+    line-height: 1;
+    border: none;
+    background: none;
+  }
+  .detail-favorite-star.active {
+    color: #ffd93d;
+  }
+  .tag-input-form {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .tag-input-form input {
+    padding: 4px 8px;
+    font-size: 0.8125rem;
+    font-family: inherit;
+    background: var(--code-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-color);
+    outline: none;
+    width: 140px;
+  }
+  .tag-input-form input:focus {
+    border-color: var(--accent-color);
+  }
+  .tag-input-form button {
+    padding: 4px 10px;
+    font-size: 0.8125rem;
+    font-family: inherit;
+    color: #fff;
+    background: var(--accent-color);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .detail-tags {
+    margin-top: 8px;
+  }
+  .detail-tags .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 0.6875rem;
+    background: rgba(100, 255, 218, 0.1);
+    color: #64ffda;
+    border-radius: 10px;
+    margin-right: 4px;
+  }
+  .archive-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 0.8125rem;
+    font-family: inherit;
+    color: var(--text-color);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .archive-btn:hover {
+    background: rgba(233, 69, 96, 0.15);
+  }
+`;
+
+/**
+ * Render the full conversation page
+ */
 export function renderConversation(
   messages: ConversationMessage[],
   toolCalls: ToolCallLog[],
@@ -897,6 +1022,9 @@ export function renderConversation(
     createdAt: number;
     updatedAt: number;
     canContinue?: boolean;
+    conversationId?: number;
+    isFavorited?: boolean;
+    tags?: string[];
   }
 ): string {
   const messagesHtml = messages.length > 0
@@ -907,6 +1035,18 @@ export function renderConversation(
   const continueFormHtml = metadata.canContinue ? renderContinueForm() : '';
   const continueScriptHtml = metadata.canContinue ? `<script>${renderContinueScript()}</script>` : '';
 
+  const starClass = metadata.isFavorited ? 'detail-favorite-star active' : 'detail-favorite-star';
+  const convId = metadata.conversationId != null ? String(metadata.conversationId) : '';
+  const tagPills = (metadata.tags ?? []).map((t) =>
+    `<span class="tag">${escapeHtml(t)}</span>`
+  ).join('');
+  const tagInputHtml = convId ? `
+    <form class="tag-input-form" id="tag-input-form">
+      <input type="text" id="tag-input" placeholder="Add tag..." maxlength="50">
+      <button type="submit">Add</button>
+    </form>` : '';
+  const archiveHtml = convId ? `<button class="archive-btn" id="archive-btn" type="button">Archive</button>` : '';
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -915,19 +1055,26 @@ export function renderConversation(
   <meta name="robots" content="noindex, nofollow">
   <title>Claude Conversation</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH" crossorigin="anonymous">
-  <style>${styles}</style>
+  <style>${styles}${conversationDetailStyles}</style>
 </head>
 <body>
+  <nav class="nav-bar">
+    <a href="/c">&larr; Back to conversations</a>
+    <span class="app-name">Slack Server Monitor</span>
+  </nav>
   <header>
     <div class="container">
-      <h1>Claude Conversation</h1>
+      <h1>${convId ? `<span class="${starClass}" data-id="${convId}" id="detail-star">&#9733;</span> ` : ''}Claude Conversation</h1>
       <div class="meta">
         Started: ${formatTimestamp(metadata.createdAt)} |
         Last updated: ${formatTimestamp(metadata.updatedAt)}
       </div>
+      <div class="detail-tags" id="detail-tags">${tagPills}</div>
+      ${tagInputHtml}
       <div class="export-actions">
         <a class="export-btn" id="export-md" href="/c/${metadata.threadTs}/${metadata.channelId}/export/md">Export Markdown</a>
         <button class="export-btn" id="copy-clipboard" type="button">Copy to Clipboard</button>
+        ${archiveHtml}
       </div>
     </div>
   </header>
@@ -966,6 +1113,75 @@ export function renderConversation(
         });
       }
     })();
+  </script>
+  <script>
+  (function() {
+    var convId = '${convId}';
+    if (!convId) return;
+
+    // Favorite star toggle
+    var star = document.getElementById('detail-star');
+    if (star) {
+      star.addEventListener('click', function(e) {
+        e.preventDefault();
+        fetch('/c/' + convId + '/favorite', { method: 'POST', credentials: 'same-origin' })
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            if (data.isFavorited) {
+              star.classList.add('active');
+            } else {
+              star.classList.remove('active');
+            }
+          });
+      });
+    }
+
+    // Tag input
+    var tagForm = document.getElementById('tag-input-form');
+    var tagInput = document.getElementById('tag-input');
+    var tagsDiv = document.getElementById('detail-tags');
+    if (tagForm && tagInput && tagsDiv) {
+      tagForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var tag = tagInput.value.trim().toLowerCase();
+        if (!tag) return;
+        fetch('/c/' + convId + '/tag', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tag: tag }),
+          credentials: 'same-origin'
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if (data.tags) {
+            tagsDiv.textContent = '';
+            data.tags.forEach(function(t) {
+              var span = document.createElement('span');
+              span.className = 'tag';
+              span.textContent = t;
+              tagsDiv.appendChild(span);
+            });
+            tagInput.value = '';
+          }
+        });
+      });
+    }
+
+    // Archive button
+    var archiveBtn = document.getElementById('archive-btn');
+    if (archiveBtn) {
+      archiveBtn.addEventListener('click', function() {
+        if (!confirm('Archive this conversation?')) return;
+        fetch('/c/' + convId + '/archive', { method: 'POST', credentials: 'same-origin' })
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            if (data.archived) {
+              window.location.href = '/c';
+            }
+          });
+      });
+    }
+  })();
   </script>
   ${continueScriptHtml}
 </body>

@@ -655,6 +655,127 @@ describe('web templates', () => {
       expect(html).not.toContain('id="continue-form"');
       expect(html).not.toContain('Continue Conversation');
     });
+
+    it('should include nav bar with back link (UX-2)', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('class="nav-bar"');
+      expect(html).toContain('href="/c"');
+      expect(html).toContain('Back to conversations');
+      expect(html).toContain('Slack Server Monitor');
+    });
+
+    it('should include favorite star with click handler on detail page (BUG-6, UX-3)', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        conversationId: 42,
+        isFavorited: false,
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('id="detail-star"');
+      expect(html).toContain('detail-favorite-star');
+      expect(html).toContain("fetch('/c/' + convId + '/favorite'");
+    });
+
+    it('should show active star class when favorited', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        conversationId: 42,
+        isFavorited: true,
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('detail-favorite-star active');
+    });
+
+    it('should include tag input form on detail page (BUG-7)', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        conversationId: 42,
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('id="tag-input-form"');
+      expect(html).toContain('id="tag-input"');
+      expect(html).toContain("fetch('/c/' + convId + '/tag'");
+    });
+
+    it('should display existing tags on detail page', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        conversationId: 42,
+        tags: ['nginx', 'debugging'],
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('id="detail-tags"');
+      expect(html).toContain('nginx');
+      expect(html).toContain('debugging');
+    });
+
+    it('should include archive button on detail page (BUG-10)', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        conversationId: 42,
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('id="archive-btn"');
+      expect(html).toContain('Archive');
+      expect(html).toContain("fetch('/c/' + convId + '/archive'");
+    });
   });
 
   describe('renderSessionList', () => {
@@ -766,6 +887,42 @@ describe('web templates', () => {
 
       expect(html).not.toContain('<script>xss</script>');
       expect(html).toContain('&lt;script&gt;');
+    });
+
+    it('should display firstMessage as conversation title when available (UX-1)', () => {
+      const sessions = [
+        makeSession({ firstMessage: 'Why is nginx returning 502?' }),
+      ];
+
+      const html = renderSessionList(sessions, basePagination);
+
+      expect(html).toContain('Why is nginx returning 502?');
+    });
+
+    it('should fall back to userId/channelId when firstMessage is absent', () => {
+      const sessions = [
+        makeSession({ userId: 'U456DEF', channelId: 'C123ABC' }),
+      ];
+
+      const html = renderSessionList(sessions, basePagination);
+
+      expect(html).toContain('U456DEF');
+      expect(html).toContain('C123ABC');
+    });
+
+    it('should include favorite star click handler script (BUG-6)', () => {
+      const sessions = [makeSession()];
+      const html = renderSessionList(sessions, basePagination);
+
+      expect(html).toContain("fetch('/c/' + id + '/favorite'");
+      expect(html).toContain('addEventListener');
+    });
+
+    it('should use 1.4rem star size (UX-3)', () => {
+      const sessions = [makeSession()];
+      const html = renderSessionList(sessions, basePagination);
+
+      expect(html).toContain('font-size: 1.4rem');
     });
   });
 

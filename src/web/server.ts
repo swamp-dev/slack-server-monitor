@@ -390,6 +390,25 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
   });
 
+  // Archive a single conversation: POST /c/:id/archive
+  app.post('/c/:id/archive', (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
+      if (isNaN(id)) {
+        res.status(400).json({ error: 'Invalid conversation ID' });
+        return;
+      }
+      const archived = store.archiveConversation(id);
+      res.json({ archived });
+    } catch (err) {
+      logger.error('Error archiving conversation', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).json({ error: 'Failed to archive conversation' });
+    }
+  });
+
   // Archived session list endpoint: GET /c/archived
   app.get('/c/archived', (req: Request, res: Response) => {
     try {
@@ -431,12 +450,16 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       }
 
       const toolCalls = store.getToolCalls(conversation.id);
+      const tags = store.getTags(conversation.id);
       const html = renderConversation(conversation.messages, toolCalls, {
         threadTs: conversation.threadTs,
         channelId: conversation.channelId,
         createdAt: conversation.createdAt,
         updatedAt: conversation.updatedAt,
         canContinue: true,
+        conversationId: conversation.id,
+        isFavorited: conversation.favoritedAt != null,
+        tags,
       });
 
       res.type('html').send(html);

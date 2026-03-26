@@ -253,6 +253,36 @@ describe('ConversationStore', () => {
       expect(sessions).toHaveLength(0);
     });
 
+    it('listRecentSessions includes firstMessage from first user message', () => {
+      store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Why is nginx returning 502 errors?' },
+        { role: 'assistant', content: 'Let me check.' },
+      ]);
+
+      const sessions = store.listRecentSessions();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.firstMessage).toBe('Why is nginx returning 502 errors?');
+    });
+
+    it('listRecentSessions truncates firstMessage to 80 chars', () => {
+      const longMessage = 'A'.repeat(100);
+      store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: longMessage },
+      ]);
+
+      const sessions = store.listRecentSessions();
+      expect(sessions[0]?.firstMessage).toBe('A'.repeat(80) + '...');
+    });
+
+    it('listRecentSessions returns undefined firstMessage when no user messages', () => {
+      store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [
+        { role: 'assistant', content: 'Hello!' },
+      ]);
+
+      const sessions = store.listRecentSessions();
+      expect(sessions[0]?.firstMessage).toBeUndefined();
+    });
+
     it('getSessionDetail returns null for non-existent session', () => {
       const detail = store.getSessionDetail('nonexistent', 'C123ABC');
 
@@ -969,6 +999,23 @@ describe('ConversationStore', () => {
 
       expect(shortTtlStore.listRecentSessions()).toHaveLength(1);
       expect(shortTtlStore.listArchivedSessions()).toHaveLength(1);
+    });
+
+    it('archiveConversation archives a single conversation', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      const result = store.archiveConversation(conv.id);
+      expect(result).toBe(true);
+      expect(store.listRecentSessions()).toHaveLength(0);
+      expect(store.listArchivedSessions()).toHaveLength(1);
+    });
+
+    it('archiveConversation returns false for already-archived conversation', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      store.archiveConversation(conv.id);
+      const result = store.archiveConversation(conv.id);
+      expect(result).toBe(false);
     });
 
     it('cleanupExpired does two-phase: archive then hard-delete', () => {

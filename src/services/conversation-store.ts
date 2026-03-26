@@ -83,6 +83,7 @@ export interface SessionSummary {
   isActive: boolean; // updatedAt within last 5 minutes
   isFavorited: boolean;
   tags?: string[];
+  firstMessage?: string;
 }
 
 /**
@@ -537,6 +538,17 @@ export class ConversationStore {
   }
 
   /**
+   * Archive a single conversation (soft-delete)
+   */
+  archiveConversation(id: number): boolean {
+    const now = Date.now();
+    const result = this.db
+      .prepare('UPDATE conversations SET archived_at = ? WHERE id = ? AND archived_at IS NULL')
+      .run(now, id);
+    return result.changes > 0;
+  }
+
+  /**
    * Unarchive a conversation (restore from archive)
    */
   unarchiveConversation(id: number): boolean {
@@ -704,6 +716,13 @@ export class ConversationStore {
     activeThreshold: number
   ): SessionSummary {
     const messages = JSON.parse(row.messages) as ConversationMessage[];
+    const firstUserMsg = messages.find((m) => m.role === 'user');
+    const content = firstUserMsg && typeof firstUserMsg.content === 'string' ? firstUserMsg.content : undefined;
+    let firstMessage: string | undefined;
+    if (content) {
+      const codePoints = Array.from(content);
+      firstMessage = codePoints.length > 80 ? codePoints.slice(0, 80).join('') + '...' : content;
+    }
     return {
       id: row.id,
       threadTs: row.thread_ts,
@@ -716,6 +735,7 @@ export class ConversationStore {
       archivedAt: row.archived_at,
       isActive: row.updated_at > activeThreshold,
       isFavorited: row.favorited_at != null,
+      firstMessage,
     };
   }
 
