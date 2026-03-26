@@ -163,6 +163,9 @@ The `run_command` tool allows Claude to execute read-only diagnostic commands:
 ## Development
 
 ```bash
+# Interactive setup wizard (creates/updates .env)
+npm run setup
+
 # Install dependencies
 npm install
 
@@ -240,6 +243,7 @@ CLAUDE_ALLOWED_DIRS=/root/ansible,/opt/stacks,/etc/docker
 | `CLAUDE_DB_PATH` | ./data/claude.db | SQLite database for conversations |
 | `CLAUDE_MAX_FILE_SIZE_KB` | 100 | Max file size Claude can read (KB) |
 | `CLAUDE_MAX_LOG_LINES` | 50 | Max log lines Claude can request |
+| `CLAUDE_CLI_TIMEOUT_MS` | 300000 | CLI process timeout in ms (default 5 min, max 1 hour) |
 | `CLAUDE_CONTEXT_DIR` | - | Directory containing infrastructure context (see below) |
 | `CLAUDE_CONTEXT_OPTIONS` | - | Comma-separated alias:path pairs for context switching |
 
@@ -272,11 +276,34 @@ openssl rand -hex 16
 ```
 
 **Web UI features:**
+- Dashboard home page with stats, top tools, recent conversations
+- Dracula theme (default) + light theme with toggle (persisted)
 - Collapsible tool call display with duration and output
+- Favorites, tags, archive with functional UI controls
 - Markdown export (`GET /c/:threadTs/:channelId/export/md?tools=true|false`)
 - Copy conversation to clipboard
+- Start new conversations from `/c/new`
+- User ownership filtering ("My conversations" / "All")
 - `/weblogin` Slack command for magic login links
 - Login page at `/login` for emergency admin access
+- Mobile responsive with hamburger menu at 640px
+- Keyboard shortcuts (press `?` in the web UI for full list):
+
+| Key | Session List | Conversation Detail |
+|-----|-------------|-------------------|
+| `j` / `k` | Navigate cards | Scroll messages |
+| `Enter` | Open conversation | — |
+| `s` | Star/unstar | Star/unstar |
+| `/` | Focus search | Focus continue input |
+| `n` | New conversation | — |
+| `1` `2` `3` | Switch tabs | — |
+| `a` | — | Archive |
+| `c` | — | Copy to clipboard |
+| `e` | — | Export markdown |
+| `h` | — | Back to list |
+| `t` | Toggle theme | Toggle theme |
+| `?` | Show shortcuts | Show shortcuts |
+| `Esc` | Close/blur | Close/blur |
 
 **Security:**
 - Link tokens are HMAC-signed and short-lived (default: 15 minutes) — leaked URLs expire quickly

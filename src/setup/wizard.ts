@@ -50,7 +50,6 @@ const SECRET_KEYS = new Set([
   'SLACK_BOT_TOKEN',
   'SLACK_APP_TOKEN',
   'WEB_AUTH_TOKEN',
-  'WEB_USER_TOKENS',
 ]);
 
 /**
@@ -76,7 +75,7 @@ async function validateConfig(
   // Dynamically import to avoid pulling in all app dependencies
   // We set process.env temporarily, then use the schema to validate
   const { ConfigSchema } = await import('../config/schema.js');
-  const { parseCommaSeparated, parseIntWithDefault, parseContextOptions, parseUserTokens } =
+  const { parseCommaSeparated, parseIntWithDefault, parseContextOptions } =
     await import('../config/index.js');
 
   // Build raw config object the same way loadConfig does
@@ -138,7 +137,7 @@ async function validateConfig(
             port: parseIntWithDefault(vars.WEB_PORT, 8080),
             baseUrl: emptyToUndefined(vars.WEB_BASE_URL),
             authToken: vars.WEB_AUTH_TOKEN ?? '',
-            userTokens: parseUserTokens(vars.WEB_USER_TOKENS),
+            linkTokenTtlMinutes: parseIntWithDefault(vars.WEB_LINK_TOKEN_TTL_MINUTES, 15),
             sessionTtlHours: parseIntWithDefault(vars.WEB_SESSION_TTL_HOURS, 72),
           }
         : undefined,
