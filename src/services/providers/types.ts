@@ -76,6 +76,8 @@ export interface BaseProviderConfig {
  */
 export interface CliProviderConfig extends BaseProviderConfig {
   cliPath: string;
+  /** CLI process timeout in milliseconds */
+  cliTimeoutMs: number;
 }
 
 /**

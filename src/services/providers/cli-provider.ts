@@ -348,7 +348,7 @@ ${JSON.stringify(tools, null, 2)}
 
       const proc = spawn(this.config.cliPath, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 120000, // 2 minute timeout
+        timeout: this.config.cliTimeoutMs,
       });
 
       // Write prompt to stdin and signal EOF so CLI processes it
@@ -370,6 +370,15 @@ ${JSON.stringify(tools, null, 2)}
         this.cleanupTmpFile(tmpFile);
         if (code === 0) {
           resolve(stdout.trim());
+        } else if (code === 143) {
+          // Exit code 143 = SIGTERM, typically means the process was killed by timeout
+          logger.error('Claude CLI timed out (exit code 143)', {
+            code,
+            timeoutMs: this.config.cliTimeoutMs,
+          });
+          reject(new Error(
+            'Claude took too long to respond. Try a simpler question or increase CLAUDE_CLI_TIMEOUT_MS.'
+          ));
         } else {
           const scrubbedStderr = scrubSensitiveData(stderr);
           logger.error('Claude CLI failed', { code, stderr: scrubbedStderr });

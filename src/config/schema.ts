@@ -197,6 +197,8 @@ export const ConfigSchema = z.object({
     contextDir: z.string().optional(),
     /** Available context directories that can be switched per-channel */
     contextOptions: z.array(ContextOptionSchema).default([]),
+    /** CLI process timeout in milliseconds (default: 300000 = 5 minutes) */
+    cliTimeoutMs: z.number().int().min(1000).max(3_600_000).default(300000),
     /** Enable periodic database backups */
     dbBackupEnabled: z.boolean().default(false),
     /** Interval between backups in hours */

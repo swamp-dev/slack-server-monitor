@@ -227,6 +227,7 @@ export async function registerPlugins(app: App): Promise<void> {
           maxTokens: config.claude.maxTokens,
           maxToolCalls: config.claude.maxToolCalls,
           maxIterations: config.claude.maxIterations,
+          cliTimeoutMs: config.claude.cliTimeoutMs,
         };
         const provider = getProvider(providerConfig);
         const checkAndRecordClaudeRequest = await getCheckAndRecordClaudeRequest();

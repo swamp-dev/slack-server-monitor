@@ -38,6 +38,8 @@ export interface ProviderConfig {
   maxToolCalls: number;
   /** Max agentic iterations */
   maxIterations: number;
+  /** CLI process timeout in milliseconds */
+  cliTimeoutMs: number;
 }
 
 // Singleton provider instance
@@ -62,6 +64,7 @@ export function createProvider(config: ProviderConfig): ClaudeProvider {
     maxTokens: config.maxTokens,
     maxToolCalls: config.maxToolCalls,
     maxIterations: config.maxIterations,
+    cliTimeoutMs: config.cliTimeoutMs,
   };
   return new CliProvider(cliConfig);
 }

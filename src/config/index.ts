@@ -174,6 +174,7 @@ function loadConfig(): Config {
           maxLogLines: parseIntWithDefault(process.env.CLAUDE_MAX_LOG_LINES, 50),
           contextDir: process.env.CLAUDE_CONTEXT_DIR ?? undefined,
           contextOptions: parseContextOptions(process.env.CLAUDE_CONTEXT_OPTIONS),
+          cliTimeoutMs: parseIntWithDefault(process.env.CLAUDE_CLI_TIMEOUT_MS, 300000),
           dbBackupEnabled: process.env.CLAUDE_DB_BACKUP_ENABLED === 'true',
           dbBackupIntervalHours: parseIntWithDefault(process.env.CLAUDE_DB_BACKUP_INTERVAL_HOURS, 6),
           dbBackupDir: process.env.CLAUDE_DB_BACKUP_DIR ?? undefined,

@@ -41,6 +41,8 @@ export interface ClaudeConfig {
   maxToolCalls: number;
   /** Maximum agentic loop iterations */
   maxIterations: number;
+  /** CLI process timeout in milliseconds */
+  cliTimeoutMs: number;
 }
 
 /**
@@ -62,6 +64,7 @@ export class ClaudeService {
       maxTokens: config.maxTokens,
       maxToolCalls: config.maxToolCalls,
       maxIterations: config.maxIterations,
+      cliTimeoutMs: config.cliTimeoutMs,
     };
 
     this.provider = createProvider(providerConfig);

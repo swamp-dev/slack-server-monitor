@@ -262,6 +262,83 @@ describe('ConfigSchema', () => {
     });
   });
 
+  describe('claude.cliTimeoutMs validation', () => {
+    it('should default to 300000 (5 minutes) when not provided', () => {
+      const config = {
+        ...validBaseConfig,
+        claude: {
+          cliPath: 'claude',
+          cliModel: 'sonnet',
+        },
+      };
+
+      const result = ConfigSchema.safeParse(config);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.claude?.cliTimeoutMs).toBe(300000);
+      }
+    });
+
+    it('should accept a custom timeout value', () => {
+      const config = {
+        ...validBaseConfig,
+        claude: {
+          cliPath: 'claude',
+          cliModel: 'sonnet',
+          cliTimeoutMs: 600000,
+        },
+      };
+
+      const result = ConfigSchema.safeParse(config);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.claude?.cliTimeoutMs).toBe(600000);
+      }
+    });
+
+    it('should reject non-positive timeout values', () => {
+      const config = {
+        ...validBaseConfig,
+        claude: {
+          cliPath: 'claude',
+          cliModel: 'sonnet',
+          cliTimeoutMs: 0,
+        },
+      };
+
+      const result = ConfigSchema.safeParse(config);
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject negative timeout values', () => {
+      const config = {
+        ...validBaseConfig,
+        claude: {
+          cliPath: 'claude',
+          cliModel: 'sonnet',
+          cliTimeoutMs: -1000,
+        },
+      };
+
+      const result = ConfigSchema.safeParse(config);
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject timeout values exceeding 1 hour', () => {
+      const config = {
+        ...validBaseConfig,
+        claude: {
+          cliPath: 'claude',
+          cliModel: 'sonnet',
+          cliTimeoutMs: 3_600_001,
+        },
+      };
+
+      const result = ConfigSchema.safeParse(config);
+      expect(result.success).toBe(false);
+    });
+  });
+
   describe('server.backupDirs validation', () => {
     it('should accept valid backup directories', () => {
       const config = {

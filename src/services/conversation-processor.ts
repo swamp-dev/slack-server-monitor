@@ -134,6 +134,7 @@ export async function processConversationTurn(
     maxTokens: claudeConfig.maxTokens,
     maxToolCalls: claudeConfig.maxToolCalls,
     maxIterations: claudeConfig.maxIterations,
+    cliTimeoutMs: claudeConfig.cliTimeoutMs,
   });
 
   const result = await claude.ask(userMessage, history, userConfig, askOptions);

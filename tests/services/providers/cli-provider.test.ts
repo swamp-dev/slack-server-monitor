@@ -8,6 +8,7 @@ describe('CliProvider', () => {
     maxTokens: 2048,
     maxToolCalls: 10,
     maxIterations: 20,
+    cliTimeoutMs: 300000,
   };
 
   describe('constructor', () => {
@@ -287,6 +288,30 @@ But I continue anyway.`;
     });
   });
 
+  describe('cliTimeoutMs configuration', () => {
+    let source: string;
+
+    beforeAll(async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const sourceFile = path.join(__dirname, '../../../src/services/providers/cli-provider.ts');
+      source = fs.readFileSync(sourceFile, 'utf-8');
+    });
+
+    it('should use config.cliTimeoutMs instead of hardcoded timeout', () => {
+      // The hardcoded 120000 should no longer be present
+      expect(source).not.toContain('timeout: 120000');
+      // Instead it should reference the config value
+      expect(source).toContain('this.config.cliTimeoutMs');
+    });
+
+    it('should produce a helpful error message for exit code 143 (SIGTERM)', () => {
+      // Exit code 143 means the process was killed (likely by timeout)
+      expect(source).toContain('CLAUDE_CLI_TIMEOUT_MS');
+      expect(source).toContain('143');
+    });
+  });
+
   describe('callCli implementation requirements', () => {
     // NOTE: Behavioral mocking of spawn() is complex in vitest due to module sealing.
     // These tests verify critical implementation requirements via source inspection.
@@ -333,7 +358,7 @@ But I continue anyway.`;
     });
 
     it('must have timeout configured as safety net', () => {
-      expect(source).toMatch(/timeout:\s*\d+/);
+      expect(source).toMatch(/timeout:\s*this\.config\.cliTimeoutMs/);
     });
   });
 });
