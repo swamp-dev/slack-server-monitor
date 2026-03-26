@@ -477,6 +477,72 @@ describe('shell security', () => {
     });
   });
 
+  describe('executeCommand with stdin', () => {
+    it('should write stdin data and return output', async () => {
+      const writtenData: string[] = [];
+      const mockExecFile = vi.mocked(execFile);
+      mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+        if (typeof callback === 'function') {
+          callback(null, 'stdin processed', '');
+        }
+        return {
+          stdin: {
+            write: (data: string) => { writtenData.push(data); },
+            end: vi.fn(),
+          },
+        } as unknown as ReturnType<typeof execFile>;
+      });
+
+      const result = await executeCommand('openssl', ['dgst', '-sha256'], { stdin: 'test data' });
+      expect(result.stdout).toBe('stdin processed');
+      expect(result.exitCode).toBe(0);
+      expect(writtenData).toEqual(['test data']);
+    });
+
+    it('should propagate non-zero exit code from stdin path', async () => {
+      const mockExecFile = vi.mocked(execFile);
+      mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+        if (typeof callback === 'function') {
+          const error = new Error('exit 1') as Error & { code: number; stdout: string; stderr: string };
+          error.code = 1;
+          error.stdout = '';
+          error.stderr = 'parse error';
+          callback(error, '', '');
+        }
+        return {
+          stdin: { write: vi.fn(), end: vi.fn() },
+        } as unknown as ReturnType<typeof execFile>;
+      });
+
+      const result = await executeCommand(
+        'openssl', ['x509', '-noout', '-enddate', '-in', '/dev/stdin'],
+        { stdin: 'not a cert' }
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe('parse error');
+    });
+
+    it('should handle empty stdin data', async () => {
+      const writtenData: string[] = [];
+      const mockExecFile = vi.mocked(execFile);
+      mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+        if (typeof callback === 'function') {
+          callback(null, 'empty result', '');
+        }
+        return {
+          stdin: {
+            write: (data: string) => { writtenData.push(data); },
+            end: vi.fn(),
+          },
+        } as unknown as ReturnType<typeof execFile>;
+      });
+
+      const result = await executeCommand('openssl', ['dgst'], { stdin: '' });
+      expect(result.exitCode).toBe(0);
+      expect(writtenData).toEqual(['']);
+    });
+  });
+
   describe('ShellSecurityError', () => {
     it('should have correct name and message', () => {
       const error = new ShellSecurityError('Test message');

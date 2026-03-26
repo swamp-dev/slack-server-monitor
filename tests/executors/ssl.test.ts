@@ -42,18 +42,28 @@ describe('ssl executor', () => {
     });
 
     it('should parse certificate with valid expiry', async () => {
+      const certPem = `-----BEGIN CERTIFICATE-----
+MIIFake...
+-----END CERTIFICATE-----`;
+
+      // First call: s_client returns PEM cert
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
-        stdout: '',
+        stdout: certPem,
         stderr: `depth=2 C = US, O = DigiCert Inc, OU = www.digicert.com, CN = DigiCert Global Root CA
 verify return:1
 depth=1 C = US, O = DigiCert Inc, CN = DigiCert SHA2 Extended Validation Server CA
 verify return:1
 depth=0 businessCategory = Private Organization, jurisdictionC = US, jurisdictionST = California, serialNumber = C3268102, C = US, ST = California, L = San Francisco, O = Example Inc, CN = example.com
 verify return:1
-DONE
-notAfter=Dec 15 23:59:59 2024 GMT`,
-        // openssl s_client writes to stderr
+DONE`,
+      });
+
+      // Second call: x509 extracts enddate
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'notAfter=Dec 15 23:59:59 2024 GMT\n',
+        stderr: '',
       });
 
       const result = await checkCertificate('example.com');
@@ -66,12 +76,16 @@ notAfter=Dec 15 23:59:59 2024 GMT`,
     });
 
     it('should return warn status for expiry within 30 days', async () => {
+      const certPem = `-----BEGIN CERTIFICATE-----\nMIIFake...\n-----END CERTIFICATE-----`;
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
-        stdout: '',
-        stderr: `verify return:1
-DONE
-notAfter=Jul 10 12:00:00 2024 GMT`,
+        stdout: certPem,
+        stderr: `verify return:1\nDONE`,
+      });
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'notAfter=Jul 10 12:00:00 2024 GMT\n',
+        stderr: '',
       });
 
       const result = await checkCertificate('example.com');
@@ -81,12 +95,16 @@ notAfter=Jul 10 12:00:00 2024 GMT`,
     });
 
     it('should return error status for expiry within 7 days', async () => {
+      const certPem = `-----BEGIN CERTIFICATE-----\nMIIFake...\n-----END CERTIFICATE-----`;
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
-        stdout: '',
-        stderr: `verify return:1
-DONE
-notAfter=Jun 20 12:00:00 2024 GMT`,
+        stdout: certPem,
+        stderr: `verify return:1\nDONE`,
+      });
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'notAfter=Jun 20 12:00:00 2024 GMT\n',
+        stderr: '',
       });
 
       const result = await checkCertificate('example.com');
@@ -96,12 +114,16 @@ notAfter=Jun 20 12:00:00 2024 GMT`,
     });
 
     it('should return error status for expired certificate', async () => {
+      const certPem = `-----BEGIN CERTIFICATE-----\nMIIFake...\n-----END CERTIFICATE-----`;
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
-        stdout: '',
-        stderr: `verify return:1
-DONE
-notAfter=Jun 01 12:00:00 2024 GMT`,
+        stdout: certPem,
+        stderr: `verify return:1\nDONE`,
+      });
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'notAfter=Jun 01 12:00:00 2024 GMT\n',
+        stderr: '',
       });
 
       const result = await checkCertificate('example.com');
@@ -140,14 +162,19 @@ notAfter=Jun 01 12:00:00 2024 GMT`,
     });
 
     it('should handle certificate verification failure', async () => {
+      const certPem = `-----BEGIN CERTIFICATE-----\nMIIFake...\n-----END CERTIFICATE-----`;
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
-        stdout: '',
+        stdout: certPem,
         stderr: `depth=0 CN = self-signed.example.com
 verify error:num=18:self-signed certificate
 verify return:1
-DONE
-notAfter=Dec 31 23:59:59 2025 GMT`,
+DONE`,
+      });
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'notAfter=Dec 31 23:59:59 2025 GMT\n',
+        stderr: '',
       });
 
       const result = await checkCertificate('self-signed.example.com');
@@ -158,7 +185,8 @@ notAfter=Dec 31 23:59:59 2025 GMT`,
       expect(result.expiresAt).toBeDefined();
     });
 
-    it('should handle unable to parse date', async () => {
+    it('should handle s_client returning no certificate PEM', async () => {
+      // s_client connects but returns no cert PEM
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
         stdout: '',
@@ -168,15 +196,103 @@ notAfter=Dec 31 23:59:59 2025 GMT`,
       const result = await checkCertificate('nodate.example.com');
 
       expect(result.valid).toBe(false);
+      expect(result.error).toBe('Could not retrieve certificate');
+    });
+
+    it('should handle empty openssl output gracefully', async () => {
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: '',
+        stderr: '',
+      });
+
+      const result = await checkCertificate('empty.example.com');
+
+      expect(result.valid).toBe(false);
+      expect(result.status).toBe('error');
+      expect(result.error).toBe('Could not retrieve certificate');
+    });
+
+    it('should parse wildcard certificate via two-step openssl approach', async () => {
+      const certPem = `-----BEGIN CERTIFICATE-----
+MIIFake...
+-----END CERTIFICATE-----`;
+
+      // First call: openssl s_client returns the PEM cert
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: certPem,
+        stderr: `depth=2 C = US, O = DigiCert Inc, CN = DigiCert Global Root CA
+verify return:1
+depth=0 CN = *.delg.org
+verify return:1
+DONE`,
+      });
+
+      // Second call: openssl x509 -noout -enddate parses the cert
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'notAfter=Dec 15 23:59:59 2024 GMT\n',
+        stderr: '',
+      });
+
+      const result = await checkCertificate('jellyfin.delg.org');
+
+      expect(result.domain).toBe('jellyfin.delg.org');
+      expect(result.valid).toBe(true);
+      expect(result.expiresAt).toEqual(new Date('2024-12-15T23:59:59.000Z'));
+      expect(result.daysRemaining).toBe(183);
+      expect(result.status).toBe('ok');
+
+      // Verify s_client was called without -brief
+      expect(mockExecuteCommand).toHaveBeenCalledTimes(2);
+      const firstCallArgs = mockExecuteCommand.mock.calls[0];
+      expect(firstCallArgs[1]).not.toContain('-brief');
+
+      // Verify x509 was called with the PEM cert as input
+      const secondCallArgs = mockExecuteCommand.mock.calls[1];
+      expect(secondCallArgs[0]).toBe('openssl');
+      expect(secondCallArgs[1]).toContain('x509');
+      expect(secondCallArgs[1]).toContain('-noout');
+      expect(secondCallArgs[1]).toContain('-enddate');
+    });
+
+    it('should handle s_client returning cert but x509 failing to parse', async () => {
+      const certPem = `-----BEGIN CERTIFICATE-----
+MIIFake...
+-----END CERTIFICATE-----`;
+
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: certPem,
+        stderr: 'DONE',
+      });
+
+      // x509 fails
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'unable to load certificate',
+      });
+
+      const result = await checkCertificate('badcert.example.com');
+
+      expect(result.valid).toBe(false);
+      expect(result.status).toBe('error');
       expect(result.error).toContain('Could not parse certificate expiry');
     });
 
     it('should handle custom port', async () => {
+      const certPem = `-----BEGIN CERTIFICATE-----\nMIIFake...\n-----END CERTIFICATE-----`;
       mockExecuteCommand.mockResolvedValueOnce({
         exitCode: 0,
-        stdout: '',
-        stderr: `DONE
-notAfter=Dec 31 23:59:59 2024 GMT`,
+        stdout: certPem,
+        stderr: 'DONE',
+      });
+      mockExecuteCommand.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'notAfter=Dec 31 23:59:59 2024 GMT\n',
+        stderr: '',
       });
 
       await checkCertificate('example.com', 8443);
@@ -264,10 +380,16 @@ notAfter=Dec 31 23:59:59 2024 GMT`,
       });
 
       it('should accept valid simple domain', async () => {
+        const certPem = `-----BEGIN CERTIFICATE-----\nMIIFake...\n-----END CERTIFICATE-----`;
         mockExecuteCommand.mockResolvedValueOnce({
           exitCode: 0,
-          stdout: '',
-          stderr: `DONE\nnotAfter=Dec 31 23:59:59 2024 GMT`,
+          stdout: certPem,
+          stderr: 'DONE',
+        });
+        mockExecuteCommand.mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: 'notAfter=Dec 31 23:59:59 2024 GMT\n',
+          stderr: '',
         });
 
         const result = await checkCertificate('example.com');
@@ -277,10 +399,16 @@ notAfter=Dec 31 23:59:59 2024 GMT`,
       });
 
       it('should accept valid domain with hyphens', async () => {
+        const certPem = `-----BEGIN CERTIFICATE-----\nMIIFake...\n-----END CERTIFICATE-----`;
         mockExecuteCommand.mockResolvedValueOnce({
           exitCode: 0,
-          stdout: '',
-          stderr: `DONE\nnotAfter=Dec 31 23:59:59 2024 GMT`,
+          stdout: certPem,
+          stderr: 'DONE',
+        });
+        mockExecuteCommand.mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: 'notAfter=Dec 31 23:59:59 2024 GMT\n',
+          stderr: '',
         });
 
         const result = await checkCertificate('my-example-site.example.com');
@@ -290,10 +418,16 @@ notAfter=Dec 31 23:59:59 2024 GMT`,
       });
 
       it('should accept valid domain with numbers', async () => {
+        const certPem = `-----BEGIN CERTIFICATE-----\nMIIFake...\n-----END CERTIFICATE-----`;
         mockExecuteCommand.mockResolvedValueOnce({
           exitCode: 0,
-          stdout: '',
-          stderr: `DONE\nnotAfter=Dec 31 23:59:59 2024 GMT`,
+          stdout: certPem,
+          stderr: 'DONE',
+        });
+        mockExecuteCommand.mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: 'notAfter=Dec 31 23:59:59 2024 GMT\n',
+          stderr: '',
         });
 
         const result = await checkCertificate('server01.example123.com');
@@ -315,17 +449,32 @@ notAfter=Dec 31 23:59:59 2024 GMT`,
     });
 
     it('should check multiple domains', async () => {
+      const certPem = `-----BEGIN CERTIFICATE-----\nMIIFake...\n-----END CERTIFICATE-----`;
+
+      // Domain 1: good cert (s_client + x509)
       mockExecuteCommand
         .mockResolvedValueOnce({
           exitCode: 0,
-          stdout: '',
-          stderr: `DONE\nnotAfter=Dec 31 23:59:59 2024 GMT`,
+          stdout: certPem,
+          stderr: 'DONE',
         })
         .mockResolvedValueOnce({
           exitCode: 0,
-          stdout: '',
-          stderr: `DONE\nnotAfter=Jun 20 12:00:00 2024 GMT`,
+          stdout: 'notAfter=Dec 31 23:59:59 2024 GMT\n',
+          stderr: '',
         })
+        // Domain 2: expiring cert (s_client + x509)
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: certPem,
+          stderr: 'DONE',
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: 'notAfter=Jun 20 12:00:00 2024 GMT\n',
+          stderr: '',
+        })
+        // Domain 3: connection refused (only s_client)
         .mockResolvedValueOnce({
           exitCode: 1,
           stdout: '',

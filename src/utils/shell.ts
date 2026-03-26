@@ -451,7 +451,7 @@ export class ShellSecurityError extends Error {
 export async function executeCommand(
   command: string,
   args: readonly string[],
-  options: { timeout?: number } = {}
+  options: { timeout?: number; stdin?: string } = {}
 ): Promise<ShellResult> {
   // 1. Validate command is in allowlist
   const commandPath = ALLOWED_COMMANDS.get(command);
@@ -490,6 +490,41 @@ export async function executeCommand(
 
   // 5. Execute the command
   try {
+    if (options.stdin !== undefined) {
+      // Use non-promisified execFile to write to stdin
+      const result = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve, reject) => {
+        const child = execFile(commandPath, [...args], execOptions, (error, stdout, stderr) => {
+          if (error) {
+            const execError = error as Error & {
+              code?: number | string;
+              stdout?: string;
+              stderr?: string;
+            };
+            const exitCode = typeof execError.code === 'number' ? execError.code : 1;
+            // For non-zero exit codes, resolve with output instead of rejecting
+            resolve({
+              stdout: String(execError.stdout ?? stdout),
+              stderr: String(execError.stderr ?? stderr),
+              exitCode,
+            });
+            return;
+          }
+          resolve({ stdout: String(stdout), stderr: String(stderr), exitCode: 0 });
+        });
+        if (child.stdin) {
+          child.stdin.write(options.stdin);
+          child.stdin.end();
+        } else {
+          reject(new Error('Could not write to stdin'));
+        }
+      });
+      return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+      };
+    }
+
     const result = await execFileAsync(commandPath, [...args], execOptions);
     return {
       stdout: String(result.stdout),

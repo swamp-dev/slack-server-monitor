@@ -112,9 +112,9 @@ export async function checkCertificate(
     };
   }
 
-  // openssl s_client -connect domain:port -servername domain </dev/null 2>&1 | openssl x509 -noout -enddate
-  // We can't pipe, so we use s_client with a short timeout and parse the output
-
+  // Step 1: Use openssl s_client to retrieve the PEM certificate
+  // Note: -brief flag is intentionally omitted — it suppresses certificate
+  // details on some systems, causing empty output for wildcard certs
   const result = await executeCommand(
     'openssl',
     [
@@ -123,9 +123,8 @@ export async function checkCertificate(
       `${domain}:${String(port)}`,
       '-servername',
       domain,
-      '-brief',
     ],
-    { timeout: 10000 }
+    { timeout: 10000, stdin: 'Q\n' }
   );
 
   // openssl s_client writes certificate info to stderr
@@ -159,11 +158,29 @@ export async function checkCertificate(
     };
   }
 
-  // Parse expiry date from output
-  // Look for notAfter=...
-  const notAfterMatch = /notAfter=(.+)/.exec(output);
+  // Extract PEM certificate from s_client output
+  const pemMatch = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/.exec(output);
+  if (!pemMatch) {
+    logger.warn('Could not extract certificate from openssl output', { domain, output: output.slice(0, 500) });
+    return {
+      domain,
+      valid: false,
+      status: 'error',
+      error: 'Could not retrieve certificate',
+    };
+  }
+
+  // Step 2: Pipe PEM cert through openssl x509 to extract enddate
+  const x509Result = await executeCommand(
+    'openssl',
+    ['x509', '-noout', '-enddate', '-in', '/dev/stdin'],
+    { timeout: 5000, stdin: pemMatch[0] }
+  );
+
+  const x509Output = x509Result.stdout + x509Result.stderr;
+  const notAfterMatch = /notAfter=(.+)/.exec(x509Output);
   if (!notAfterMatch?.[1]) {
-    logger.warn('Could not find notAfter in openssl output', { domain, output: output.slice(0, 500) });
+    logger.warn('Could not find notAfter in x509 output', { domain, output: x509Output.slice(0, 500) });
     return {
       domain,
       valid: false,
