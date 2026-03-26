@@ -339,6 +339,69 @@ describe('ConfigSchema', () => {
     });
   });
 
+  describe('web config validation', () => {
+    it('should accept valid web config with defaults', () => {
+      const config = {
+        ...validBaseConfig,
+        web: {
+          enabled: true,
+          authToken: 'my-secret-signing-key',
+        },
+      };
+
+      const result = ConfigSchema.safeParse(config);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.web?.linkTokenTtlMinutes).toBe(15);
+        expect(result.data.web?.sessionTtlHours).toBe(72);
+      }
+    });
+
+    it('should accept custom linkTokenTtlMinutes', () => {
+      const config = {
+        ...validBaseConfig,
+        web: {
+          enabled: true,
+          authToken: 'my-secret-signing-key',
+          linkTokenTtlMinutes: 30,
+        },
+      };
+
+      const result = ConfigSchema.safeParse(config);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.web?.linkTokenTtlMinutes).toBe(30);
+      }
+    });
+
+    it('should reject authToken shorter than 16 characters', () => {
+      const config = {
+        ...validBaseConfig,
+        web: {
+          enabled: true,
+          authToken: 'short',
+        },
+      };
+
+      const result = ConfigSchema.safeParse(config);
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject non-positive linkTokenTtlMinutes', () => {
+      const config = {
+        ...validBaseConfig,
+        web: {
+          enabled: true,
+          authToken: 'my-secret-signing-key',
+          linkTokenTtlMinutes: 0,
+        },
+      };
+
+      const result = ConfigSchema.safeParse(config);
+      expect(result.success).toBe(false);
+    });
+  });
+
   describe('server.backupDirs validation', () => {
     it('should accept valid backup directories', () => {
       const config = {

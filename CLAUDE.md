@@ -94,6 +94,7 @@ src/
 | `/sessions <thread_ts>` | Detailed view of specific session |
 | `/sessions mine` | Sessions initiated by current user |
 | `/sessions stats` | Aggregate statistics |
+| `/weblogin` | Get a magic login link for the web UI |
 
 ### Claude AI Integration
 
@@ -251,48 +252,40 @@ When Claude responses exceed Slack's text limit (3000 characters), the bot can h
 | `WEB_ENABLED` | false | Set to "true" to enable web server |
 | `WEB_PORT` | 8080 | HTTP port to listen on |
 | `WEB_BASE_URL` | - | Base URL for links (e.g., `http://nautilus.local:8080`) |
-| `WEB_AUTH_TOKEN` | - | Admin authentication token (min 16 characters) |
-| `WEB_USER_TOKENS` | - | Per-user tokens as `userId:token` pairs (comma-separated) |
+| `WEB_AUTH_TOKEN` | - | HMAC signing secret + emergency admin login (min 16 characters) |
+| `WEB_LINK_TOKEN_TTL_MINUTES` | 15 | How long HMAC link tokens are valid (minutes) |
 | `WEB_SESSION_TTL_HOURS` | 72 | Session lifetime in hours |
 
 **How it works:**
-1. When a Claude response exceeds 2900 characters, the bot posts a link with a token
-2. User clicks the link, server validates the token and creates an HttpOnly session cookie
-3. Server redirects to strip the token from the URL (prevents leaking in browser history/referrer)
-4. Subsequent requests authenticate via session cookie — no token in the URL
-5. Sessions expire after `WEB_SESSION_TTL_HOURS` (default: 72h)
-6. Users can also log in manually at `/login` with their token
+1. When a Claude response exceeds 2900 characters, the bot posts a link with an HMAC-signed token
+2. The token encodes the user's Slack ID and an expiry timestamp, signed with `WEB_AUTH_TOKEN`
+3. User clicks the link, server verifies the HMAC signature and checks expiry
+4. If valid: creates an HttpOnly session cookie, redirects to strip the token from the URL
+5. Subsequent requests authenticate via session cookie — no token in the URL
+6. Sessions expire after `WEB_SESSION_TTL_HOURS` (default: 72h)
+7. Users can also run `/weblogin` in Slack to get a magic login link
+8. Emergency admin login is available at `/login` using the `WEB_AUTH_TOKEN` directly
 
-**Generate tokens:**
+**Generate the signing secret:**
 ```bash
-# Admin token
 openssl rand -hex 16
-
-# Per-user tokens (one per Slack user)
-openssl rand -hex 16  # for user U01ABC123
-openssl rand -hex 16  # for user U02DEF456
 ```
-
-**Per-user tokens** allow the bot to generate user-specific links. Configure with:
-```bash
-WEB_USER_TOKENS=U01ABC123:abcdef0123456789,U02DEF456:9876543210fedcba
-```
-
-When a user has a per-user token configured, links posted in Slack use their token instead of the admin token. The admin token (`WEB_AUTH_TOKEN`) serves as a fallback for users without per-user tokens.
 
 **Web UI features:**
 - Collapsible tool call display with duration and output
 - Markdown export (`GET /c/:threadTs/:channelId/export/md?tools=true|false`)
 - Copy conversation to clipboard
-- Login page at `/login` for manual token entry
+- `/weblogin` Slack command for magic login links
+- Login page at `/login` for emergency admin access
 
 **Security:**
-- The web server listens on `0.0.0.0` for local network access
+- Link tokens are HMAC-signed and short-lived (default: 15 minutes) — leaked URLs expire quickly
+- No static per-user tokens to manage — the bot signs tokens using the user's Slack identity
 - Session cookies are HttpOnly + SameSite=Lax (+ Secure flag for HTTPS base URLs)
-- Tokens are validated with timing-safe comparison to prevent timing attacks
+- HMAC signatures use timing-safe comparison to prevent timing attacks
 - Sessions are stored in SQLite and cleaned up hourly
 - Re-login invalidates existing sessions for that user
-- Keep all tokens secret — anyone with a token can authenticate
+- Keep `WEB_AUTH_TOKEN` secret — it is both the signing key and the emergency admin credential
 
 ### Context Directory
 

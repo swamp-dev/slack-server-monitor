@@ -17,7 +17,7 @@ import type { Server } from 'http';
 import { config, type WebConfig } from '../config/index.js';
 import { getConversationStore, type SessionSummary } from '../services/conversation-store.js';
 import { getSessionStore, closeSessionStore } from '../services/session-store.js';
-import { resolveToken, parseCookies } from './auth.js';
+import { resolveToken, parseCookies, createLinkToken } from './auth.js';
 import { logger } from '../utils/logger.js';
 import { renderConversation, renderMarkdownExport, renderSessionList, render404, render401, renderLogin, renderError } from './templates.js';
 import { processConversationTurn } from '../services/conversation-processor.js';
@@ -609,7 +609,7 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         logger.info('Web server started', {
           port: webConfig.port,
           baseUrl,
-          userTokenCount: webConfig.userTokens.length,
+          linkTokenTtlMinutes: webConfig.linkTokenTtlMinutes,
         });
         resolve();
       });
@@ -657,14 +657,13 @@ export async function stopWebServer(): Promise<void> {
 /**
  * Generate a web URL for a conversation
  *
- * Uses per-user token if available for the given userId,
- * otherwise falls back to admin token.
+ * Creates an HMAC-signed, time-limited link token for the given user.
  *
  * @param threadTs - Thread timestamp
  * @param channelId - Channel ID
  * @param webConfig - Web configuration
- * @param userId - Optional Slack user ID for per-user token lookup
- * @returns Full URL with authentication token
+ * @param userId - Slack user ID to encode in the token
+ * @returns Full URL with HMAC authentication token
  */
 export function getConversationUrl(
   threadTs: string,
@@ -673,15 +672,6 @@ export function getConversationUrl(
   userId?: string,
 ): string {
   const baseUrl = webConfig.baseUrl ?? `http://localhost:${String(webConfig.port)}`;
-
-  // Use per-user token if available
-  let token = webConfig.authToken;
-  if (userId) {
-    const userToken = webConfig.userTokens.find((ut) => ut.userId === userId);
-    if (userToken) {
-      token = userToken.token;
-    }
-  }
-
+  const token = createLinkToken(userId ?? 'system', webConfig.authToken, webConfig.linkTokenTtlMinutes);
   return `${baseUrl}/c/${threadTs}/${channelId}?token=${encodeURIComponent(token)}`;
 }

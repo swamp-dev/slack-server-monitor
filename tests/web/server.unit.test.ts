@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { verifyLinkToken } from '../../src/web/auth.js';
 
 // Mock config BEFORE importing anything else
 vi.mock('../../src/config/index.js', () => ({
@@ -12,7 +13,7 @@ vi.mock('../../src/config/index.js', () => ({
       port: 0,
       baseUrl: 'http://test.local:8080',
       authToken: 'test-auth-token-minimum16',
-      userTokens: [],
+      linkTokenTtlMinutes: 15,
       sessionTtlHours: 72,
     },
   },
@@ -65,84 +66,76 @@ vi.mock('../../src/services/session-store.js', () => ({
 import { startWebServer, stopWebServer, getConversationUrl } from '../../src/web/server.js';
 import type { WebConfig } from '../../src/config/index.js';
 
+const SIGNING_SECRET = 'test-signing-secret-min16';
+
 describe('web server', () => {
   describe('getConversationUrl', () => {
-    it('should generate correct URL with baseUrl', () => {
+    it('should generate URL with HMAC token', () => {
       const webConfig: WebConfig = {
         enabled: true,
         port: 8080,
         baseUrl: 'http://myserver.local:8080',
-        authToken: 'my-secret-token-1234',
-        userTokens: [],
+        authToken: SIGNING_SECRET,
+        linkTokenTtlMinutes: 15,
         sessionTtlHours: 72,
       };
 
-      const url = getConversationUrl('1234.5678', 'C123', webConfig);
+      const url = getConversationUrl('1234.5678', 'C123', webConfig, 'U01ABC123');
 
-      expect(url).toBe('http://myserver.local:8080/c/1234.5678/C123?token=my-secret-token-1234');
+      expect(url).toMatch(/^http:\/\/myserver\.local:8080\/c\/1234\.5678\/C123\?token=.+/);
+      // Extract and verify the token
+      const token = decodeURIComponent(new URL(url).searchParams.get('token') ?? '');
+      const result = verifyLinkToken(token, SIGNING_SECRET);
+      expect(result).toEqual({ userId: 'U01ABC123' });
     });
 
     it('should fall back to localhost when baseUrl is undefined', () => {
       const webConfig: WebConfig = {
         enabled: true,
         port: 9000,
-        authToken: 'fallback-token-12345',
-        userTokens: [],
-        sessionTtlHours: 72,
-      };
-
-      const url = getConversationUrl('1234.5678', 'C123', webConfig);
-
-      expect(url).toBe('http://localhost:9000/c/1234.5678/C123?token=fallback-token-12345');
-    });
-
-    it('should URL-encode special characters in token', () => {
-      const webConfig: WebConfig = {
-        enabled: true,
-        port: 8080,
-        baseUrl: 'http://test.local:8080',
-        authToken: 'token+with&special=chars',
-        userTokens: [],
-        sessionTtlHours: 72,
-      };
-
-      const url = getConversationUrl('1234.5678', 'C123', webConfig);
-
-      expect(url).toContain('token=token%2Bwith%26special%3Dchars');
-    });
-
-    it('should use per-user token when userId matches', () => {
-      const webConfig: WebConfig = {
-        enabled: true,
-        port: 8080,
-        baseUrl: 'http://test.local:8080',
-        authToken: 'admin-token-minimum16',
-        userTokens: [
-          { userId: 'U01ABC123', token: 'user1-token-minimum16' },
-        ],
+        authToken: SIGNING_SECRET,
+        linkTokenTtlMinutes: 15,
         sessionTtlHours: 72,
       };
 
       const url = getConversationUrl('1234.5678', 'C123', webConfig, 'U01ABC123');
 
-      expect(url).toContain('token=user1-token-minimum16');
+      expect(url).toMatch(/^http:\/\/localhost:9000\/c\/1234\.5678\/C123\?token=.+/);
     });
 
-    it('should fall back to admin token when userId has no matching token', () => {
+    it('should use "system" userId when no userId provided', () => {
       const webConfig: WebConfig = {
         enabled: true,
         port: 8080,
         baseUrl: 'http://test.local:8080',
-        authToken: 'admin-token-minimum16',
-        userTokens: [
-          { userId: 'U01ABC123', token: 'user1-token-minimum16' },
-        ],
+        authToken: SIGNING_SECRET,
+        linkTokenTtlMinutes: 15,
         sessionTtlHours: 72,
       };
 
-      const url = getConversationUrl('1234.5678', 'C123', webConfig, 'U99UNKNOWN');
+      const url = getConversationUrl('1234.5678', 'C123', webConfig);
+      const token = decodeURIComponent(new URL(url).searchParams.get('token') ?? '');
+      const result = verifyLinkToken(token, SIGNING_SECRET);
+      expect(result).toEqual({ userId: 'system' });
+    });
 
-      expect(url).toContain('token=admin-token-minimum16');
+    it('should create tokens verifiable with the signing secret', () => {
+      const webConfig: WebConfig = {
+        enabled: true,
+        port: 8080,
+        baseUrl: 'http://test.local:8080',
+        authToken: SIGNING_SECRET,
+        linkTokenTtlMinutes: 15,
+        sessionTtlHours: 72,
+      };
+
+      const url = getConversationUrl('1234.5678', 'C123', webConfig, 'U02DEF456');
+      const token = decodeURIComponent(new URL(url).searchParams.get('token') ?? '');
+
+      // Should verify with correct secret
+      expect(verifyLinkToken(token, SIGNING_SECRET)).not.toBeNull();
+      // Should not verify with wrong secret
+      expect(verifyLinkToken(token, 'wrong-secret-minimum16')).toBeNull();
     });
   });
 
@@ -162,7 +155,7 @@ describe('web server', () => {
         port: 0, // Let OS pick a port
         baseUrl: 'http://test.local:8080',
         authToken: 'test-auth-token-minimum16',
-        userTokens: [],
+        linkTokenTtlMinutes: 15,
         sessionTtlHours: 72,
       };
 
@@ -179,7 +172,7 @@ describe('web server', () => {
         port: 0,
         baseUrl: 'http://test.local:8080',
         authToken: 'test-auth-token-minimum16',
-        userTokens: [],
+        linkTokenTtlMinutes: 15,
         sessionTtlHours: 72,
       };
 

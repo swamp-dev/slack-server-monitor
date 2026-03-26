@@ -37,6 +37,9 @@ vi.mock('../../src/commands/backups.js', () => ({
 vi.mock('../../src/commands/pm2.js', () => ({
   registerPm2Command: vi.fn(),
 }));
+vi.mock('../../src/commands/weblogin.js', () => ({
+  registerWebLoginCommand: vi.fn(),
+}));
 vi.mock('../../src/commands/help.js', () => ({
   registerHelpCommand: vi.fn(),
 }));

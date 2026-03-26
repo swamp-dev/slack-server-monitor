@@ -71,6 +71,15 @@ export function registerHelpCommand(app: App): void {
       blocks.push(context('Thread replies continue the conversation with context.'));
     }
 
+    // Web UI section (only if enabled)
+    if (config.web?.enabled) {
+      blocks.push(divider());
+      blocks.push(section(
+        '*Web UI*\n' +
+        '`/weblogin` - Get a login link for the web UI'
+      ));
+    }
+
     // Plugin section (dynamic from loaded plugins)
     const plugins = getPluginHelpData();
     if (plugins.length > 0) {

@@ -15,7 +15,7 @@ vi.mock('../../src/utils/logger.js', () => ({
   },
 }));
 
-import { resolveToken, parseCookies } from '../../src/web/auth.js';
+import { resolveToken, parseCookies, createLinkToken } from '../../src/web/auth.js';
 import { SessionStore } from '../../src/services/session-store.js';
 import { renderLogin, render401, render404 } from '../../src/web/templates.js';
 import type { WebConfig } from '../../src/config/schema.js';
@@ -27,10 +27,7 @@ const webConfig: WebConfig = {
   port: 0,
   baseUrl: 'http://test.local:8080',
   authToken: 'admin-token-minimum-16-chars',
-  userTokens: [
-    { userId: 'U01ABC123', token: 'user1-token-minimum16' },
-    { userId: 'U02DEF456', token: 'user2-token-minimum16' },
-  ],
+  linkTokenTtlMinutes: 15,
   sessionTtlHours: 72,
 };
 
@@ -248,9 +245,10 @@ describe('web server auth integration', () => {
       expect(sessionId).not.toBe('');
     });
 
-    it('should create session with per-user token', async () => {
+    it('should create session with HMAC link token', async () => {
+      const hmacToken = createLinkToken('U01ABC123', webConfig.authToken, 15);
       const response = await fetch(
-        `${baseUrl}/c/1234.5678/C123ABC?token=user1-token-minimum16`,
+        `${baseUrl}/c/1234.5678/C123ABC?token=${encodeURIComponent(hmacToken)}`,
         { redirect: 'manual' },
       );
 
@@ -261,11 +259,20 @@ describe('web server auth integration', () => {
       expect(sessionId).toBeTruthy();
 
       // Verify the session maps to the correct user
-      expect(sessionId).toBeTruthy();
       const session = sessionStore.getSession(sessionId ?? '');
       expect(session).not.toBeNull();
       expect(session?.userId).toBe('U01ABC123');
       expect(session?.isAdmin).toBe(false);
+    });
+
+    it('should reject expired HMAC link token', async () => {
+      const expiredToken = createLinkToken('U01ABC123', webConfig.authToken, 0);
+      const response = await fetch(
+        `${baseUrl}/c/1234.5678/C123ABC?token=${encodeURIComponent(expiredToken)}`,
+        { redirect: 'manual' },
+      );
+
+      expect(response.status).toBe(401);
     });
 
     it('should set admin flag for admin token sessions', async () => {
@@ -345,11 +352,11 @@ describe('web server auth integration', () => {
       expect(text).toContain('/c/1234.5678/C123ABC');
     });
 
-    it('should create session on valid login', async () => {
+    it('should create session on valid login with admin token', async () => {
       const response = await fetch(`${baseUrl}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `token=user1-token-minimum16`,
+        body: `token=${webConfig.authToken}`,
         redirect: 'manual',
       });
 
@@ -361,16 +368,37 @@ describe('web server auth integration', () => {
       const sessionId = extractSessionId(setCookie);
       expect(sessionId).toBeTruthy();
 
-      expect(sessionId).toBeTruthy();
       const session = sessionStore.getSession(sessionId ?? '');
-      expect(session?.userId).toBe('U01ABC123');
+      expect(session?.userId).toBe('admin');
+      expect(session?.isAdmin).toBe(true);
+    });
+
+    it('should create session on valid login with HMAC token', async () => {
+      const hmacToken = createLinkToken('U02DEF456', webConfig.authToken, 15);
+      const response = await fetch(`${baseUrl}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `token=${encodeURIComponent(hmacToken)}`,
+        redirect: 'manual',
+      });
+
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toBe('/');
+
+      const setCookie = getSetCookie(response);
+      const sessionId = extractSessionId(setCookie);
+      expect(sessionId).toBeTruthy();
+
+      const session = sessionStore.getSession(sessionId ?? '');
+      expect(session?.userId).toBe('U02DEF456');
+      expect(session?.isAdmin).toBe(false);
     });
 
     it('should redirect to return_to after login', async () => {
       const response = await fetch(`${baseUrl}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `token=user2-token-minimum16&return_to=/c/1234.5678/C123ABC`,
+        body: `token=${webConfig.authToken}&return_to=/c/1234.5678/C123ABC`,
         redirect: 'manual',
       });
 

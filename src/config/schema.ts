@@ -80,16 +80,6 @@ const ContextOptionSchema = z.object({
 });
 
 /**
- * Per-user token schema for web authentication
- */
-const UserTokenSchema = z.object({
-  /** Slack user ID */
-  userId: SlackUserIdSchema,
-  /** Authentication token (min 16 chars for security) */
-  token: z.string().min(16, 'User token must be at least 16 characters'),
-});
-
-/**
  * Web server configuration schema for hosting long Claude responses
  */
 const WebConfigSchema = z.object({
@@ -99,10 +89,10 @@ const WebConfigSchema = z.object({
   port: z.coerce.number().int().positive().default(8080),
   /** Base URL for links posted to Slack (e.g., http://nautilus.local:8080) */
   baseUrl: z.string().url('Web base URL must be a valid URL').optional(),
-  /** Authentication token for viewing conversations (min 16 chars for security) */
+  /** HMAC signing secret for link tokens + emergency admin login (min 16 chars) */
   authToken: z.string().min(16, 'Web auth token must be at least 16 characters'),
-  /** Per-user authentication tokens (userId:token pairs) */
-  userTokens: z.array(UserTokenSchema).default([]),
+  /** Link token TTL in minutes (default: 15) */
+  linkTokenTtlMinutes: z.coerce.number().int().positive().default(15),
   /** Session TTL in hours (default: 72) */
   sessionTtlHours: z.coerce.number().int().positive().default(72),
 });
