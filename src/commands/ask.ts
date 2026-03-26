@@ -275,7 +275,8 @@ export async function registerAskCommand(app: App): Promise<void> {
             contextBlock(
               `_Tools used: ${String(result.toolCalls.length)} | ` +
               `Tokens: ${totalTokens.toLocaleString()} | ` +
-              `Reply in thread to continue_`
+              `Thread: \`${threadTs}\` | ` +
+              `Reply in thread to continue_ | \`/ask continue ${threadTs}\``
             ),
           ],
         });
@@ -300,7 +301,8 @@ export async function registerAskCommand(app: App): Promise<void> {
             contextBlock(
               `_Tools used: ${String(result.toolCalls.length)} | ` +
               `Tokens: ${totalTokens.toLocaleString()} | ` +
-              `Reply in thread to continue_`
+              `Thread: \`${threadTs}\` | ` +
+              `Reply in thread to continue_ | \`/ask continue ${threadTs}\``
             ),
           ],
         });
@@ -506,7 +508,8 @@ async function handleContinue(
             `_Tools used: ${String(result.toolCalls.length)} | ` +
             `Tokens: ${totalTokens.toLocaleString()} | ` +
             `History: ${String(originalConversation.messages.length)} msgs | ` +
-            `Reply in thread to continue_`
+            `Thread: \`${newThreadTs}\` | ` +
+            `Reply in thread to continue_ | \`/ask continue ${newThreadTs}\``
           ),
         ],
       });
@@ -523,7 +526,8 @@ async function handleContinue(
             `_Tools used: ${String(result.toolCalls.length)} | ` +
             `Tokens: ${totalTokens.toLocaleString()} | ` +
             `History: ${String(originalConversation.messages.length)} msgs | ` +
-            `Reply in thread to continue_`
+            `Thread: \`${newThreadTs}\` | ` +
+            `Reply in thread to continue_ | \`/ask continue ${newThreadTs}\``
           ),
         ],
       });
@@ -682,7 +686,8 @@ export function registerThreadHandler(app: App): void {
               section(snippet),
               section(`<${webUrl}|View full response> _(${result.response.length.toLocaleString()} chars)_`),
               contextBlock(
-                `_Tools used: ${String(result.toolCalls.length)} | Tokens: ${totalTokens.toLocaleString()}_`
+                `_Tools used: ${String(result.toolCalls.length)} | Tokens: ${totalTokens.toLocaleString()} | ` +
+                `Thread: \`${threadTs}\`_ | \`/ask continue ${threadTs}\``
               ),
             ],
           });
@@ -703,7 +708,8 @@ export function registerThreadHandler(app: App): void {
             blocks: [
               section(result.response),
               contextBlock(
-                `_Tools used: ${String(result.toolCalls.length)} | Tokens: ${totalTokens.toLocaleString()}_`
+                `_Tools used: ${String(result.toolCalls.length)} | Tokens: ${totalTokens.toLocaleString()} | ` +
+                `Thread: \`${threadTs}\`_ | \`/ask continue ${threadTs}\``
               ),
             ],
           });

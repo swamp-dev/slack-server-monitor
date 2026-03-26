@@ -926,7 +926,7 @@ export function renderConversation(
         Last updated: ${formatTimestamp(metadata.updatedAt)}
       </div>
       <div class="export-actions">
-        <a class="export-btn" id="export-md" href="export/md">Export Markdown</a>
+        <a class="export-btn" id="export-md" href="/c/${metadata.threadTs}/${metadata.channelId}/export/md">Export Markdown</a>
         <button class="export-btn" id="copy-clipboard" type="button">Copy to Clipboard</button>
       </div>
     </div>
@@ -950,18 +950,19 @@ export function renderConversation(
       var copyBtn = document.getElementById('copy-clipboard');
       if (copyBtn) {
         copyBtn.addEventListener('click', function() {
-          var msgs = document.querySelectorAll('.message');
-          var text = Array.from(msgs).map(function(el) {
-            var header = el.querySelector('.message-header');
-            var content = el.querySelector('.message-content');
-            var role = header ? header.textContent : '';
-            var body = content ? content.textContent : '';
-            return '### ' + role + '\\n\\n' + body;
-          }).join('\\n\\n');
-          navigator.clipboard.writeText(text).then(function() {
-            copyBtn.textContent = 'Copied!';
-            setTimeout(function() { copyBtn.textContent = 'Copy to Clipboard'; }, 2000);
-          });
+          fetch('/c/${metadata.threadTs}/${metadata.channelId}/export/md?tools=false', { credentials: 'same-origin' })
+            .then(function(res) { return res.text(); })
+            .then(function(text) {
+              return navigator.clipboard.writeText(text);
+            })
+            .then(function() {
+              copyBtn.textContent = 'Copied!';
+              setTimeout(function() { copyBtn.textContent = 'Copy to Clipboard'; }, 2000);
+            })
+            .catch(function() {
+              copyBtn.textContent = 'Copy failed';
+              setTimeout(function() { copyBtn.textContent = 'Copy to Clipboard'; }, 2000);
+            });
         });
       }
     })();

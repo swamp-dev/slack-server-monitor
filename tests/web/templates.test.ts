@@ -559,7 +559,7 @@ describe('web templates', () => {
       expect(html).toContain('hljs');
     });
 
-    it('should include export markdown button', () => {
+    it('should include export markdown button with absolute path', () => {
       const messages: ConversationMessage[] = [
         { role: 'user', content: 'Hello' },
       ];
@@ -573,11 +573,11 @@ describe('web templates', () => {
 
       const html = renderConversation(messages, toolCalls, metadata);
 
-      expect(html).toContain('export/md');
+      expect(html).toContain('href="/c/1234567890.123456/C123ABC/export/md"');
       expect(html).toContain('Export');
     });
 
-    it('should include copy to clipboard button', () => {
+    it('should include copy to clipboard button that fetches from absolute path', () => {
       const messages: ConversationMessage[] = [
         { role: 'user', content: 'Hello' },
       ];
@@ -591,6 +591,7 @@ describe('web templates', () => {
 
       const html = renderConversation(messages, toolCalls, metadata);
 
+      expect(html).toContain('/c/1234567890.123456/C123ABC/export/md');
       expect(html).toContain('clipboard');
       expect(html).toContain('Copy');
     });
