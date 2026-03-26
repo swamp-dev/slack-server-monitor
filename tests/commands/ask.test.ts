@@ -6,17 +6,28 @@ import {
   clearAllRateLimits,
 } from '../../src/commands/ask.js';
 
-// Mock the config module
-vi.mock('../../src/config/index.js', () => ({
-  config: {
-    claude: {
-      rateLimitMax: 5,
-      rateLimitWindowSeconds: 60,
-    },
-  },
+// ──────────────────────────────────────────────
+// Mocks
+// ──────────────────────────────────────────────
+
+const mockProcessConversationTurn = vi.fn();
+const mockInitDefaultContext = vi.fn();
+
+vi.mock('../../src/services/conversation-processor.js', () => ({
+  processConversationTurn: (...args: unknown[]) => mockProcessConversationTurn(...args),
+  initDefaultContext: (...args: unknown[]) => mockInitDefaultContext(...args),
 }));
 
-// Mock the logger to capture log calls
+const mockGetConversationStore = vi.fn();
+vi.mock('../../src/services/conversation-store.js', () => ({
+  getConversationStore: (...args: unknown[]) => mockGetConversationStore(...args),
+}));
+
+const mockGetConversationUrl = vi.fn().mockReturnValue('http://localhost:8080/c/1234.5678/C123TEST');
+vi.mock('../../src/web/index.js', () => ({
+  getConversationUrl: (...args: unknown[]) => mockGetConversationUrl(...args),
+}));
+
 vi.mock('../../src/utils/logger.js', () => ({
   logger: {
     info: vi.fn(),
@@ -25,6 +36,157 @@ vi.mock('../../src/utils/logger.js', () => ({
     error: vi.fn(),
   },
 }));
+
+vi.mock('../../src/utils/image.js', () => ({
+  isValidImageUrl: vi.fn().mockReturnValue(true),
+  fetchImageAsBase64: vi.fn().mockResolvedValue({ data: 'base64data', mediaType: 'image/png' }),
+}));
+
+vi.mock('../../src/utils/slack-errors.js', () => ({
+  parseSlackError: vi.fn().mockReturnValue({
+    type: 'unknown' as const,
+    message: 'test error',
+    suggestion: '',
+    format: () => 'test error',
+  }),
+}));
+
+vi.mock('../../src/formatters/scrub.js', () => ({
+  scrubSensitiveData: vi.fn((s: string) => s),
+}));
+
+// Mock config - we'll override per test via mockConfig
+const mockConfig: Record<string, unknown> = {
+  claude: {
+    rateLimitMax: 5,
+    rateLimitWindowSeconds: 60,
+    dbPath: ':memory:',
+    conversationTtlHours: 24,
+    contextDir: undefined,
+  },
+  web: undefined,
+  authorization: {
+    userIds: ['U123TEST'],
+  },
+};
+
+vi.mock('../../src/config/index.js', () => ({
+  get config() {
+    return mockConfig;
+  },
+}));
+
+// ──────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────
+
+function createMockCommand(overrides: Record<string, unknown> = {}) {
+  return {
+    command: {
+      text: 'test question',
+      user_id: 'U123TEST',
+      channel_id: 'C123TEST',
+      ...overrides,
+    },
+    ack: vi.fn().mockResolvedValue(undefined),
+    respond: vi.fn().mockResolvedValue(undefined),
+    client: {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '1234.5678' }),
+        update: vi.fn().mockResolvedValue({ ok: true }),
+      },
+    },
+  };
+}
+
+function createMockStore() {
+  return {
+    getOrCreateConversation: vi.fn().mockReturnValue({
+      id: 1,
+      threadTs: '1234.5678',
+      channelId: 'C123TEST',
+      userId: 'U123TEST',
+      messages: [{ role: 'user', content: 'test question' }],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      archivedAt: null,
+      favoritedAt: null,
+    }),
+    addAssistantMessage: vi.fn(),
+    logToolCall: vi.fn(),
+    getConversationByThreadTs: vi.fn(),
+    getConversation: vi.fn(),
+    createConversation: vi.fn().mockReturnValue({
+      id: 2,
+      threadTs: '9999.1111',
+      channelId: 'C123TEST',
+      userId: 'U123TEST',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      archivedAt: null,
+      favoritedAt: null,
+    }),
+  };
+}
+
+function defaultTurnResult(overrides: Record<string, unknown> = {}) {
+  return {
+    response: 'Test response from Claude',
+    toolCalls: [],
+    usage: { inputTokens: 100, outputTokens: 200 },
+    ...overrides,
+  };
+}
+
+/**
+ * Capture the handler registered via app.command('/ask', handler)
+ * and optionally the message event handler
+ */
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports -- dynamic import needed for test isolation
+type App = import('@slack/bolt').App;
+
+async function captureHandlers() {
+  const mockApp = {
+    command: vi.fn(),
+    event: vi.fn(),
+  };
+
+  const { registerAskCommand, registerThreadHandler } = await import('../../src/commands/ask.js');
+  await registerAskCommand(mockApp as unknown as App);
+  registerThreadHandler(mockApp as unknown as App);
+
+  const askCall = mockApp.command.mock.calls.find(
+    (call: unknown[]) => call[0] === '/ask'
+  );
+  const eventCall = mockApp.event.mock.calls.find(
+    (call: unknown[]) => call[0] === 'message'
+  );
+
+  if (!askCall) {
+    throw new Error('Failed to capture /ask handler');
+  }
+
+  return {
+    askHandler: askCall[1] as (...args: unknown[]) => Promise<void>,
+    messageHandler: eventCall?.[1] as ((args: Record<string, unknown>) => Promise<void>) | undefined,
+  };
+}
+
+/**
+ * Assert that the message handler was registered and return it with narrowed type
+ */
+function assertMessageHandler(
+  handler: ((args: Record<string, unknown>) => Promise<void>) | undefined,
+): (args: Record<string, unknown>) => Promise<void> {
+  expect(handler).toBeDefined();
+  // Safe after the expect assertion above
+  return handler as (args: Record<string, unknown>) => Promise<void>;
+}
+
+// ──────────────────────────────────────────────
+// Rate limiting tests (preserved from original)
+// ──────────────────────────────────────────────
 
 describe('Claude rate limiting', () => {
   beforeEach(() => {
@@ -200,181 +362,780 @@ describe('Claude rate limiting', () => {
   });
 });
 
-describe('Ask command error handling', () => {
-  beforeEach(() => {
+// ──────────────────────────────────────────────
+// Handler tests
+// ──────────────────────────────────────────────
+
+describe('registerAskCommand handler', () => {
+  let askHandler: (...args: unknown[]) => Promise<void>;
+  let messageHandler: ((args: Record<string, unknown>) => Promise<void>) | undefined;
+
+  beforeEach(async () => {
     vi.clearAllMocks();
+    clearAllRateLimits();
+
+    // Reset config to defaults
+    mockConfig.claude = {
+      rateLimitMax: 5,
+      rateLimitWindowSeconds: 60,
+      dbPath: ':memory:',
+      conversationTtlHours: 24,
+      contextDir: undefined,
+    };
+    mockConfig.web = undefined;
+    mockConfig.authorization = { userIds: ['U123TEST'] };
+
+    // Set up default mocks
+    const store = createMockStore();
+    mockGetConversationStore.mockReturnValue(store);
+    mockProcessConversationTurn.mockResolvedValue(defaultTurnResult());
+
+    const handlers = await captureHandlers();
+    askHandler = handlers.askHandler;
+    messageHandler = handlers.messageHandler;
   });
 
-  describe('error recovery with posted initial message', () => {
-    it('should update initial message with error when threadTs exists', async () => {
-      // Simulate: initial "thinking" message was posted, then Claude call fails
-      // The error should update the existing message, not send ephemeral
-      const chatUpdate = vi.fn().mockResolvedValue({ ok: true });
-      const respond = vi.fn().mockResolvedValue(undefined);
-      const threadTs = '1234567890.123456';
-      const channelId = 'C123';
-      const displayMessage = 'Claude CLI exited with code 1';
-      const question = 'test question';
+  afterEach(() => {
+    clearAllRateLimits();
+    vi.restoreAllMocks();
+  });
 
-      // This mirrors the error handling logic in ask.ts
-      // When threadTs exists, it should prefer chat.update over respond()
-      let errorSent = false;
+  it('should ack the command immediately', async () => {
+    const mock = createMockCommand();
+    await askHandler(mock);
 
-      if (threadTs) {
-        try {
-          await chatUpdate({
-            channel: channelId,
-            ts: threadTs,
-            text: `Error: ${displayMessage}`,
-            blocks: [
-              { type: 'section', text: { type: 'mrkdwn', text: `*Q:* ${question}` } },
-              { type: 'section', text: { type: 'mrkdwn', text: `Error: ${displayMessage}` } },
-            ],
-          });
-          errorSent = true;
-        } catch {
-          // Fall through to respond()
-        }
+    expect(mock.ack).toHaveBeenCalledTimes(1);
+  });
+
+  it('should respond with error when question is empty', async () => {
+    const mock = createMockCommand({ text: '' });
+    await askHandler(mock);
+
+    expect(mock.ack).toHaveBeenCalledTimes(1);
+    expect(mock.respond).toHaveBeenCalledWith(
+      expect.objectContaining({
+        response_type: 'ephemeral',
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            text: expect.objectContaining({
+              text: expect.stringContaining('Please provide a question'),
+            }),
+          }),
+        ]),
+      })
+    );
+    // Should NOT call Claude
+    expect(mockProcessConversationTurn).not.toHaveBeenCalled();
+  });
+
+  it('should respond with error when Claude is disabled', async () => {
+    mockConfig.claude = undefined;
+    const mock = createMockCommand();
+    await askHandler(mock);
+
+    expect(mock.ack).toHaveBeenCalledTimes(1);
+    expect(mock.respond).toHaveBeenCalledWith(
+      expect.objectContaining({
+        response_type: 'ephemeral',
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            text: expect.objectContaining({
+              text: expect.stringContaining('Claude AI is not enabled'),
+            }),
+          }),
+        ]),
+      })
+    );
+    expect(mockProcessConversationTurn).not.toHaveBeenCalled();
+  });
+
+  it('should respond with error when rate limit exceeded', async () => {
+    // Exhaust rate limit
+    for (let i = 0; i < 5; i++) {
+      checkAndRecordClaudeRequest('U123TEST');
+    }
+
+    const mock = createMockCommand();
+    await askHandler(mock);
+
+    expect(mock.ack).toHaveBeenCalledTimes(1);
+    expect(mock.respond).toHaveBeenCalledWith(
+      expect.objectContaining({
+        response_type: 'ephemeral',
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            text: expect.objectContaining({
+              text: expect.stringContaining('Rate limit exceeded'),
+            }),
+          }),
+        ]),
+      })
+    );
+    expect(mockProcessConversationTurn).not.toHaveBeenCalled();
+  });
+
+  it('should post initial message and update with response', async () => {
+    const mock = createMockCommand({ text: 'What containers are running?' });
+    await askHandler(mock);
+
+    // Should post initial "thinking" message
+    expect(mock.client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C123TEST',
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            text: expect.objectContaining({
+              text: expect.stringContaining('What containers are running?'),
+            }),
+          }),
+        ]),
+      })
+    );
+
+    // Should call processConversationTurn
+    expect(mockProcessConversationTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 1,
+        threadTs: '1234.5678',
+        channelId: 'C123TEST',
+        userId: 'U123TEST',
+        userMessage: 'What containers are running?',
+      })
+    );
+
+    // Should update the message with the response
+    expect(mock.client.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C123TEST',
+        ts: '1234.5678',
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            text: expect.objectContaining({
+              text: 'Test response from Claude',
+            }),
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('should include tool and token info in context block', async () => {
+    mockProcessConversationTurn.mockResolvedValue(defaultTurnResult({
+      toolCalls: [{ name: 'get_container_status', input: {}, outputPreview: '...' }],
+      usage: { inputTokens: 500, outputTokens: 300 },
+    }));
+
+    const mock = createMockCommand();
+    await askHandler(mock);
+
+    // The context block should include tool count and token count
+    expect(mock.client.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'context',
+            elements: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringMatching(/Tools used: 1.*Tokens: 800/),
+              }),
+            ]),
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('should generate web link for long responses', async () => {
+    // Enable web config
+    mockConfig.web = {
+      enabled: true,
+      port: 8080,
+      baseUrl: 'http://localhost:8080',
+      authToken: 'test-token-1234567890123456',
+      userTokens: new Map(),
+      sessionTtlHours: 72,
+    };
+
+    // Return a response longer than SLACK_TEXT_LIMIT (2900 chars)
+    const longResponse = 'A'.repeat(3000);
+    mockProcessConversationTurn.mockResolvedValue(defaultTurnResult({
+      response: longResponse,
+    }));
+
+    const mock = createMockCommand();
+    await askHandler(mock);
+
+    // Should call getConversationUrl
+    expect(mockGetConversationUrl).toHaveBeenCalledWith(
+      '1234.5678',
+      'C123TEST',
+      mockConfig.web,
+      'U123TEST',
+    );
+
+    // Should update message with web link
+    expect(mock.client.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            text: expect.objectContaining({
+              text: expect.stringContaining('View full response'),
+            }),
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('should not generate web link when web is disabled', async () => {
+    mockConfig.web = undefined;
+
+    const longResponse = 'A'.repeat(3000);
+    mockProcessConversationTurn.mockResolvedValue(defaultTurnResult({
+      response: longResponse,
+    }));
+
+    const mock = createMockCommand();
+    await askHandler(mock);
+
+    // Should NOT call getConversationUrl
+    expect(mockGetConversationUrl).not.toHaveBeenCalled();
+
+    // Should still update with the (long) response directly
+    expect(mock.client.chat.update).toHaveBeenCalled();
+  });
+
+  it('should handle processConversationTurn errors gracefully', async () => {
+    mockProcessConversationTurn.mockRejectedValue(new Error('Claude CLI exited with code 1'));
+
+    const mock = createMockCommand();
+    await askHandler(mock);
+
+    // Should try to update the thinking message with error
+    expect(mock.client.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ts: '1234.5678',
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            text: expect.objectContaining({
+              text: expect.stringContaining('Failed to get response'),
+            }),
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('should fall back to respond() when chat.update fails in error handler', async () => {
+    mockProcessConversationTurn.mockRejectedValue(new Error('Claude failed'));
+    const mock = createMockCommand();
+    mock.client.chat.update.mockRejectedValue(new Error('message_not_found'));
+
+    await askHandler(mock);
+
+    // Should fall back to respond()
+    expect(mock.respond).toHaveBeenCalledWith(
+      expect.objectContaining({
+        response_type: 'ephemeral',
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            text: expect.objectContaining({
+              text: expect.stringContaining('Failed to get response'),
+            }),
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('should fall back to postMessage when both update and respond fail', async () => {
+    mockProcessConversationTurn.mockRejectedValue(new Error('Claude failed'));
+    const mock = createMockCommand();
+    mock.client.chat.update.mockRejectedValue(new Error('message_not_found'));
+    mock.respond.mockRejectedValue(new Error('response_url expired'));
+
+    await askHandler(mock);
+
+    // The first postMessage call posts the "thinking" message, second is fallback error
+    const postCalls = mock.client.chat.postMessage.mock.calls;
+    const errorCall = postCalls.find(
+      (call: unknown[]) => {
+        const arg = call[0] as Record<string, unknown>;
+        return typeof arg.text === 'string' && arg.text.includes('Sorry, I encountered an error');
       }
+    );
+    expect(errorCall).toBeDefined();
+  });
 
-      if (!errorSent) {
-        await respond({ response_type: 'ephemeral' });
-      }
+  it('should delegate to handleContinue for /ask continue <thread_ts>', async () => {
+    const store = createMockStore();
+    store.getConversationByThreadTs.mockReturnValue({
+      id: 1,
+      threadTs: '9876.5432',
+      channelId: 'C123TEST',
+      userId: 'U123TEST',
+      messages: [
+        { role: 'user', content: 'original question' },
+        { role: 'assistant', content: 'original answer' },
+      ],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    mockGetConversationStore.mockReturnValue(store);
 
-      expect(chatUpdate).toHaveBeenCalledTimes(1);
-      expect(chatUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({ ts: threadTs })
+    const mock = createMockCommand({ text: 'continue 9876.5432' });
+    await askHandler(mock);
+
+    expect(mock.ack).toHaveBeenCalledTimes(1);
+    // handleContinue should look up conversation by thread_ts
+    expect(store.getConversationByThreadTs).toHaveBeenCalledWith('9876.5432');
+  });
+
+  it('should initialize default context when contextDir is set', async () => {
+    // Test verifies that registerAskCommand calls initDefaultContext
+    // when config.claude.contextDir is set. We set it and re-register.
+    mockConfig.claude = {
+      rateLimitMax: 5,
+      rateLimitWindowSeconds: 60,
+      dbPath: ':memory:',
+      conversationTtlHours: 24,
+      contextDir: '/opt/infrastructure',
+    };
+
+    const freshApp = { command: vi.fn(), event: vi.fn() };
+    const { registerAskCommand: register } = await import('../../src/commands/ask.js');
+    await register(freshApp as unknown as App);
+
+    expect(mockInitDefaultContext).toHaveBeenCalledWith('/opt/infrastructure');
+  });
+
+  // ──────────────────────────────────────────
+  // handleContinue sub-tests
+  // ──────────────────────────────────────────
+
+  describe('handleContinue (via /ask continue)', () => {
+    it('should reject invalid thread_ts format', async () => {
+      const mock = createMockCommand({ text: 'continue invalid-ts' });
+      await askHandler(mock);
+
+      expect(mock.respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          response_type: 'ephemeral',
+          blocks: expect.arrayContaining([
+            expect.objectContaining({
+              text: expect.objectContaining({
+                text: expect.stringContaining('Invalid thread timestamp format'),
+              }),
+            }),
+          ]),
+        })
       );
-      expect(respond).not.toHaveBeenCalled();
+      expect(mockProcessConversationTurn).not.toHaveBeenCalled();
     });
 
-    it('should fall back to respond() when chat.update fails', async () => {
-      const chatUpdate = vi.fn().mockRejectedValue(new Error('message_not_found'));
-      const respond = vi.fn().mockResolvedValue(undefined);
-      const threadTs = '1234567890.123456';
-      const channelId = 'C123';
+    it('should respond with error when conversation not found', async () => {
+      const store = createMockStore();
+      store.getConversationByThreadTs.mockReturnValue(null);
+      mockGetConversationStore.mockReturnValue(store);
 
-      let errorSent = false;
+      const mock = createMockCommand({ text: 'continue 9876.5432' });
+      await askHandler(mock);
 
-      if (threadTs) {
-        try {
-          await chatUpdate({ channel: channelId, ts: threadTs, text: 'Error' });
-          errorSent = true;
-        } catch {
-          // Fall through
-        }
-      }
-
-      if (!errorSent) {
-        try {
-          await respond({ response_type: 'ephemeral' });
-          errorSent = true;
-        } catch {
-          // Both failed
-        }
-      }
-
-      expect(chatUpdate).toHaveBeenCalledTimes(1);
-      expect(respond).toHaveBeenCalledTimes(1);
-      expect(errorSent).toBe(true);
+      expect(mock.respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          response_type: 'ephemeral',
+          blocks: expect.arrayContaining([
+            expect.objectContaining({
+              text: expect.objectContaining({
+                text: expect.stringContaining('No conversation found'),
+              }),
+            }),
+          ]),
+        })
+      );
+      expect(mockProcessConversationTurn).not.toHaveBeenCalled();
     });
 
-    it('should use respond() when threadTs does not exist (early failure)', async () => {
-      const chatUpdate = vi.fn();
-      const respond = vi.fn().mockResolvedValue(undefined);
-      const threadTs: string | undefined = undefined;
+    it('should check rate limit after conversation lookup', async () => {
+      const store = createMockStore();
+      store.getConversationByThreadTs.mockReturnValue({
+        id: 1,
+        threadTs: '9876.5432',
+        channelId: 'C123TEST',
+        userId: 'U123TEST',
+        messages: [{ role: 'user', content: 'test' }],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      mockGetConversationStore.mockReturnValue(store);
 
-      let errorSent = false;
-
-      if (threadTs) {
-        try {
-          await chatUpdate({ channel: 'C123', ts: threadTs, text: 'Error' });
-          errorSent = true;
-        } catch {
-          // Fall through
-        }
+      // Exhaust rate limit
+      for (let i = 0; i < 5; i++) {
+        checkAndRecordClaudeRequest('U123TEST');
       }
 
-      if (!errorSent) {
-        try {
-          await respond({ response_type: 'ephemeral' });
-          errorSent = true;
-        } catch {
-          // Both failed
-        }
-      }
+      const mock = createMockCommand({ text: 'continue 9876.5432' });
+      await askHandler(mock);
 
-      expect(chatUpdate).not.toHaveBeenCalled();
-      expect(respond).toHaveBeenCalledTimes(1);
-      expect(errorSent).toBe(true);
+      // Should find conversation first, then check rate limit
+      expect(store.getConversationByThreadTs).toHaveBeenCalledWith('9876.5432');
+      expect(mock.respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          response_type: 'ephemeral',
+          blocks: expect.arrayContaining([
+            expect.objectContaining({
+              text: expect.objectContaining({
+                text: expect.stringContaining('Rate limit exceeded'),
+              }),
+            }),
+          ]),
+        })
+      );
+      expect(mockProcessConversationTurn).not.toHaveBeenCalled();
+    });
+
+    it('should create new thread with original history', async () => {
+      const store = createMockStore();
+      const originalMessages = [
+        { role: 'user' as const, content: 'original question' },
+        { role: 'assistant' as const, content: 'original answer' },
+      ];
+      store.getConversationByThreadTs.mockReturnValue({
+        id: 1,
+        threadTs: '9876.5432',
+        channelId: 'C123TEST',
+        userId: 'U123TEST',
+        messages: originalMessages,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      mockGetConversationStore.mockReturnValue(store);
+
+      const mock = createMockCommand({ text: 'continue 9876.5432 follow up question' });
+      await askHandler(mock);
+
+      // Should create new conversation with original messages + new question
+      expect(store.createConversation).toHaveBeenCalledWith(
+        '1234.5678', // new thread ts from postMessage
+        'C123TEST',
+        'U123TEST',
+        [
+          ...originalMessages,
+          { role: 'user', content: 'follow up question' },
+        ],
+      );
+
+      // Should process the turn
+      expect(mockProcessConversationTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userMessage: 'follow up question',
+        })
+      );
+    });
+
+    it('should use default question when no follow-up provided', async () => {
+      const store = createMockStore();
+      store.getConversationByThreadTs.mockReturnValue({
+        id: 1,
+        threadTs: '9876.5432',
+        channelId: 'C123TEST',
+        userId: 'U123TEST',
+        messages: [{ role: 'user', content: 'test' }],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      mockGetConversationStore.mockReturnValue(store);
+
+      const mock = createMockCommand({ text: 'continue 9876.5432' });
+      await askHandler(mock);
+
+      // Should use default continuation question
+      expect(store.createConversation).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: expect.stringContaining('continue where we left off'),
+          }),
+        ]),
+      );
+    });
+
+    it('should handle errors in continue and respond with error', async () => {
+      const store = createMockStore();
+      store.getConversationByThreadTs.mockReturnValue({
+        id: 1,
+        threadTs: '9876.5432',
+        channelId: 'C123TEST',
+        userId: 'U123TEST',
+        messages: [{ role: 'user', content: 'test' }],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      mockGetConversationStore.mockReturnValue(store);
+      mockProcessConversationTurn.mockRejectedValue(new Error('Claude timeout'));
+
+      const mock = createMockCommand({ text: 'continue 9876.5432' });
+      await askHandler(mock);
+
+      expect(mock.respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          response_type: 'ephemeral',
+          blocks: expect.arrayContaining([
+            expect.objectContaining({
+              text: expect.objectContaining({
+                text: expect.stringContaining('Failed to continue conversation'),
+              }),
+            }),
+          ]),
+        })
+      );
     });
   });
 
-  describe('error response fallback logic', () => {
-    it('should fall back to postMessage when respond() fails', async () => {
-      const respond = vi.fn().mockRejectedValue(new Error('response_url expired'));
-      const postMessage = vi.fn().mockResolvedValue({ ok: true });
+  // ──────────────────────────────────────────
+  // Thread handler sub-tests
+  // ──────────────────────────────────────────
 
-      let errorSent = false;
+  describe('registerThreadHandler', () => {
+    function createThreadEvent(overrides: Record<string, unknown> = {}) {
+      return {
+        channel: 'C123TEST',
+        user: 'U123TEST',
+        text: 'follow up question',
+        thread_ts: '1234.5678',
+        ...overrides,
+      };
+    }
 
-      try {
-        await respond({ response_type: 'ephemeral' });
-        errorSent = true;
-      } catch {
-        // Fallback to postMessage
-      }
+    function createMockClient() {
+      return {
+        chat: {
+          postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '5555.6666' }),
+          update: vi.fn().mockResolvedValue({ ok: true }),
+        },
+      };
+    }
 
-      if (!errorSent) {
-        try {
-          await postMessage({ channel: 'C123', text: 'error' });
-          errorSent = true;
-        } catch {
-          // Both failed
-        }
-      }
-
-      expect(respond).toHaveBeenCalledTimes(1);
-      expect(postMessage).toHaveBeenCalledTimes(1);
-      expect(errorSent).toBe(true);
+    beforeEach(() => {
+      // Set up store with tracked conversation
+      const store = createMockStore();
+      store.getConversation.mockReturnValue({
+        id: 1,
+        threadTs: '1234.5678',
+        channelId: 'C123TEST',
+        userId: 'U123TEST',
+        messages: [{ role: 'user', content: 'original' }],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      mockGetConversationStore.mockReturnValue(store);
+      mockProcessConversationTurn.mockResolvedValue(defaultTurnResult());
     });
 
-    it('should log CRITICAL when all error delivery methods fail', async () => {
-      const respond = vi.fn().mockRejectedValue(new Error('response_url expired'));
-      const postMessage = vi.fn().mockRejectedValue(new Error('channel_not_found'));
-      const logError = vi.fn();
+    it('should ignore messages without thread_ts', async () => {
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
 
-      let errorSent = false;
+      await handler({
+        event: createThreadEvent({ thread_ts: undefined }),
+        client,
+      });
 
-      try {
-        await respond({ response_type: 'ephemeral' });
-        errorSent = true;
-      } catch {
-        // Fallback
+      expect(mockProcessConversationTurn).not.toHaveBeenCalled();
+    });
+
+    it('should ignore bot messages', async () => {
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      await handler({
+        event: createThreadEvent({ bot_id: 'B123' }),
+        client,
+      });
+
+      expect(mockProcessConversationTurn).not.toHaveBeenCalled();
+    });
+
+    it('should ignore messages with subtypes', async () => {
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      await handler({
+        event: createThreadEvent({ subtype: 'message_changed' }),
+        client,
+      });
+
+      expect(mockProcessConversationTurn).not.toHaveBeenCalled();
+    });
+
+    it('should ignore messages from unauthorized users', async () => {
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      await handler({
+        event: createThreadEvent({ user: 'UUNAUTHORIZED' }),
+        client,
+      });
+
+      expect(mockProcessConversationTurn).not.toHaveBeenCalled();
+    });
+
+    it('should ignore messages not in tracked conversations', async () => {
+      const store = createMockStore();
+      store.getConversation.mockReturnValue(null);
+      mockGetConversationStore.mockReturnValue(store);
+
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      await handler({
+        event: createThreadEvent({ thread_ts: '9999.0000' }),
+        client,
+      });
+
+      expect(mockProcessConversationTurn).not.toHaveBeenCalled();
+    });
+
+    it('should call Claude with conversation history for thread replies', async () => {
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      await handler({
+        event: createThreadEvent({ text: 'follow up question in thread' }),
+        client,
+      });
+
+      // Should post a thinking message in the thread
+      expect(client.chat.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: 'C123TEST',
+          thread_ts: '1234.5678',
+          text: 'Analyzing...',
+        })
+      );
+
+      // Should process the conversation turn
+      expect(mockProcessConversationTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadTs: '1234.5678',
+          channelId: 'C123TEST',
+          userId: 'U123TEST',
+          userMessage: 'follow up question in thread',
+        })
+      );
+
+      // Should update the thinking message with the response
+      expect(client.chat.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: 'C123TEST',
+          ts: '5555.6666',
+          blocks: expect.arrayContaining([
+            expect.objectContaining({
+              text: expect.objectContaining({
+                text: 'Test response from Claude',
+              }),
+            }),
+          ]),
+        })
+      );
+    });
+
+    it('should handle rate limit for thread replies', async () => {
+      // Exhaust rate limit
+      for (let i = 0; i < 5; i++) {
+        checkAndRecordClaudeRequest('U123TEST');
       }
 
-      if (!errorSent) {
-        try {
-          await postMessage({ channel: 'C123', text: 'error' });
-          errorSent = true;
-        } catch {
-          // Both failed
-        }
-      }
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
 
-      if (!errorSent) {
-        logError('CRITICAL: Unable to send any response to user', {
-          userId: 'U123',
-          channelId: 'C123',
-          originalError: 'test error',
-        });
-      }
+      await handler({
+        event: createThreadEvent(),
+        client,
+      });
 
-      expect(respond).toHaveBeenCalledTimes(1);
-      expect(postMessage).toHaveBeenCalledTimes(1);
-      expect(errorSent).toBe(false);
-      expect(logError).toHaveBeenCalledWith(
-        'CRITICAL: Unable to send any response to user',
-        expect.objectContaining({ userId: 'U123' })
+      // Should post rate limit message in thread
+      expect(client.chat.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: 'C123TEST',
+          thread_ts: '1234.5678',
+          text: expect.stringContaining('Rate limit exceeded'),
+        })
+      );
+      expect(mockProcessConversationTurn).not.toHaveBeenCalled();
+    });
+
+    it('should handle errors gracefully with fallback messaging', async () => {
+      mockProcessConversationTurn.mockRejectedValueOnce(new Error('Claude CLI crashed'));
+
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      // Should not throw - error is caught internally
+      await handler({
+        event: createThreadEvent({ text: 'question that causes error' }),
+        client,
+      });
+
+      // Should have posted at least the thinking message
+      expect(client.chat.postMessage).toHaveBeenCalled();
+
+      // Should have attempted to send an error message (either via postMessage or update)
+      // The thread handler catches errors and posts an error message in the thread
+      const allPostCalls = client.chat.postMessage.mock.calls;
+      const allUpdateCalls = client.chat.update.mock.calls;
+      const totalCalls = allPostCalls.length + allUpdateCalls.length;
+      // At minimum: 1 thinking message + 1 error message attempt
+      expect(totalCalls).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should not register handler when Claude is disabled', async () => {
+      mockConfig.claude = undefined;
+
+      const mockApp = { command: vi.fn(), event: vi.fn() };
+      const { registerThreadHandler: register } = await import('../../src/commands/ask.js');
+      register(mockApp as unknown as App);
+
+      expect(mockApp.event).not.toHaveBeenCalled();
+    });
+
+    it('should generate web link for long thread responses', async () => {
+      mockConfig.web = {
+        enabled: true,
+        port: 8080,
+        baseUrl: 'http://localhost:8080',
+        authToken: 'test-token-1234567890123456',
+        userTokens: new Map(),
+        sessionTtlHours: 72,
+      };
+
+      const longResponse = 'B'.repeat(3000);
+      mockProcessConversationTurn.mockResolvedValue(defaultTurnResult({
+        response: longResponse,
+      }));
+
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      await handler({
+        event: createThreadEvent({ text: 'question needing long answer' }),
+        client,
+      });
+
+      expect(mockGetConversationUrl).toHaveBeenCalled();
+      expect(client.chat.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          blocks: expect.arrayContaining([
+            expect.objectContaining({
+              text: expect.objectContaining({
+                text: expect.stringContaining('View full response'),
+              }),
+            }),
+          ]),
+        })
       );
     });
   });
