@@ -755,7 +755,7 @@ export class ConversationStore {
           COUNT(*) as total_sessions,
           SUM(CASE WHEN updated_at > ? THEN 1 ELSE 0 END) as active_sessions
         FROM conversations
-        WHERE updated_at > ?
+        WHERE updated_at > ? AND archived_at IS NULL
       `)
       .get(activeThreshold, cutoff) as {
         total_sessions: number;
@@ -767,7 +767,7 @@ export class ConversationStore {
       .prepare(`
         SELECT COALESCE(SUM(json_array_length(messages)), 0) as total_messages
         FROM conversations
-        WHERE updated_at > ?
+        WHERE updated_at > ? AND archived_at IS NULL
       `)
       .get(cutoff) as { total_messages: number };
 
@@ -779,7 +779,7 @@ export class ConversationStore {
         SELECT COUNT(*) as count
         FROM tool_calls tc
         INNER JOIN conversations c ON tc.conversation_id = c.id
-        WHERE c.updated_at > ?
+        WHERE c.updated_at > ? AND c.archived_at IS NULL
       `)
       .get(cutoff) as { count: number };
 
@@ -791,7 +791,7 @@ export class ConversationStore {
           SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failure_count
         FROM tool_calls tc
         INNER JOIN conversations c ON tc.conversation_id = c.id
-        WHERE c.updated_at > ?
+        WHERE c.updated_at > ? AND c.archived_at IS NULL
       `)
       .get(cutoff) as { avg_duration_ms: number | null; failure_count: number } | undefined;
 
@@ -807,7 +807,7 @@ export class ConversationStore {
           AVG(duration_ms) as avg_duration_ms
         FROM tool_calls tc
         INNER JOIN conversations c ON tc.conversation_id = c.id
-        WHERE c.updated_at > ?
+        WHERE c.updated_at > ? AND c.archived_at IS NULL
         GROUP BY tool_name
         ORDER BY count DESC
         LIMIT 5

@@ -3,11 +3,16 @@ import {
   renderConversation,
   renderMarkdownExport,
   renderSessionList,
+  renderDashboard,
   render404,
   render401,
   renderError,
+  renderLogin,
+  icon,
+  getThemeStyles,
+  wrapInShell,
 } from '../../src/web/templates.js';
-import type { ConversationMessage, ToolCallLog, SessionSummary, PaginationInfo } from '../../src/services/conversation-store.js';
+import type { ConversationMessage, ToolCallLog, SessionSummary, SessionStats, TagInfo, PaginationInfo } from '../../src/services/conversation-store.js';
 
 describe('web templates', () => {
   describe('renderConversation', () => {
@@ -1147,6 +1152,691 @@ describe('web templates', () => {
       expect(md).toContain('get_system_resources');
       expect(md).toContain('45% used');
       expect(md).toContain('CPU: 12%');
+    });
+  });
+
+  describe('web UI overhaul', () => {
+    describe('icon system', () => {
+      it('returns valid SVG for known icons', () => {
+        const svg = icon('star');
+        expect(svg).toContain('<svg');
+        expect(svg).toContain('viewBox');
+      });
+
+      it('returns different SVGs for different icons', () => {
+        expect(icon('star')).not.toBe(icon('search'));
+      });
+
+      it('returns empty string for unknown icon', () => {
+        expect(icon('nonexistent')).toBe('');
+      });
+
+      it('respects custom size parameter', () => {
+        const svg = icon('star', 24);
+        expect(svg).toContain('width="24"');
+        expect(svg).toContain('height="24"');
+      });
+    });
+
+    describe('theme system', () => {
+      it('includes Dracula CSS variables', () => {
+        const css = getThemeStyles();
+        expect(css).toContain('#282a36');
+        expect(css).toContain('#f8f8f2');
+        expect(css).toContain('#ff79c6');
+      });
+
+      it('includes light theme variables', () => {
+        const css = getThemeStyles();
+        expect(css).toContain('data-theme="light"');
+      });
+    });
+
+    describe('wrapInShell', () => {
+      it('includes nav bar with branding', () => {
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+        expect(html).toContain('Server Monitor');
+        // Nav bar should contain a robot icon (any size)
+        expect(html).toContain('nav-brand');
+        expect(html).toContain('M10 6C6.69'); // robot icon path
+      });
+
+      it('includes theme toggle button', () => {
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+        expect(html).toContain('theme-toggle');
+      });
+
+      it('uses system font stack without external font dependencies', () => {
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+        expect(html).not.toContain('fonts.googleapis.com');
+        expect(html).toContain('-apple-system');
+      });
+
+      it('includes FOWT prevention script', () => {
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+        // ssm-theme should appear in head before styles
+        const headContent = html.split('</head>')[0];
+        expect(headContent).toContain('ssm-theme');
+      });
+
+      it('omits nav when showNav is false', () => {
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>', showNav: false });
+        expect(html).not.toContain('class="nav-bar"');
+      });
+
+      it('includes toast container', () => {
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+        expect(html).toContain('toast-container');
+      });
+
+      it('includes logout form', () => {
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+        expect(html).toContain('/logout');
+      });
+    });
+
+    describe('login page', () => {
+      it('contains gradient background', () => {
+        const html = renderLogin();
+        expect(html).toContain('gradient');
+      });
+
+      it('contains robot icon branding', () => {
+        const html = renderLogin();
+        // Login page should contain robot icon path
+        expect(html).toContain('M10 6C6.69'); // robot icon path
+        expect(html).toContain('login-brand');
+      });
+
+      it('contains password eye toggle', () => {
+        const html = renderLogin();
+        expect(html).toContain('toggle-password');
+      });
+    });
+
+    describe('session list', () => {
+      const basePagination: PaginationInfo = {
+        page: 1,
+        pageSize: 20,
+        totalItems: 0,
+        totalPages: 1,
+      };
+
+      function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
+        return {
+          id: 1,
+          threadTs: '1234567890.123456',
+          channelId: 'C123ABC',
+          userId: 'U456DEF',
+          messageCount: 5,
+          toolCallCount: 3,
+          createdAt: Date.now() - 60000,
+          updatedAt: Date.now(),
+          archivedAt: null,
+          isActive: true,
+          isFavorited: false,
+          ...overrides,
+        };
+      }
+
+      it('renders session cards not flat rows', () => {
+        const sessions = [makeSession()];
+        const html = renderSessionList(sessions, basePagination);
+        expect(html).toContain('session-card');
+      });
+
+      it('cards contain icon elements', () => {
+        const sessions = [makeSession()];
+        const html = renderSessionList(sessions, basePagination);
+        // Should contain SVG icons for clock and message
+        expect(html).toContain('<svg');
+      });
+
+      it('search input has search icon', () => {
+        const html = renderSessionList([], basePagination);
+        // Search wrapper should contain search icon path
+        expect(html).toContain('search-input-wrapper');
+        expect(html).toContain('M8.5 14.5'); // search icon path
+      });
+
+      it('shows empty state when no sessions', () => {
+        const html = renderSessionList([], basePagination);
+        expect(html).toContain('empty-state');
+        expect(html).toContain('No conversations yet');
+      });
+    });
+
+    describe('conversation detail', () => {
+      const baseMessages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi there!' },
+      ];
+      const baseToolCalls: ToolCallLog[] = [];
+      const baseMeta = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now() - 60000,
+        updatedAt: Date.now(),
+      };
+
+      it('has sticky header with back link', () => {
+        const html = renderConversation(baseMessages, baseToolCalls, baseMeta);
+        expect(html).toContain('conv-header');
+        expect(html).toContain('M15 10H5'); // arrow-left icon path
+      });
+
+      it('user messages have avatar', () => {
+        const html = renderConversation(baseMessages, baseToolCalls, baseMeta);
+        expect(html).toContain('avatar');
+      });
+
+      it('assistant messages have robot avatar', () => {
+        const html = renderConversation(baseMessages, baseToolCalls, baseMeta);
+        // Robot icon path should appear in assistant avatar
+        expect(html).toContain('M10 6C6.69'); // robot icon path
+      });
+
+      it('tool calls show status icon', () => {
+        const toolCalls: ToolCallLog[] = [
+          {
+            conversationId: 1,
+            toolName: 'get_disk_usage',
+            input: {},
+            outputPreview: 'ok',
+            timestamp: Date.now(),
+            durationMs: 150,
+            success: true,
+          },
+          {
+            conversationId: 1,
+            toolName: 'run_command',
+            input: {},
+            outputPreview: 'error',
+            timestamp: Date.now(),
+            durationMs: 50,
+            success: false,
+          },
+        ];
+        const html = renderConversation(baseMessages, toolCalls, baseMeta);
+        expect(html).toContain('tool-call-status success');
+        expect(html).toContain('tool-call-status failure');
+        expect(html).toContain('M4 10L8 14L16 6'); // check icon path
+        expect(html).toContain('M5 5L15 15'); // x icon path
+      });
+
+      it('continue form has character count', () => {
+        const html = renderConversation(baseMessages, baseToolCalls, {
+          ...baseMeta,
+          canContinue: true,
+        });
+        expect(html).toContain('char-count');
+      });
+    });
+
+    describe('UI polish — avatars, empty states, branding', () => {
+      describe('avatars', () => {
+        it('assistant message avatar contains robot icon', () => {
+          const messages: ConversationMessage[] = [
+            { role: 'assistant', content: 'Hello!' },
+          ];
+          const html = renderConversation(messages, [], {
+            threadTs: '1234567890.123456',
+            channelId: 'C123ABC',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+
+          // Robot icon should be in the assistant avatar
+          expect(html).toContain('M10 6C6.69'); // robot icon path
+          // Assistant avatar should have a glow ring via CSS
+          expect(html).toContain('avatar-glow');
+        });
+
+        it('user avatar shows initial from conversation userId', () => {
+          const messages: ConversationMessage[] = [
+            { role: 'user', content: 'Hello!' },
+          ];
+          const html = renderConversation(messages, [], {
+            threadTs: '1234567890.123456',
+            channelId: 'C123ABC',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            userId: 'andy',
+          });
+
+          // Should show "A" (first char of userId)
+          expect(html).toContain('>A</span>');
+        });
+      });
+
+      describe('empty states', () => {
+        const emptyPagination: PaginationInfo = {
+          page: 1,
+          pageSize: 20,
+          totalItems: 0,
+          totalPages: 1,
+        };
+
+        it('session list shows "No conversations yet" with link to /c/new when empty', () => {
+          const html = renderSessionList([], emptyPagination);
+
+          expect(html).toContain('No conversations yet');
+          expect(html).toContain('/c/new');
+        });
+
+        it('favorites shows "No favorites yet" when empty', () => {
+          const html = renderSessionList([], emptyPagination, { favorites: true });
+
+          expect(html).toContain('No favorites yet');
+        });
+
+        it('archived shows "No archived conversations" when empty', () => {
+          const html = renderSessionList([], emptyPagination, { archived: true });
+
+          expect(html).toContain('No archived conversations');
+        });
+
+        it('search shows query text in empty state', () => {
+          const html = renderSessionList([], emptyPagination, { searchQuery: 'nginx logs' });
+
+          expect(html).toContain('No results for');
+          expect(html).toContain('nginx logs');
+        });
+
+        it('tag filter shows tag name in empty state', () => {
+          const html = renderSessionList([], emptyPagination, { activeTag: 'debugging' });
+
+          expect(html).toContain('No conversations tagged');
+          expect(html).toContain('debugging');
+        });
+      });
+
+      describe('favicon', () => {
+        it('wrapInShell includes SVG favicon data URI', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+
+          expect(html).toContain('rel="icon"');
+          expect(html).toContain('image/svg+xml');
+          expect(html).toContain('data:image/svg+xml');
+        });
+      });
+
+      describe('branding', () => {
+        it('login page contains subtitle about AI diagnostics', () => {
+          const html = renderLogin();
+
+          expect(html).toContain('login-subtitle');
+          expect(html).toContain('AI-powered server diagnostics');
+        });
+
+        it('footer contains "Powered by Claude"', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+
+          expect(html).toContain('Powered by Claude');
+        });
+      });
+    });
+
+    describe('error pages', () => {
+      it('404 contains search icon', () => {
+        const html = render404();
+        expect(html).toContain('M8.5 14.5'); // search icon path
+      });
+
+      it('401 contains appropriate icon', () => {
+        const html = render401();
+        expect(html).toContain('<svg');
+      });
+
+      it('error page has action button', () => {
+        const html = renderError('Something went wrong');
+        expect(html).toContain('href=');
+      });
+    });
+
+    describe('interactivity', () => {
+      const basePagination: PaginationInfo = {
+        page: 1,
+        pageSize: 20,
+        totalItems: 1,
+        totalPages: 1,
+      };
+
+      function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
+        return {
+          id: 1,
+          threadTs: '1234567890.123456',
+          channelId: 'C123ABC',
+          userId: 'U456DEF',
+          messageCount: 5,
+          toolCallCount: 3,
+          createdAt: Date.now() - 60000,
+          updatedAt: Date.now(),
+          archivedAt: null,
+          isActive: true,
+          isFavorited: false,
+          ...overrides,
+        };
+      }
+
+      it('star toggle script present on session list', () => {
+        const sessions = [makeSession()];
+        const html = renderSessionList(sessions, basePagination);
+        expect(html).toContain('star-pop');
+      });
+
+      it('tag input form present on detail page', () => {
+        const messages: ConversationMessage[] = [{ role: 'user', content: 'Hello' }];
+        const html = renderConversation(messages, [], {
+          threadTs: '1234567890.123456',
+          channelId: 'C123ABC',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          conversationId: 42,
+        });
+        expect(html).toContain('id="tag-input-form"');
+      });
+
+      it('copy button has checkmark animation script', () => {
+        const messages: ConversationMessage[] = [{ role: 'user', content: 'Hello' }];
+        const html = renderConversation(messages, [], {
+          threadTs: '1234567890.123456',
+          channelId: 'C123ABC',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        expect(html).toContain('showToast');
+      });
+
+      it('char count script present when continue form shown', () => {
+        const messages: ConversationMessage[] = [{ role: 'user', content: 'Hello' }];
+        const html = renderConversation(messages, [], {
+          threadTs: '1234567890.123456',
+          channelId: 'C123ABC',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          canContinue: true,
+        });
+        expect(html).toContain('char-count');
+      });
+    });
+
+    describe('keyboard shortcuts and issue #47', () => {
+      const basePagination47: PaginationInfo = {
+        page: 1,
+        pageSize: 20,
+        totalItems: 2,
+        totalPages: 1,
+      };
+
+      function makeSession47(overrides: Partial<SessionSummary> = {}): SessionSummary {
+        return {
+          id: 1,
+          threadTs: '1234567890.123456',
+          channelId: 'C123ABC',
+          userId: 'U456DEF',
+          messageCount: 5,
+          toolCallCount: 3,
+          createdAt: Date.now() - 60000,
+          updatedAt: Date.now(),
+          archivedAt: null,
+          isActive: true,
+          isFavorited: false,
+          ...overrides,
+        };
+      }
+
+      describe('keyboard shortcuts', () => {
+        it('wrapInShell includes keyboard shortcut script with keydown listener', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('keydown');
+          expect(html).toContain('keyboard');
+        });
+
+        it('help overlay element is present in shell HTML', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('id="keyboard-help"');
+          expect(html).toContain('kb-overlay');
+          expect(html).toContain('Keyboard Shortcuts');
+          expect(html).toContain('role="dialog"');
+        });
+
+        it('session cards have data-index attributes for j/k navigation', () => {
+          const sessions = [
+            makeSession47(),
+            makeSession47({ id: 2, threadTs: '2222.0002' }),
+          ];
+          const html = renderSessionList(sessions, basePagination47);
+
+          expect(html).toContain('data-index="0"');
+          expect(html).toContain('data-index="1"');
+        });
+
+        it('star elements have tabindex and role=button for accessibility', () => {
+          const sessions = [makeSession47()];
+          const html = renderSessionList(sessions, basePagination47);
+
+          expect(html).toContain('tabindex="0"');
+          expect(html).toContain('role="button"');
+          expect(html).toContain('aria-label="Toggle favorite"');
+        });
+
+        it('pressing ? toggles help overlay (script contains keyboard-help toggle logic)', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('keyboard-help');
+          // The script should toggle display of the help overlay
+          expect(html).toContain("e.key === '?'");
+        });
+      });
+
+      describe('system color scheme detection', () => {
+        it('FOWT script contains prefers-color-scheme media query', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          const headContent = html.split('</head>')[0];
+          expect(headContent).toContain('prefers-color-scheme');
+          expect(headContent).toContain('light');
+        });
+      });
+
+      describe('skeleton loading', () => {
+        it('skeleton CSS classes exist in base styles', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('.skeleton');
+          expect(html).toContain('skeleton-shimmer');
+          expect(html).toContain('.skeleton-card');
+          expect(html).toContain('.skeleton-line');
+        });
+
+        it('kb-focused class exists in styles for keyboard navigation', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('.session-card.kb-focused');
+          expect(html).toContain('outline');
+        });
+
+        it('continue form shows skeleton state during processing', () => {
+          const messages: ConversationMessage[] = [
+            { role: 'user', content: 'Hello' },
+            { role: 'assistant', content: 'Hi!' },
+          ];
+          const html = renderConversation(messages, [], {
+            threadTs: '1234567890.123456',
+            channelId: 'C123ABC',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            canContinue: true,
+          });
+          // The continue script should create a skeleton placeholder when submitting
+          expect(html).toContain('skeleton-message');
+          expect(html).toContain('skeleton skeleton-line');
+        });
+      });
+    });
+  });
+
+  describe('dashboard home page', () => {
+    const baseStats: SessionStats = {
+      totalSessions: 12,
+      activeSessions: 3,
+      totalMessages: 87,
+      totalToolCalls: 42,
+      avgToolDurationMs: 250,
+      toolFailureRate: 0.05,
+      topTools: [
+        { name: 'get_container_status', count: 15, avgDurationMs: 120 },
+        { name: 'run_command', count: 10, avgDurationMs: 340 },
+        { name: 'read_file', count: 8, avgDurationMs: 90 },
+      ],
+    };
+
+    const recentSessions: SessionSummary[] = [
+      {
+        id: 1,
+        threadTs: '1711000001.000001',
+        channelId: 'C123ABC',
+        userId: 'U01TEST',
+        messageCount: 5,
+        toolCallCount: 3,
+        createdAt: Date.now() - 3600000,
+        updatedAt: Date.now() - 60000,
+        archivedAt: null,
+        isActive: true,
+        isFavorited: false,
+        firstMessage: 'Check nginx status',
+      },
+      {
+        id: 2,
+        threadTs: '1711000002.000002',
+        channelId: 'C456DEF',
+        userId: 'U02TEST',
+        messageCount: 10,
+        toolCallCount: 7,
+        createdAt: Date.now() - 7200000,
+        updatedAt: Date.now() - 3600000,
+        archivedAt: null,
+        isActive: false,
+        isFavorited: true,
+        firstMessage: 'Debug memory issue',
+      },
+    ];
+
+    const favoriteSessions: SessionSummary[] = [
+      {
+        id: 2,
+        threadTs: '1711000002.000002',
+        channelId: 'C456DEF',
+        userId: 'U02TEST',
+        messageCount: 10,
+        toolCallCount: 7,
+        createdAt: Date.now() - 7200000,
+        updatedAt: Date.now() - 3600000,
+        archivedAt: null,
+        isActive: false,
+        isFavorited: true,
+        firstMessage: 'Debug memory issue',
+      },
+    ];
+
+    const allTags: TagInfo[] = [
+      { name: 'nginx', count: 5 },
+      { name: 'docker', count: 3 },
+    ];
+
+    it('contains greeting text', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+
+      // Should contain one of the time-of-day greetings
+      expect(html).toMatch(/Good (morning|afternoon|evening)/);
+    });
+
+    it('contains stats cards for sessions, messages, and tools', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+
+      expect(html).toContain('stat-card');
+      expect(html).toContain('12'); // totalSessions
+      expect(html).toContain('87'); // totalMessages
+      expect(html).toContain('42'); // totalToolCalls
+      expect(html).toContain('3'); // activeSessions
+    });
+
+    it('contains top tools section with bar chart', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+
+      expect(html).toContain('tool-chart');
+      expect(html).toContain('tool-bar');
+      expect(html).toContain('get_container_status');
+      expect(html).toContain('run_command');
+      expect(html).toContain('read_file');
+      // Bar widths should be percentage-based
+      expect(html).toContain('width:');
+    });
+
+    it('shows recent conversations as links', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+
+      expect(html).toContain('Check nginx status');
+      expect(html).toContain('Debug memory issue');
+      // Should contain links to conversation pages
+      expect(html).toContain('/c/1711000001.000001/C123ABC');
+      expect(html).toContain('/c/1711000002.000002/C456DEF');
+    });
+
+    it('contains quick action buttons (new conversation, search, view all)', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+
+      expect(html).toContain('quick-actions');
+      expect(html).toContain('/c/new');
+      expect(html).toContain('/c');
+      expect(html).toContain('New Conversation');
+    });
+
+    it('uses wrapInShell with navigation', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+
+      expect(html).toContain('<!DOCTYPE html>');
+      expect(html).toContain('nav-bar');
+      expect(html).toContain('Server Monitor');
+    });
+
+    it('shows welcome message when no conversations exist', () => {
+      const emptyStats: SessionStats = {
+        totalSessions: 0,
+        activeSessions: 0,
+        totalMessages: 0,
+        totalToolCalls: 0,
+        avgToolDurationMs: null,
+        toolFailureRate: 0,
+        topTools: [],
+      };
+
+      const html = renderDashboard(emptyStats, [], [], 0, [], 'U01TEST');
+
+      expect(html).toContain('Welcome to Server Monitor');
+      expect(html).toContain('/ask');
+      expect(html).toContain('/c/new');
+      // Should NOT contain stats cards in the body (CSS may still have class definitions)
+      expect(html).not.toContain('class="stat-card"');
+    });
+
+    it('shows favorites section when favorites exist', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+
+      expect(html).toContain('Favorites');
+      expect(html).toContain('Debug memory issue');
+    });
+
+    it('shows tags section when tags exist', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+
+      expect(html).toContain('nginx');
+      expect(html).toContain('docker');
+      expect(html).toContain('/c/tag/nginx');
+    });
+
+    it('contains relative time indicators', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+
+      // Recent sessions should show relative time
+      expect(html).toMatch(/\d+[mh] ago|just now/);
     });
   });
 });
