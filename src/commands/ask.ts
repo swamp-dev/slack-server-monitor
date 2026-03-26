@@ -1,11 +1,11 @@
 import type { App, SlackCommandMiddlewareArgs, AllMiddlewareArgs } from '@slack/bolt';
 import { config } from '../config/index.js';
-import { getClaudeService } from '../services/claude.js';
 import type { AskOptions } from '../services/claude.js';
 import { getConversationStore } from '../services/conversation-store.js';
-import { getContextStore } from '../services/context-store.js';
-import { loadUserConfig } from '../services/user-config.js';
-import { getContext, getContextByAlias, type LoadedContext } from '../services/context-loader.js';
+import {
+  initDefaultContext,
+  processConversationTurn,
+} from '../services/conversation-processor.js';
 import { getConversationUrl } from '../web/index.js';
 import { logger } from '../utils/logger.js';
 import { parseSlackError } from '../utils/slack-errors.js';
@@ -84,9 +84,6 @@ export function clearAllRateLimits(): void {
   claudeRateLimits.clear();
 }
 
-/** Cached default context from context directory */
-let defaultContext: LoadedContext | null = null;
-
 /**
  * Parse image URL from the question text
  * Supports: --image <url> or --img <url>
@@ -108,47 +105,16 @@ function parseImageFromQuestion(question: string): { imageUrl: string; cleanQues
 }
 
 /**
- * Resolve the active context for a channel
- * Returns the channel-specific context if set, otherwise the default context
- */
-async function resolveChannelContext(
-  channelId: string,
-  claudeConfig: NonNullable<typeof config.claude>
-): Promise<LoadedContext | null> {
-  const contextStore = getContextStore(claudeConfig.dbPath);
-  const channelContextAlias = contextStore.getChannelContext(channelId);
-
-  if (channelContextAlias) {
-    // Find the context option with this alias
-    const option = claudeConfig.contextOptions.find((o) => o.alias === channelContextAlias);
-    if (option) {
-      return await getContextByAlias(option.alias, option.path);
-    }
-    // Alias no longer exists in options, fall through to default
-    logger.warn('Channel context alias not found in options', { channelId, alias: channelContextAlias });
-  }
-
-  // Return the default context
-  return defaultContext;
-}
-
-/**
  * Register the /ask command
  *
  * Usage:
  *   /ask <question> - Ask Claude about your server
+ *   /ask continue <thread_ts> - Continue a previous conversation in a new thread
  */
 export async function registerAskCommand(app: App): Promise<void> {
   // Load default context only if Claude is enabled
   if (config.claude?.contextDir) {
-    defaultContext = await getContext(config.claude.contextDir);
-    if (defaultContext?.combined) {
-      logger.info('Loaded default context from directory', {
-        contextDir: config.claude.contextDir,
-        hasClaudeMd: !!defaultContext.claudeMd,
-        contextFiles: defaultContext.contextFiles.size,
-      });
-    }
+    await initDefaultContext(config.claude.contextDir);
   }
 
   app.command('/ask', async ({ command, ack, respond, client }: SlackCommandMiddlewareArgs & AllMiddlewareArgs) => {
@@ -178,6 +144,13 @@ export async function registerAskCommand(app: App): Promise<void> {
         blocks: [errorBlock('Please provide a question. Usage: `/ask <your question>` or `/ask <question> --image <url>`')],
         response_type: 'ephemeral',
       });
+      return;
+    }
+
+    // Handle /ask continue <thread_ts> subcommand
+    const continueMatch = /^continue\s+(\S+)(?:\s+(.+))?$/i.exec(rawQuestion);
+    if (continueMatch) {
+      await handleContinue(continueMatch[1] ?? '', continueMatch[2], userId, channelId, claudeConfig, respond, client);
       return;
     }
 
@@ -240,33 +213,6 @@ export async function registerAskCommand(app: App): Promise<void> {
         question
       );
 
-      // Get conversation history (excluding the current question we just added)
-      const history = conversation.messages.slice(0, -1);
-
-      // Resolve channel-specific context (or use default)
-      const activeContext = await resolveChannelContext(channelId, claudeConfig);
-
-      // Load user config
-      const userConfig = await loadUserConfig(userId, {
-        allowedDirs: claudeConfig.allowedDirs,
-        maxFileSizeKb: claudeConfig.maxFileSizeKb,
-        maxLogLines: claudeConfig.maxLogLines,
-        contextDir: claudeConfig.contextDir,
-        contextDirContent: activeContext?.combined,
-      });
-
-      // Get Claude service
-      const claude = getClaudeService({
-        provider: claudeConfig.provider,
-        apiKey: claudeConfig.apiKey,
-        cliPath: claudeConfig.cliPath,
-        cliModel: claudeConfig.cliModel,
-        sdkModel: claudeConfig.sdkModel,
-        maxTokens: claudeConfig.maxTokens,
-        maxToolCalls: claudeConfig.maxToolCalls,
-        maxIterations: claudeConfig.maxIterations,
-      });
-
       // Prepare ask options with image if provided
       let askOptions: AskOptions | undefined;
       if (imageUrl) {
@@ -294,23 +240,17 @@ export async function registerAskCommand(app: App): Promise<void> {
         }
       }
 
-      // Ask Claude with optional image
+      // Process the conversation turn
       const actualQuestion = question || 'Analyze this image and describe what you see.';
-      const result = await claude.ask(actualQuestion, history, userConfig, askOptions);
-
-      // Store the response
-      store.addAssistantMessage(conversation.id, result.response);
-
-      // Log tool calls
-      for (const toolCall of result.toolCalls) {
-        store.logToolCall(
-          conversation.id,
-          toolCall.name,
-          toolCall.input,
-          toolCall.outputPreview,
-          { durationMs: toolCall.durationMs, success: !toolCall.isError }
-        );
-      }
+      const result = await processConversationTurn({
+        conversationId: conversation.id,
+        threadTs,
+        channelId,
+        userId,
+        userMessage: actualQuestion,
+        claudeConfig,
+        askOptions,
+      });
 
       // Track token usage (logged for diagnostics)
       const totalTokens = result.usage.inputTokens + result.usage.outputTokens;
@@ -458,6 +398,167 @@ export async function registerAskCommand(app: App): Promise<void> {
 }
 
 /**
+ * Handle /ask continue <thread_ts> [follow-up question]
+ *
+ * Looks up the original conversation, posts a new thread with the history loaded,
+ * and optionally processes a follow-up question immediately.
+ */
+async function handleContinue(
+  originalThreadTs: string,
+  followUpQuestion: string | undefined,
+  userId: string,
+  channelId: string,
+  claudeConfig: NonNullable<typeof config.claude>,
+  respond: SlackCommandMiddlewareArgs['respond'],
+  client: AllMiddlewareArgs['client'],
+): Promise<void> {
+  // Validate thread_ts format (Slack format: digits.digits)
+  if (!/^\d+\.\d+$/.test(originalThreadTs)) {
+    await respond({
+      blocks: [errorBlock('Invalid thread timestamp format. Expected format: `1234567890.123456`')],
+      response_type: 'ephemeral',
+    });
+    return;
+  }
+
+  try {
+    const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+
+    // Look up the original conversation by thread_ts (before consuming rate limit)
+    const originalConversation = store.getConversationByThreadTs(originalThreadTs);
+    if (!originalConversation) {
+      await respond({
+        blocks: [errorBlock(`No conversation found for thread \`${originalThreadTs}\`. The conversation may have expired.`)],
+        response_type: 'ephemeral',
+      });
+      return;
+    }
+
+    // Check rate limit only after confirming the conversation exists
+    if (!checkAndRecordClaudeRequest(userId)) {
+      logger.info('Claude rate limit exceeded for continue', { userId });
+      await respond({
+        blocks: [errorBlock('Rate limit exceeded. Please wait before asking another question.')],
+        response_type: 'ephemeral',
+      });
+      return;
+    }
+
+    // Determine the question to ask
+    const question = followUpQuestion?.trim() || 'Please continue where we left off. What else can you tell me?'; // eslint-disable-line @typescript-eslint/prefer-nullish-coalescing -- empty string should fall through
+
+    // Post initial message in a new thread
+    const initialMessage = await client.chat.postMessage({
+      channel: channelId,
+      text: `Continuing conversation from ${originalThreadTs}...`,
+      blocks: [
+        section(`*Continuing conversation* from \`${originalThreadTs}\``),
+        section(`*Q:* ${question}`),
+        contextBlock(`_Analyzing with ${String(originalConversation.messages.length)} messages of context..._`),
+      ],
+    });
+
+    if (!initialMessage.ts) {
+      throw new Error('Failed to post initial message - no timestamp returned');
+    }
+
+    const newThreadTs = initialMessage.ts;
+
+    // Create a new conversation pre-loaded with the old conversation's messages
+    const newConversation = store.createConversation(
+      newThreadTs,
+      channelId,
+      userId,
+      [
+        ...originalConversation.messages,
+        { role: 'user' as const, content: question },
+      ]
+    );
+
+    // Process the turn
+    const result = await processConversationTurn({
+      conversationId: newConversation.id,
+      threadTs: newThreadTs,
+      channelId,
+      userId,
+      userMessage: question,
+      claudeConfig,
+    });
+
+    const totalTokens = result.usage.inputTokens + result.usage.outputTokens;
+    const isLongResponse = result.response.length > SLACK_TEXT_LIMIT;
+    const webConfig = config.web;
+    const webEnabled = webConfig && webConfig.enabled && webConfig.baseUrl;
+
+    if (isLongResponse && webEnabled) {
+      const webUrl = getConversationUrl(newThreadTs, channelId, webConfig, userId);
+      const snippet = extractSnippet(scrubSensitiveData(result.response));
+      await client.chat.update({
+        channel: channelId,
+        ts: newThreadTs,
+        text: `Response: ${result.response.slice(0, 100)}...`,
+        blocks: [
+          section(`*Continued from* \`${originalThreadTs}\``),
+          section(`*Q:* ${question}`),
+          section(snippet),
+          section(`<${webUrl}|View full response> _(${result.response.length.toLocaleString()} chars)_`),
+          contextBlock(
+            `_Tools used: ${String(result.toolCalls.length)} | ` +
+            `Tokens: ${totalTokens.toLocaleString()} | ` +
+            `History: ${String(originalConversation.messages.length)} msgs | ` +
+            `Reply in thread to continue_`
+          ),
+        ],
+      });
+    } else {
+      await client.chat.update({
+        channel: channelId,
+        ts: newThreadTs,
+        text: result.response.slice(0, 100),
+        blocks: [
+          section(`*Continued from* \`${originalThreadTs}\``),
+          section(`*Q:* ${question}`),
+          section(result.response),
+          contextBlock(
+            `_Tools used: ${String(result.toolCalls.length)} | ` +
+            `Tokens: ${totalTokens.toLocaleString()} | ` +
+            `History: ${String(originalConversation.messages.length)} msgs | ` +
+            `Reply in thread to continue_`
+          ),
+        ],
+      });
+    }
+
+    logger.info('Conversation continued', {
+      userId,
+      channelId,
+      originalThreadTs,
+      newThreadTs,
+      historyMessages: originalConversation.messages.length,
+      toolCalls: result.toolCalls.length,
+      tokens: totalTokens,
+    });
+  } catch (err) {
+    const rawMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
+    const parsed = parseSlackError(err instanceof Error ? err : new Error(rawMessage));
+    const displayMessage = parsed.type !== 'unknown' ? parsed.format() : rawMessage;
+
+    logger.error('Continue command failed', {
+      error: rawMessage,
+      errorType: parsed.type,
+      userId,
+      channelId,
+      originalThreadTs,
+    });
+
+    await respond({
+      blocks: [errorBlock(`Failed to continue conversation: ${displayMessage}`)],
+      response_type: 'ephemeral',
+    });
+  }
+}
+
+/**
  * Register the message event handler for thread replies
  */
 export function registerThreadHandler(app: App): void {
@@ -549,47 +650,15 @@ export function registerThreadHandler(app: App): void {
         text
       );
 
-      // Get conversation history (excluding the current question we just added)
-      const history = updatedConversation.messages.slice(0, -1);
-
-      // Resolve channel-specific context (or use default)
-      const activeContext = await resolveChannelContext(channelId, claudeConfig);
-
-      // Load user config
-      const userConfig = await loadUserConfig(userId, {
-        allowedDirs: claudeConfig.allowedDirs,
-        maxFileSizeKb: claudeConfig.maxFileSizeKb,
-        maxLogLines: claudeConfig.maxLogLines,
-        contextDir: claudeConfig.contextDir,
-        contextDirContent: activeContext?.combined,
+      // Process the conversation turn
+      const result = await processConversationTurn({
+        conversationId: updatedConversation.id,
+        threadTs,
+        channelId,
+        userId,
+        userMessage: text,
+        claudeConfig,
       });
-
-      // Get Claude service and ask
-      const claude = getClaudeService({
-        provider: claudeConfig.provider,
-        apiKey: claudeConfig.apiKey,
-        cliPath: claudeConfig.cliPath,
-        cliModel: claudeConfig.cliModel,
-        sdkModel: claudeConfig.sdkModel,
-        maxTokens: claudeConfig.maxTokens,
-        maxToolCalls: claudeConfig.maxToolCalls,
-        maxIterations: claudeConfig.maxIterations,
-      });
-
-      const result = await claude.ask(text, history, userConfig);
-
-      // Store the response
-      store.addAssistantMessage(updatedConversation.id, result.response);
-
-      // Log tool calls
-      for (const toolCall of result.toolCalls) {
-        store.logToolCall(
-          updatedConversation.id,
-          toolCall.name,
-          toolCall.input,
-          toolCall.outputPreview
-        );
-      }
 
       // Track token usage (for diagnostics)
       const totalTokens = result.usage.inputTokens + result.usage.outputTokens;

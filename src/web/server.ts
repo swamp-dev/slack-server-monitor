@@ -20,6 +20,8 @@ import { getSessionStore, closeSessionStore } from '../services/session-store.js
 import { resolveToken, parseCookies } from './auth.js';
 import { logger } from '../utils/logger.js';
 import { renderConversation, renderMarkdownExport, renderSessionList, render404, render401, renderLogin, renderError } from './templates.js';
+import { processConversationTurn } from '../services/conversation-processor.js';
+import { checkAndRecordClaudeRequest } from '../commands/ask.js';
 
 const SESSION_COOKIE = 'ssm_session';
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -434,6 +436,7 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         channelId: conversation.channelId,
         createdAt: conversation.createdAt,
         updatedAt: conversation.updatedAt,
+        canContinue: true,
       });
 
       res.type('html').send(html);
@@ -452,6 +455,93 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         channelId,
       });
       res.status(500).send(renderError('An unexpected error occurred.'));
+    }
+  });
+
+  // Continue conversation endpoint: POST /c/:threadTs/:channelId/ask
+  app.post('/c/:threadTs/:channelId/ask', (req: Request, res: Response) => {
+    const threadTs = req.params.threadTs;
+    const channelId = req.params.channelId;
+
+    if (!threadTs || !channelId || typeof threadTs !== 'string' || typeof channelId !== 'string') {
+      res.status(400).json({ error: 'Invalid parameters' });
+      return;
+    }
+
+    const body = req.body as Record<string, unknown>;
+    const message = typeof body.message === 'string' ? body.message.trim() : '';
+
+    if (!message) {
+      res.status(400).json({ error: 'Message is required' });
+      return;
+    }
+
+    if (message.length > 4000) {
+      res.status(400).json({ error: 'Message is too long (max 4000 characters)' });
+      return;
+    }
+
+    const userId = res.locals.userId as string | undefined;
+    if (!userId) {
+      logger.error('Web continuation reached without authenticated user', { threadTs, channelId });
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    // Check rate limit (shares the same limiter as Slack commands)
+    if (!checkAndRecordClaudeRequest(userId)) {
+      res.status(429).json({ error: 'Rate limit exceeded. Please wait before asking another question.' });
+      return;
+    }
+
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+
+      // Use getOrCreateConversation atomically — avoids TOCTOU race where
+      // conversation could expire between a check and a separate update
+      const conversation = store.getOrCreateConversation(
+        threadTs,
+        channelId,
+        userId,
+        message
+      );
+
+      // Verify this is a continuation (has prior messages), not a brand new conversation
+      if (conversation.messages.length <= 1) {
+        res.status(404).json({ error: 'Conversation not found or has expired' });
+        return;
+      }
+
+      // Process the turn (async — we handle the promise)
+      processConversationTurn({
+        conversationId: conversation.id,
+        threadTs,
+        channelId,
+        userId,
+        userMessage: message,
+        claudeConfig,
+      })
+        .then(() => {
+          res.json({ success: true });
+        })
+        .catch((err: unknown) => {
+          const errMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
+          logger.error('Web continuation failed', {
+            error: errMessage,
+            threadTs,
+            channelId,
+            userId,
+          });
+          res.status(500).json({ error: errMessage });
+        });
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
+      logger.error('Error in web continuation setup', {
+        error: errMessage,
+        threadTs,
+        channelId,
+      });
+      res.status(500).json({ error: errMessage });
     }
   });
 

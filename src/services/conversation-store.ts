@@ -374,9 +374,44 @@ export class ConversationStore {
   }
 
   /**
+   * Get conversation by thread_ts only (scans all channels)
+   */
+  getConversationByThreadTs(threadTs: string): Conversation | null {
+    const row = this.db
+      .prepare('SELECT * FROM conversations WHERE thread_ts = ? ORDER BY updated_at DESC LIMIT 1')
+      .get(threadTs) as {
+        id: number;
+        thread_ts: string;
+        channel_id: string;
+        user_id: string;
+        messages: string;
+        created_at: number;
+        updated_at: number;
+        archived_at: number | null;
+        favorited_at: number | null;
+      } | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      threadTs: row.thread_ts,
+      channelId: row.channel_id,
+      userId: row.user_id,
+      messages: JSON.parse(row.messages) as ConversationMessage[],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      archivedAt: row.archived_at,
+      favoritedAt: row.favorited_at,
+    };
+  }
+
+  /**
    * Get conversation by ID
    */
-  private getConversationById(id: number): Conversation | null {
+  getConversationById(id: number): Conversation | null {
     const row = this.db
       .prepare('SELECT * FROM conversations WHERE id = ?')
       .get(id) as {

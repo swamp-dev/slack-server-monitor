@@ -100,6 +100,41 @@ describe('ConversationStore', () => {
       expect(updated.messages).toHaveLength(2);
     });
 
+    it('should get conversation by thread_ts only', () => {
+      store.createConversation('1234.5678', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Hello' },
+      ]);
+
+      const result = store.getConversationByThreadTs('1234.5678');
+
+      expect(result).not.toBeNull();
+      expect(result?.threadTs).toBe('1234.5678');
+      expect(result?.channelId).toBe('C123ABC');
+      expect(result?.messages).toHaveLength(1);
+    });
+
+    it('should return null for non-existent thread_ts', () => {
+      const result = store.getConversationByThreadTs('nonexistent');
+      expect(result).toBeNull();
+    });
+
+    it('should get conversation by ID', () => {
+      const created = store.createConversation('1234.5678', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Hello' },
+      ]);
+
+      const result = store.getConversationById(created.id);
+
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe(created.id);
+      expect(result?.threadTs).toBe('1234.5678');
+    });
+
+    it('should return null for non-existent ID', () => {
+      const result = store.getConversationById(99999);
+      expect(result).toBeNull();
+    });
+
     it('should add assistant message to conversation', () => {
       const conversation = store.createConversation(
         '1234.5678',

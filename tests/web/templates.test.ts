@@ -594,6 +594,66 @@ describe('web templates', () => {
       expect(html).toContain('clipboard');
       expect(html).toContain('Copy');
     });
+
+    it('should include continue form when canContinue is true', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi there!' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        canContinue: true,
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('id="continue-form"');
+      expect(html).toContain('Ask Claude');
+      expect(html).toContain('id="continue-input"');
+      expect(html).toContain('id="continue-submit"');
+      expect(html).toContain('Continue Conversation');
+    });
+
+    it('should not include continue form when canContinue is false', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        canContinue: false,
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).not.toContain('id="continue-form"');
+      expect(html).not.toContain('Continue Conversation');
+    });
+
+    it('should not include continue form when canContinue is not set', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const toolCalls: ToolCallLog[] = [];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).not.toContain('id="continue-form"');
+      expect(html).not.toContain('Continue Conversation');
+    });
   });
 
   describe('renderSessionList', () => {

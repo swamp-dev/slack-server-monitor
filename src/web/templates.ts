@@ -369,6 +369,75 @@ const styles = `
     text-decoration: none;
   }
 
+  .continue-form {
+    margin-top: 30px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 20px;
+  }
+
+  .continue-form h2 {
+    font-size: 1.125rem;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+
+  .continue-form textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 12px;
+    font-size: 0.9375rem;
+    font-family: inherit;
+    background: var(--code-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-color);
+    resize: vertical;
+    outline: none;
+  }
+
+  .continue-form textarea:focus {
+    border-color: var(--accent-color);
+  }
+
+  .continue-form button {
+    margin-top: 10px;
+    padding: 10px 20px;
+    font-size: 0.9375rem;
+    font-family: inherit;
+    color: #fff;
+    background: var(--accent-color);
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .continue-form button:hover {
+    opacity: 0.9;
+  }
+
+  .continue-form button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .continue-form .continue-error {
+    margin-top: 10px;
+    padding: 10px 14px;
+    background: rgba(233, 69, 96, 0.15);
+    border: 1px solid var(--accent-color);
+    border-radius: 6px;
+    font-size: 0.875rem;
+    color: var(--accent-color);
+    display: none;
+  }
+
+  .continue-form .continue-spinner {
+    display: none;
+    margin-top: 10px;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+  }
+
   @media (max-width: 600px) {
     .container {
       padding: 10px;
@@ -750,6 +819,73 @@ function renderToolCalls(toolCalls: ToolCallLog[]): string {
 }
 
 /**
+ * Render the continue conversation form
+ */
+function renderContinueForm(): string {
+  return `
+    <div class="continue-form">
+      <h2>Continue Conversation</h2>
+      <form id="continue-form">
+        <textarea id="continue-input" placeholder="Ask a follow-up question..." maxlength="4000" required></textarea>
+        <button type="submit" id="continue-submit">Ask Claude</button>
+        <div class="continue-spinner" id="continue-spinner">Processing... This may take a moment.</div>
+        <div class="continue-error" id="continue-error"></div>
+      </form>
+    </div>
+  `;
+}
+
+/**
+ * Render the continue form JavaScript
+ */
+function renderContinueScript(): string {
+  return `
+    (function() {
+      var form = document.getElementById('continue-form');
+      var input = document.getElementById('continue-input');
+      var submitBtn = document.getElementById('continue-submit');
+      var spinner = document.getElementById('continue-spinner');
+      var errorDiv = document.getElementById('continue-error');
+      if (!form) return;
+
+      form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var message = input.value.trim();
+        if (!message) return;
+
+        submitBtn.disabled = true;
+        spinner.style.display = 'block';
+        errorDiv.style.display = 'none';
+
+        fetch(window.location.pathname + '/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: message }),
+          credentials: 'same-origin'
+        })
+        .then(function(res) { return res.json().then(function(data) { return { ok: res.ok, data: data }; }); })
+        .then(function(result) {
+          if (result.ok) {
+            window.location.reload();
+          } else {
+            errorDiv.textContent = result.data.error || 'An error occurred';
+            errorDiv.style.display = 'block';
+            submitBtn.disabled = false;
+            spinner.style.display = 'none';
+          }
+        })
+        .catch(function(err) {
+          errorDiv.textContent = 'Network error: ' + err.message;
+          errorDiv.style.display = 'block';
+          submitBtn.disabled = false;
+          spinner.style.display = 'none';
+        });
+      });
+    })();
+  `;
+}
+
+/**
  * Render the full conversation page
  */
 export function renderConversation(
@@ -760,6 +896,7 @@ export function renderConversation(
     channelId: string;
     createdAt: number;
     updatedAt: number;
+    canContinue?: boolean;
   }
 ): string {
   const messagesHtml = messages.length > 0
@@ -767,6 +904,8 @@ export function renderConversation(
     : '<div class="empty">No messages in this conversation.</div>';
 
   const toolCallsHtml = renderToolCalls(toolCalls);
+  const continueFormHtml = metadata.canContinue ? renderContinueForm() : '';
+  const continueScriptHtml = metadata.canContinue ? `<script>${renderContinueScript()}</script>` : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -796,6 +935,7 @@ export function renderConversation(
   <main class="container">
     ${messagesHtml}
     ${toolCallsHtml}
+    ${continueFormHtml}
   </main>
 
   <footer>
@@ -826,6 +966,7 @@ export function renderConversation(
       }
     })();
   </script>
+  ${continueScriptHtml}
 </body>
 </html>`;
 }
