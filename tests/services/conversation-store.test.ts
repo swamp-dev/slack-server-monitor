@@ -491,6 +491,372 @@ describe('ConversationStore', () => {
     });
   });
 
+  describe('full-text search', () => {
+    it('should find conversations by message content', () => {
+      store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'How do I restart nginx?' },
+        { role: 'assistant', content: 'Run docker restart nginx' },
+      ]);
+      store.createConversation('2222.0002', 'C123ABC', 'U789GHI', [
+        { role: 'user', content: 'Check disk usage on /data' },
+        { role: 'assistant', content: 'The /data mount is at 45%' },
+      ]);
+      store.createConversation('3333.0003', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Show me nginx logs' },
+      ]);
+
+      const results = store.searchConversations('nginx');
+
+      expect(results).toHaveLength(2);
+      // Should include both conversations mentioning nginx
+      const threadIds = results.map((r) => r.threadTs);
+      expect(threadIds).toContain('1111.0001');
+      expect(threadIds).toContain('3333.0003');
+    });
+
+    it('should return empty array when no matches found', () => {
+      store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Hello world' },
+      ]);
+
+      const results = store.searchConversations('nonexistent');
+
+      expect(results).toHaveLength(0);
+    });
+
+    it('should support pagination for search results', () => {
+      // Create 5 conversations with "docker" in them
+      for (let i = 1; i <= 5; i++) {
+        store.createConversation(`${String(i)}000.000${String(i)}`, 'C123ABC', 'U456DEF', [
+          { role: 'user', content: `Docker question ${String(i)}` },
+        ]);
+      }
+
+      const page1 = store.searchConversations('docker', 2, 0);
+      const page2 = store.searchConversations('docker', 2, 2);
+
+      expect(page1).toHaveLength(2);
+      expect(page2).toHaveLength(2);
+      // Pages should not overlap
+      const ids1 = new Set(page1.map((r) => r.id));
+      const ids2 = new Set(page2.map((r) => r.id));
+      expect([...ids1].some((id) => ids2.has(id))).toBe(false);
+    });
+
+    it('should count total search results', () => {
+      store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Docker restart' },
+      ]);
+      store.createConversation('2222.0002', 'C123ABC', 'U789GHI', [
+        { role: 'user', content: 'Docker logs' },
+      ]);
+      store.createConversation('3333.0003', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'No match here' },
+      ]);
+
+      const count = store.countSearchResults('docker');
+
+      expect(count).toBe(2);
+    });
+
+    it('should exclude archived conversations from search', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Docker restart' },
+      ]);
+      store.createConversation('2222.0002', 'C123ABC', 'U789GHI', [
+        { role: 'user', content: 'Docker logs' },
+      ]);
+
+      // Archive one
+      store.getDatabase().prepare('UPDATE conversations SET archived_at = ? WHERE id = ?')
+        .run(Date.now(), conv.id);
+
+      const results = store.searchConversations('docker');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]?.threadTs).toBe('2222.0002');
+    });
+
+    it('should update search index when conversation is updated', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Hello world' },
+      ]);
+
+      // Initially no match for "redis"
+      expect(store.searchConversations('redis')).toHaveLength(0);
+
+      // Update with new content
+      store.updateConversation(conv.id, [
+        { role: 'user', content: 'Hello world' },
+        { role: 'assistant', content: 'Redis is running on port 6379' },
+      ]);
+
+      // Now should match
+      expect(store.searchConversations('redis')).toHaveLength(1);
+    });
+
+    it('should handle search with special FTS5 characters', () => {
+      store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Check /var/log/nginx' },
+      ]);
+
+      // Should not throw on special characters
+      const results = store.searchConversations('/var/log');
+
+      expect(results).toHaveLength(1);
+    });
+  });
+
+  describe('tagging', () => {
+    it('should add a tag to a conversation', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      store.addTag(conv.id, 'important');
+
+      const tags = store.getTags(conv.id);
+      expect(tags).toEqual(['important']);
+    });
+
+    it('should add multiple tags to a conversation', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      store.addTag(conv.id, 'nginx');
+      store.addTag(conv.id, 'debugging');
+      store.addTag(conv.id, 'production');
+
+      const tags = store.getTags(conv.id);
+      expect(tags).toHaveLength(3);
+      expect(tags).toContain('nginx');
+      expect(tags).toContain('debugging');
+      expect(tags).toContain('production');
+    });
+
+    it('should not duplicate tags', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      store.addTag(conv.id, 'important');
+      store.addTag(conv.id, 'important');
+
+      const tags = store.getTags(conv.id);
+      expect(tags).toEqual(['important']);
+    });
+
+    it('should remove a tag from a conversation', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      store.addTag(conv.id, 'nginx');
+      store.addTag(conv.id, 'debugging');
+      store.removeTag(conv.id, 'nginx');
+
+      const tags = store.getTags(conv.id);
+      expect(tags).toEqual(['debugging']);
+    });
+
+    it('should return false when removing non-existent tag', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      const result = store.removeTag(conv.id, 'nonexistent');
+
+      expect(result).toBe(false);
+    });
+
+    it('should return empty array for conversation with no tags', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      const tags = store.getTags(conv.id);
+
+      expect(tags).toEqual([]);
+    });
+
+    it('should list conversations by tag', () => {
+      const conv1 = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Hello' },
+      ]);
+      const conv2 = store.createConversation('2222.0002', 'C123ABC', 'U789GHI', [
+        { role: 'user', content: 'World' },
+      ]);
+      store.createConversation('3333.0003', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Other' },
+      ]);
+
+      store.addTag(conv1.id, 'nginx');
+      store.addTag(conv2.id, 'nginx');
+
+      const sessions = store.listSessionsByTag('nginx');
+
+      expect(sessions).toHaveLength(2);
+      const threadIds = sessions.map((s) => s.threadTs);
+      expect(threadIds).toContain('1111.0001');
+      expect(threadIds).toContain('2222.0002');
+    });
+
+    it('should list all unique tags', () => {
+      const conv1 = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      const conv2 = store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+
+      store.addTag(conv1.id, 'nginx');
+      store.addTag(conv1.id, 'debugging');
+      store.addTag(conv2.id, 'nginx');
+      store.addTag(conv2.id, 'production');
+
+      const allTags = store.listAllTags();
+
+      expect(allTags).toHaveLength(3);
+      expect(allTags.map((t) => t.name)).toContain('nginx');
+      expect(allTags.map((t) => t.name)).toContain('debugging');
+      expect(allTags.map((t) => t.name)).toContain('production');
+    });
+
+    it('should include usage count in listAllTags', () => {
+      const conv1 = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      const conv2 = store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+
+      store.addTag(conv1.id, 'nginx');
+      store.addTag(conv2.id, 'nginx');
+      store.addTag(conv1.id, 'rare');
+
+      const allTags = store.listAllTags();
+
+      const nginxTag = allTags.find((t) => t.name === 'nginx');
+      const rareTag = allTags.find((t) => t.name === 'rare');
+      expect(nginxTag?.count).toBe(2);
+      expect(rareTag?.count).toBe(1);
+    });
+
+    it('should exclude archived conversations from listSessionsByTag', () => {
+      const conv1 = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      const conv2 = store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+
+      store.addTag(conv1.id, 'nginx');
+      store.addTag(conv2.id, 'nginx');
+
+      // Archive one
+      store.getDatabase().prepare('UPDATE conversations SET archived_at = ? WHERE id = ?')
+        .run(Date.now(), conv1.id);
+
+      const sessions = store.listSessionsByTag('nginx');
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.threadTs).toBe('2222.0002');
+    });
+
+    it('should clean up tags when conversation is deleted', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      store.addTag(conv.id, 'test-tag');
+
+      // Simulate hard delete (as done in cleanupExpired)
+      store.getDatabase().prepare('DELETE FROM conversation_tags WHERE conversation_id = ?').run(conv.id);
+      store.getDatabase().prepare('DELETE FROM conversations WHERE id = ?').run(conv.id);
+
+      const allTags = store.listAllTags();
+      expect(allTags).toHaveLength(0);
+    });
+  });
+
+  describe('favorites', () => {
+    it('should toggle favorite on a conversation', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      const result = store.toggleFavorite(conv.id);
+
+      expect(result).toBe(true); // now favorited
+    });
+
+    it('should toggle favorite off', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      store.toggleFavorite(conv.id); // on
+      const result = store.toggleFavorite(conv.id); // off
+
+      expect(result).toBe(false); // now unfavorited
+    });
+
+    it('should check if a conversation is favorited', () => {
+      const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+
+      expect(store.isFavorited(conv.id)).toBe(false);
+
+      store.toggleFavorite(conv.id);
+
+      expect(store.isFavorited(conv.id)).toBe(true);
+    });
+
+    it('should list favorited sessions', () => {
+      const conv1 = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Hello' },
+      ]);
+      store.createConversation('2222.0002', 'C123ABC', 'U789GHI', [
+        { role: 'user', content: 'World' },
+      ]);
+      const conv3 = store.createConversation('3333.0003', 'C123ABC', 'U456DEF', [
+        { role: 'user', content: 'Third' },
+      ]);
+
+      store.toggleFavorite(conv1.id);
+      store.toggleFavorite(conv3.id);
+
+      const favorites = store.listFavoriteSessions();
+
+      expect(favorites).toHaveLength(2);
+      const threadIds = favorites.map((f) => f.threadTs);
+      expect(threadIds).toContain('1111.0001');
+      expect(threadIds).toContain('3333.0003');
+    });
+
+    it('should count favorited sessions', () => {
+      const conv1 = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      const conv2 = store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+      store.createConversation('3333.0003', 'C123ABC', 'U456DEF', []);
+
+      store.toggleFavorite(conv1.id);
+      store.toggleFavorite(conv2.id);
+
+      expect(store.countFavoriteSessions()).toBe(2);
+    });
+
+    it('should support pagination for favorites', () => {
+      for (let i = 1; i <= 5; i++) {
+        const conv = store.createConversation(`${String(i)}000.000${String(i)}`, 'C123ABC', 'U456DEF', []);
+        store.toggleFavorite(conv.id);
+      }
+
+      const page1 = store.listFavoriteSessions(2, 0);
+      const page2 = store.listFavoriteSessions(2, 2);
+
+      expect(page1).toHaveLength(2);
+      expect(page2).toHaveLength(2);
+    });
+
+    it('should exclude archived conversations from favorites list', () => {
+      const conv1 = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      const conv2 = store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+
+      store.toggleFavorite(conv1.id);
+      store.toggleFavorite(conv2.id);
+
+      // Archive one
+      store.getDatabase().prepare('UPDATE conversations SET archived_at = ? WHERE id = ?')
+        .run(Date.now(), conv1.id);
+
+      const favorites = store.listFavoriteSessions();
+      expect(favorites).toHaveLength(1);
+      expect(favorites[0]?.threadTs).toBe('2222.0002');
+    });
+
+    it('should include favorite status in session summaries', () => {
+      const conv1 = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);
+      store.createConversation('2222.0002', 'C123ABC', 'U789GHI', []);
+
+      store.toggleFavorite(conv1.id);
+
+      const sessions = store.listRecentSessions();
+
+      const favSession = sessions.find((s) => s.threadTs === '1111.0001');
+      const nonFavSession = sessions.find((s) => s.threadTs === '2222.0002');
+      expect(favSession?.isFavorited).toBe(true);
+      expect(nonFavSession?.isFavorited).toBe(false);
+    });
+  });
+
   describe('archiving', () => {
     it('listRecentSessions excludes archived conversations', () => {
       const conv = store.createConversation('1111.0001', 'C123ABC', 'U456DEF', []);

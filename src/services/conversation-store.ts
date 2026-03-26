@@ -40,6 +40,7 @@ export interface Conversation {
   createdAt: number;
   updatedAt: number;
   archivedAt: number | null;
+  favoritedAt: number | null;
 }
 
 /**
@@ -80,6 +81,16 @@ export interface SessionSummary {
   updatedAt: number;
   archivedAt: number | null;
   isActive: boolean; // updatedAt within last 5 minutes
+  isFavorited: boolean;
+  tags?: string[];
+}
+
+/**
+ * Tag with usage count
+ */
+export interface TagInfo {
+  name: string;
+  count: number;
 }
 
 /**
@@ -159,6 +170,16 @@ export class ConversationStore {
         ON conversations(updated_at);
       CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation
         ON tool_calls(conversation_id);
+
+      CREATE TABLE IF NOT EXISTS conversation_tags (
+        conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+        tag TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (conversation_id, tag)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_conversation_tags_tag
+        ON conversation_tags(tag);
     `);
 
     // Migrate: add duration_ms and success columns if missing
@@ -183,7 +204,48 @@ export class ConversationStore {
       this.db.exec('CREATE INDEX IF NOT EXISTS idx_conversations_archived ON conversations(archived_at)');
     }
 
+    // Migrate: add favorited_at column if missing
+    if (!convColumnNames.has('favorited_at')) {
+      this.db.exec('ALTER TABLE conversations ADD COLUMN favorited_at INTEGER');
+    }
+
+    // Migrate: create FTS5 virtual table for full-text search
+    const ftsExists = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='conversations_fts'")
+      .get() as { name: string } | undefined;
+
+    if (!ftsExists) {
+      this.db.exec(`
+        CREATE VIRTUAL TABLE conversations_fts USING fts5(
+          messages_text,
+          content='',
+          tokenize='unicode61'
+        );
+      `);
+      // Populate FTS index from existing conversations
+      const existing = this.db
+        .prepare('SELECT id, messages FROM conversations')
+        .all() as { id: number; messages: string }[];
+      const insertFts = this.db.prepare('INSERT INTO conversations_fts(rowid, messages_text) VALUES (?, ?)');
+      for (const row of existing) {
+        const text = this.extractTextFromMessages(row.messages);
+        insertFts.run(row.id, text);
+      }
+    }
+
     logger.debug('Conversation store schema initialized');
+  }
+
+  /**
+   * Extract plain text from messages JSON for FTS indexing
+   */
+  private extractTextFromMessages(messagesJson: string): string {
+    try {
+      const messages = JSON.parse(messagesJson) as ConversationMessage[];
+      return messages.map((m) => m.content).join(' ');
+    } catch {
+      return '';
+    }
   }
 
   /**
@@ -201,6 +263,7 @@ export class ConversationStore {
         created_at: number;
         updated_at: number;
         archived_at: number | null;
+        favorited_at: number | null;
       } | undefined;
 
     if (!row) {
@@ -216,6 +279,7 @@ export class ConversationStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       archivedAt: row.archived_at,
+      favoritedAt: row.favorited_at,
     };
   }
 
@@ -238,8 +302,14 @@ export class ConversationStore {
       `)
       .run(threadTs, channelId, userId, messagesJson, now, now);
 
+    const id = result.lastInsertRowid as number;
+
+    // Update FTS index
+    const text = this.extractTextFromMessages(messagesJson);
+    this.db.prepare('INSERT INTO conversations_fts(rowid, messages_text) VALUES (?, ?)').run(id, text);
+
     return {
-      id: result.lastInsertRowid as number,
+      id,
       threadTs,
       channelId,
       userId,
@@ -247,6 +317,7 @@ export class ConversationStore {
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
+      favoritedAt: null,
     };
   }
 
@@ -256,10 +327,15 @@ export class ConversationStore {
   updateConversation(id: number, messages: ConversationMessage[]): void {
     const now = Date.now();
     const messagesJson = JSON.stringify(messages);
+    const text = this.extractTextFromMessages(messagesJson);
 
-    this.db
-      .prepare('UPDATE conversations SET messages = ?, updated_at = ? WHERE id = ?')
-      .run(messagesJson, now, id);
+    this.db.transaction(() => {
+      this.db
+        .prepare('UPDATE conversations SET messages = ?, updated_at = ? WHERE id = ?')
+        .run(messagesJson, now, id);
+      this.db.prepare("INSERT INTO conversations_fts(conversations_fts, rowid, messages_text) VALUES('delete', ?, '')").run(id);
+      this.db.prepare('INSERT INTO conversations_fts(rowid, messages_text) VALUES (?, ?)').run(id, text);
+    })();
   }
 
   /**
@@ -312,6 +388,7 @@ export class ConversationStore {
         created_at: number;
         updated_at: number;
         archived_at: number | null;
+        favorited_at: number | null;
       } | undefined;
 
     if (!row) {
@@ -327,6 +404,7 @@ export class ConversationStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       archivedAt: row.archived_at,
+      favoritedAt: row.favorited_at,
     };
   }
 
@@ -368,11 +446,30 @@ export class ConversationStore {
     // Phase 2: Hard-delete conversations that have been archived past TTL
     const archiveCutoff = cutoff;
     const deleteArchived = this.db.transaction(() => {
+      // Collect IDs for FTS cleanup
+      const idsToDelete = this.db
+        .prepare('SELECT id FROM conversations WHERE archived_at IS NOT NULL AND archived_at < ?')
+        .all(archiveCutoff) as { id: number }[];
+
+      // Clean up FTS index entries
+      for (const { id } of idsToDelete) {
+        this.db.prepare("INSERT INTO conversations_fts(conversations_fts, rowid, messages_text) VALUES('delete', ?, '')").run(id);
+      }
+
+      // Clean up tags
+      this.db.prepare(`
+        DELETE FROM conversation_tags WHERE conversation_id IN (
+          SELECT id FROM conversations WHERE archived_at IS NOT NULL AND archived_at < ?
+        )
+      `).run(archiveCutoff);
+
+      // Clean up tool calls
       this.db.prepare(`
         DELETE FROM tool_calls WHERE conversation_id IN (
           SELECT id FROM conversations WHERE archived_at IS NOT NULL AND archived_at < ?
         )
       `).run(archiveCutoff);
+
       return this.db.prepare('DELETE FROM conversations WHERE archived_at IS NOT NULL AND archived_at < ?')
         .run(archiveCutoff);
     });
@@ -428,7 +525,7 @@ export class ConversationStore {
       .prepare(`
         SELECT
           c.id, c.thread_ts, c.channel_id, c.user_id,
-          c.messages, c.created_at, c.updated_at, c.archived_at,
+          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at,
           COUNT(tc.id) as tool_call_count
         FROM conversations c
         LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
@@ -451,24 +548,11 @@ export class ConversationStore {
         created_at: number;
         updated_at: number;
         archived_at: number | null;
+        favorited_at: number | null;
         tool_call_count: number;
       }[];
 
-    return rows.map((row) => {
-      const messages = JSON.parse(row.messages) as ConversationMessage[];
-      return {
-        id: row.id,
-        threadTs: row.thread_ts,
-        channelId: row.channel_id,
-        userId: row.user_id,
-        messageCount: messages.length,
-        toolCallCount: row.tool_call_count,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-        archivedAt: row.archived_at,
-        isActive: row.updated_at > activeThreshold,
-      };
-    });
+    return rows.map((row) => this.toSessionSummary(row, activeThreshold));
   }
 
   /**
@@ -495,7 +579,7 @@ export class ConversationStore {
       .prepare(`
         SELECT
           c.id, c.thread_ts, c.channel_id, c.user_id,
-          c.messages, c.created_at, c.updated_at, c.archived_at,
+          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at,
           COUNT(tc.id) as tool_call_count
         FROM conversations c
         LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
@@ -513,24 +597,11 @@ export class ConversationStore {
         created_at: number;
         updated_at: number;
         archived_at: number | null;
+        favorited_at: number | null;
         tool_call_count: number;
       }[];
 
-    return rows.map((row) => {
-      const messages = JSON.parse(row.messages) as ConversationMessage[];
-      return {
-        id: row.id,
-        threadTs: row.thread_ts,
-        channelId: row.channel_id,
-        userId: row.user_id,
-        messageCount: messages.length,
-        toolCallCount: row.tool_call_count,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-        archivedAt: row.archived_at,
-        isActive: row.updated_at > activeThreshold,
-      };
-    });
+    return rows.map((row) => this.toSessionSummary(row, activeThreshold));
   }
 
   /**
@@ -574,7 +645,42 @@ export class ConversationStore {
       updatedAt: conversation.updatedAt,
       archivedAt: conversation.archivedAt,
       isActive: conversation.updatedAt > activeThreshold,
+      isFavorited: conversation.favoritedAt != null,
       recentToolCalls: toolCalls,
+    };
+  }
+
+  /**
+   * Convert a session row to SessionSummary
+   */
+  private toSessionSummary(
+    row: {
+      id: number;
+      thread_ts: string;
+      channel_id: string;
+      user_id: string;
+      messages: string;
+      created_at: number;
+      updated_at: number;
+      archived_at: number | null;
+      favorited_at: number | null;
+      tool_call_count: number;
+    },
+    activeThreshold: number
+  ): SessionSummary {
+    const messages = JSON.parse(row.messages) as ConversationMessage[];
+    return {
+      id: row.id,
+      threadTs: row.thread_ts,
+      channelId: row.channel_id,
+      userId: row.user_id,
+      messageCount: messages.length,
+      toolCallCount: row.tool_call_count,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      archivedAt: row.archived_at,
+      isActive: row.updated_at > activeThreshold,
+      isFavorited: row.favorited_at != null,
     };
   }
 
@@ -704,6 +810,254 @@ export class ConversationStore {
       durationMs: row.duration_ms,
       success: row.success !== 0,
     }));
+  }
+
+  // ─── Full-text search ───────────────────────────────────────────────
+
+  /**
+   * Search conversations by message content using FTS5
+   */
+  searchConversations(query: string, limit = 20, offset = 0): SessionSummary[] {
+    const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
+
+    // Quote each token individually so "nginx restart" matches both words anywhere
+    const safeQuery = query
+      .split(/\s+/)
+      .filter((t) => t.length > 0)
+      .map((t) => '"' + t.replace(/"/g, '""') + '"')
+      .join(' ');
+
+    const rows = this.db
+      .prepare(`
+        SELECT
+          c.id, c.thread_ts, c.channel_id, c.user_id,
+          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at,
+          COUNT(tc.id) as tool_call_count
+        FROM conversations c
+        INNER JOIN conversations_fts fts ON fts.rowid = c.id
+        LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
+        WHERE conversations_fts MATCH $query
+          AND c.archived_at IS NULL
+        GROUP BY c.id
+        ORDER BY rank, c.updated_at DESC
+        LIMIT $limit OFFSET $offset
+      `)
+      .all({ query: safeQuery, limit, offset }) as {
+        id: number;
+        thread_ts: string;
+        channel_id: string;
+        user_id: string;
+        messages: string;
+        created_at: number;
+        updated_at: number;
+        archived_at: number | null;
+        favorited_at: number | null;
+        tool_call_count: number;
+      }[];
+
+    return rows.map((row) => this.toSessionSummary(row, activeThreshold));
+  }
+
+  /**
+   * Count total search results
+   */
+  countSearchResults(query: string): number {
+    const safeQuery = query
+      .split(/\s+/)
+      .filter((t) => t.length > 0)
+      .map((t) => '"' + t.replace(/"/g, '""') + '"')
+      .join(' ');
+
+    const row = this.db
+      .prepare(`
+        SELECT COUNT(*) as count
+        FROM conversations c
+        INNER JOIN conversations_fts fts ON fts.rowid = c.id
+        WHERE conversations_fts MATCH $query
+          AND c.archived_at IS NULL
+      `)
+      .get({ query: safeQuery }) as { count: number };
+
+    return row.count;
+  }
+
+  // ─── Tagging ──────────────────────────────────────────────────────────
+
+  /**
+   * Add a tag to a conversation
+   */
+  addTag(conversationId: number, tag: string): void {
+    this.db
+      .prepare('INSERT OR IGNORE INTO conversation_tags (conversation_id, tag, created_at) VALUES (?, ?, ?)')
+      .run(conversationId, tag, Date.now());
+  }
+
+  /**
+   * Remove a tag from a conversation
+   * @returns true if the tag was removed, false if it didn't exist
+   */
+  removeTag(conversationId: number, tag: string): boolean {
+    const result = this.db
+      .prepare('DELETE FROM conversation_tags WHERE conversation_id = ? AND tag = ?')
+      .run(conversationId, tag);
+    return result.changes > 0;
+  }
+
+  /**
+   * Get all tags for a conversation
+   */
+  getTags(conversationId: number): string[] {
+    const rows = this.db
+      .prepare('SELECT tag FROM conversation_tags WHERE conversation_id = ? ORDER BY tag')
+      .all(conversationId) as { tag: string }[];
+    return rows.map((r) => r.tag);
+  }
+
+  /**
+   * List all unique tags with usage counts
+   */
+  listAllTags(): TagInfo[] {
+    const rows = this.db
+      .prepare(`
+        SELECT tag as name, COUNT(*) as count
+        FROM conversation_tags ct
+        INNER JOIN conversations c ON c.id = ct.conversation_id
+        WHERE c.archived_at IS NULL
+        GROUP BY tag
+        ORDER BY count DESC, tag ASC
+      `)
+      .all() as { name: string; count: number }[];
+    return rows;
+  }
+
+  /**
+   * List sessions that have a specific tag (excludes archived)
+   */
+  listSessionsByTag(tag: string, limit = 20, offset = 0): SessionSummary[] {
+    const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
+
+    const rows = this.db
+      .prepare(`
+        SELECT
+          c.id, c.thread_ts, c.channel_id, c.user_id,
+          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at,
+          COUNT(tc.id) as tool_call_count
+        FROM conversations c
+        INNER JOIN conversation_tags ct ON ct.conversation_id = c.id
+        LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
+        WHERE ct.tag = $tag
+          AND c.archived_at IS NULL
+        GROUP BY c.id
+        ORDER BY c.updated_at DESC, c.id DESC
+        LIMIT $limit OFFSET $offset
+      `)
+      .all({ tag, limit, offset }) as {
+        id: number;
+        thread_ts: string;
+        channel_id: string;
+        user_id: string;
+        messages: string;
+        created_at: number;
+        updated_at: number;
+        archived_at: number | null;
+        favorited_at: number | null;
+        tool_call_count: number;
+      }[];
+
+    return rows.map((row) => this.toSessionSummary(row, activeThreshold));
+  }
+
+  /**
+   * Count sessions with a specific tag (excludes archived)
+   */
+  countSessionsByTag(tag: string): number {
+    const row = this.db
+      .prepare(`
+        SELECT COUNT(*) as count
+        FROM conversation_tags ct
+        INNER JOIN conversations c ON c.id = ct.conversation_id
+        WHERE ct.tag = ? AND c.archived_at IS NULL
+      `)
+      .get(tag) as { count: number };
+    return row.count;
+  }
+
+  // ─── Favorites ────────────────────────────────────────────────────────
+
+  /**
+   * Toggle favorite status on a conversation
+   * @returns true if now favorited, false if unfavorited
+   */
+  toggleFavorite(conversationId: number): boolean {
+    const row = this.db
+      .prepare('SELECT favorited_at FROM conversations WHERE id = ?')
+      .get(conversationId) as { favorited_at: number | null } | undefined;
+
+    if (!row) return false;
+
+    if (row.favorited_at != null) {
+      this.db.prepare('UPDATE conversations SET favorited_at = NULL WHERE id = ?').run(conversationId);
+      return false;
+    } else {
+      this.db.prepare('UPDATE conversations SET favorited_at = ? WHERE id = ?').run(Date.now(), conversationId);
+      return true;
+    }
+  }
+
+  /**
+   * Check if a conversation is favorited
+   */
+  isFavorited(conversationId: number): boolean {
+    const row = this.db
+      .prepare('SELECT favorited_at FROM conversations WHERE id = ?')
+      .get(conversationId) as { favorited_at: number | null } | undefined;
+    return row?.favorited_at != null;
+  }
+
+  /**
+   * List favorited sessions (excludes archived)
+   */
+  listFavoriteSessions(limit = 20, offset = 0): SessionSummary[] {
+    const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
+
+    const rows = this.db
+      .prepare(`
+        SELECT
+          c.id, c.thread_ts, c.channel_id, c.user_id,
+          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at,
+          COUNT(tc.id) as tool_call_count
+        FROM conversations c
+        LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
+        WHERE c.favorited_at IS NOT NULL
+          AND c.archived_at IS NULL
+        GROUP BY c.id
+        ORDER BY c.favorited_at DESC, c.id DESC
+        LIMIT $limit OFFSET $offset
+      `)
+      .all({ limit, offset }) as {
+        id: number;
+        thread_ts: string;
+        channel_id: string;
+        user_id: string;
+        messages: string;
+        created_at: number;
+        updated_at: number;
+        archived_at: number | null;
+        favorited_at: number | null;
+        tool_call_count: number;
+      }[];
+
+    return rows.map((row) => this.toSessionSummary(row, activeThreshold));
+  }
+
+  /**
+   * Count favorited sessions (excludes archived)
+   */
+  countFavoriteSessions(): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) as count FROM conversations WHERE favorited_at IS NOT NULL AND archived_at IS NULL')
+      .get() as { count: number };
+    return row.count;
   }
 
   /**

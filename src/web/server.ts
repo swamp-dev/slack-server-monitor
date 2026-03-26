@@ -15,7 +15,7 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import type { Server } from 'http';
 import { config, type WebConfig } from '../config/index.js';
-import { getConversationStore } from '../services/conversation-store.js';
+import { getConversationStore, type SessionSummary } from '../services/conversation-store.js';
 import { getSessionStore, closeSessionStore } from '../services/session-store.js';
 import { resolveToken, parseCookies } from './auth.js';
 import { logger } from '../utils/logger.js';
@@ -119,8 +119,9 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   const dbPath = claudeConfig.dbPath;
   const app = express();
 
-  // Parse URL-encoded form bodies (for POST /login)
+  // Parse request bodies
   app.use(express.urlencoded({ extended: false }));
+  app.use(express.json());
 
   // Security headers
   app.use((_req: Request, res: Response, next: NextFunction) => {
@@ -187,19 +188,49 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   // Apply session auth middleware to conversation routes
   app.use('/c', sessionAuthMiddleware(webConfig, dbPath));
 
+  /**
+   * Helper to parse pagination params from query string
+   */
+  function parsePagination(req: Request): { page: number; pageSize: number; offset: number } {
+    const page = typeof req.query.page === 'string' ? Math.max(1, parseInt(req.query.page, 10) || 1) : 1;
+    const pageSize = typeof req.query.pageSize === 'string' ? Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 20)) : 20;
+    return { page, pageSize, offset: (page - 1) * pageSize };
+  }
+
+  /**
+   * Helper to load tags for each session in a list (batch query)
+   */
+  function attachTags(sessions: SessionSummary[], store: ReturnType<typeof getConversationStore>): void {
+    if (sessions.length === 0) return;
+    const ids = sessions.map((s) => s.id);
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = store.getDatabase()
+      .prepare(`SELECT conversation_id, tag FROM conversation_tags WHERE conversation_id IN (${placeholders}) ORDER BY tag`)
+      .all(...ids) as { conversation_id: number; tag: string }[];
+    const tagsByConv = new Map<number, string[]>();
+    for (const row of rows) {
+      const tags = tagsByConv.get(row.conversation_id) ?? [];
+      tags.push(row.tag);
+      tagsByConv.set(row.conversation_id, tags);
+    }
+    for (const session of sessions) {
+      session.tags = tagsByConv.get(session.id) ?? [];
+    }
+  }
+
   // Session list endpoint: GET /c
   app.get('/c', (req: Request, res: Response) => {
     try {
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
-      const page = typeof req.query.page === 'string' ? Math.max(1, parseInt(req.query.page, 10) || 1) : 1;
-      const pageSize = typeof req.query.pageSize === 'string' ? Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 20)) : 20;
-      const offset = (page - 1) * pageSize;
+      const { page, pageSize, offset } = parsePagination(req);
 
       const sessions = store.listRecentSessions(pageSize, offset);
+      attachTags(sessions, store);
       const totalItems = store.countSessions();
       const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+      const allTags = store.listAllTags();
 
-      const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages });
+      const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages }, { allTags });
       res.type('html').send(html);
     } catch (err) {
       logger.error('Error serving session list', {
@@ -209,13 +240,159 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
   });
 
+  // Search endpoint: GET /c/search?q=...
+  app.get('/c/search', (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const { page, pageSize, offset } = parsePagination(req);
+      const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+
+      if (!query) {
+        res.redirect(302, '/c');
+        return;
+      }
+
+      const sessions = store.searchConversations(query, pageSize, offset);
+      attachTags(sessions, store);
+      const totalItems = store.countSearchResults(query);
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+      const allTags = store.listAllTags();
+
+      const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages }, { searchQuery: query, allTags });
+      res.type('html').send(html);
+    } catch (err) {
+      logger.error('Error serving search results', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).send(renderError('Failed to search conversations.'));
+    }
+  });
+
+  // Favorites endpoint: GET /c/favorites
+  app.get('/c/favorites', (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const { page, pageSize, offset } = parsePagination(req);
+
+      const sessions = store.listFavoriteSessions(pageSize, offset);
+      attachTags(sessions, store);
+      const totalItems = store.countFavoriteSessions();
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+      const allTags = store.listAllTags();
+
+      const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages }, { favorites: true, allTags });
+      res.type('html').send(html);
+    } catch (err) {
+      logger.error('Error serving favorites', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).send(renderError('Failed to load favorites.'));
+    }
+  });
+
+  // Tag filter endpoint: GET /c/tag/:tag
+  app.get('/c/tag/:tag', (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const { page, pageSize, offset } = parsePagination(req);
+      const tag = typeof req.params.tag === 'string' ? req.params.tag : '';
+
+      if (!tag) {
+        res.redirect(302, '/c');
+        return;
+      }
+
+      const sessions = store.listSessionsByTag(tag, pageSize, offset);
+      attachTags(sessions, store);
+      const allTags = store.listAllTags();
+      const totalItems = store.countSessionsByTag(tag);
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+
+      const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages }, { activeTag: tag, allTags });
+      res.type('html').send(html);
+    } catch (err) {
+      logger.error('Error serving tag filter', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).send(renderError('Failed to load tagged conversations.'));
+    }
+  });
+
+  // Toggle favorite: POST /c/:id/favorite
+  app.post('/c/:id/favorite', (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
+      if (isNaN(id)) {
+        res.status(400).json({ error: 'Invalid conversation ID' });
+        return;
+      }
+      const isFavorited = store.toggleFavorite(id);
+      res.json({ isFavorited });
+    } catch (err) {
+      logger.error('Error toggling favorite', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).json({ error: 'Failed to toggle favorite' });
+    }
+  });
+
+  // Add tag: POST /c/:id/tag
+  app.post('/c/:id/tag', (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
+      const body = req.body as Record<string, unknown>;
+      const tag = typeof body.tag === 'string' ? body.tag.trim().toLowerCase() : '';
+
+      if (isNaN(id) || !tag) {
+        res.status(400).json({ error: 'Invalid conversation ID or tag' });
+        return;
+      }
+
+      // Validate tag: max 50 chars, alphanumeric + hyphens + underscores
+      if (tag.length > 50 || !/^[a-z0-9][a-z0-9-_]*$/.test(tag)) {
+        res.status(400).json({ error: 'Tag must be 1-50 characters, alphanumeric with hyphens/underscores' });
+        return;
+      }
+
+      store.addTag(id, tag);
+      res.json({ tags: store.getTags(id) });
+    } catch (err) {
+      logger.error('Error adding tag', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).json({ error: 'Failed to add tag' });
+    }
+  });
+
+  // Remove tag: DELETE /c/:id/tag/:tag
+  app.delete('/c/:id/tag/:tag', (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
+      const tag = typeof req.params.tag === 'string' ? req.params.tag : '';
+
+      if (isNaN(id) || !tag) {
+        res.status(400).json({ error: 'Invalid conversation ID or tag' });
+        return;
+      }
+
+      store.removeTag(id, tag);
+      res.json({ tags: store.getTags(id) });
+    } catch (err) {
+      logger.error('Error removing tag', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).json({ error: 'Failed to remove tag' });
+    }
+  });
+
   // Archived session list endpoint: GET /c/archived
   app.get('/c/archived', (req: Request, res: Response) => {
     try {
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
-      const page = typeof req.query.page === 'string' ? Math.max(1, parseInt(req.query.page, 10) || 1) : 1;
-      const pageSize = typeof req.query.pageSize === 'string' ? Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 20)) : 20;
-      const offset = (page - 1) * pageSize;
+      const { page, pageSize, offset } = parsePagination(req);
 
       const sessions = store.listArchivedSessions(pageSize, offset);
       const totalItems = store.countArchivedSessions();

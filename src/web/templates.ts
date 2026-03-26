@@ -468,9 +468,119 @@ const sessionListStyles = `
     padding: 60px 20px;
     color: var(--text-muted);
   }
+  .search-form {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .search-input {
+    flex: 1;
+    padding: 10px 14px;
+    font-size: 0.9375rem;
+    font-family: inherit;
+    background: var(--code-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-color);
+    outline: none;
+  }
+  .search-input:focus {
+    border-color: var(--accent-color);
+  }
+  .search-btn {
+    padding: 10px 20px;
+    font-size: 0.9375rem;
+    font-family: inherit;
+    color: #fff;
+    background: var(--accent-color);
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .search-btn:hover {
+    opacity: 0.9;
+  }
+  .favorite-star {
+    color: var(--text-muted);
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  .favorite-star.active {
+    color: #ffd93d;
+  }
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 0.6875rem;
+    background: rgba(100, 255, 218, 0.1);
+    color: #64ffda;
+    border-radius: 10px;
+    margin-left: 4px;
+  }
+  .session-layout {
+    display: flex;
+    gap: 20px;
+  }
+  .session-list {
+    flex: 1;
+    min-width: 0;
+  }
+  .tag-sidebar {
+    width: 180px;
+    flex-shrink: 0;
+  }
+  .tag-sidebar h3 {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+  .tag-link {
+    display: block;
+    padding: 6px 10px;
+    font-size: 0.8125rem;
+    color: var(--text-color);
+    text-decoration: none;
+    border-radius: 4px;
+  }
+  .tag-link:hover {
+    background: var(--user-bg);
+  }
+  .tag-link.active {
+    background: var(--user-bg);
+    color: #64ffda;
+  }
+  .tag-count {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+  }
+  @media (max-width: 600px) {
+    .session-layout {
+      flex-direction: column;
+    }
+    .tag-sidebar {
+      width: 100%;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .tag-sidebar h3 {
+      width: 100%;
+    }
+  }
 `;
 
-import type { SessionSummary, PaginationInfo } from '../services/conversation-store.js';
+import type { SessionSummary, PaginationInfo, TagInfo } from '../services/conversation-store.js';
+
+/**
+ * Options for rendering the session list page
+ */
+interface SessionListOptions {
+  archived?: boolean;
+  favorites?: boolean;
+  searchQuery?: string;
+  activeTag?: string;
+  allTags?: TagInfo[];
+}
 
 /**
  * Render the session list page
@@ -478,21 +588,43 @@ import type { SessionSummary, PaginationInfo } from '../services/conversation-st
 export function renderSessionList(
   sessions: SessionSummary[],
   pagination: PaginationInfo,
-  options: { archived?: boolean } = {}
+  options: SessionListOptions = {}
 ): string {
   const isArchived = options.archived ?? false;
-  const title = isArchived ? 'Archived Conversations' : 'Conversations';
-  const basePath = isArchived ? '/c/archived' : '/c';
+  const isFavorites = options.favorites ?? false;
+  const searchQuery = options.searchQuery ?? '';
+  const activeTag = options.activeTag;
+  const allTags = options.allTags ?? [];
+
+  let title = 'Conversations';
+  if (isArchived) title = 'Archived Conversations';
+  else if (isFavorites) title = 'Favorite Conversations';
+  else if (searchQuery) title = 'Search Results';
+  else if (activeTag) title = `Tagged: ${activeTag}`;
+
+  let basePath = '/c';
+  if (isArchived) basePath = '/c/archived';
+  else if (isFavorites) basePath = '/c/favorites';
+
+  const searchForm = `
+    <form class="search-form" action="/c/search" method="GET">
+      <input type="text" name="q" placeholder="Search conversations..." value="${escapeHtml(searchQuery)}" class="search-input">
+      <button type="submit" class="search-btn">Search</button>
+    </form>`;
 
   const sessionRows = sessions.length === 0
     ? '<div class="empty-state"><p>No conversations found.</p></div>'
     : sessions.map((s) => {
         const link = `/c/${encodeURIComponent(s.threadTs)}/${encodeURIComponent(s.channelId)}`;
         const date = formatTimestamp(s.updatedAt);
+        const starClass = s.isFavorited ? 'favorite-star active' : 'favorite-star';
+        const tagPills = (s.tags ?? []).map((t) =>
+          `<span class="tag">${escapeHtml(t)}</span>`
+        ).join('');
         return `<a href="${escapeHtml(link)}" class="session-row">
           <div>
-            <div>${escapeHtml(s.userId)} &middot; ${escapeHtml(s.channelId)}</div>
-            <div class="session-meta">${date}</div>
+            <div><span class="${starClass}" data-id="${String(s.id)}">&#9733;</span> ${escapeHtml(s.userId)} &middot; ${escapeHtml(s.channelId)}</div>
+            <div class="session-meta">${date}${tagPills ? ` ${tagPills}` : ''}</div>
           </div>
           <div class="session-stats">
             ${String(s.messageCount)} msgs &middot; ${String(s.toolCallCount)} tools
@@ -500,14 +632,23 @@ export function renderSessionList(
         </a>`;
       }).join('\n');
 
+  const tagSidebar = allTags.length > 0
+    ? `<div class="tag-sidebar">
+        <h3>Tags</h3>
+        ${allTags.map((t) =>
+          `<a href="/c/tag/${encodeURIComponent(t.name)}" class="tag-link${activeTag === t.name ? ' active' : ''}">${escapeHtml(t.name)} <span class="tag-count">(${String(t.count)})</span></a>`
+        ).join('\n')}
+      </div>`
+    : '';
+
   const paginationHtml = pagination.totalPages > 1
     ? `<div class="pagination">
         ${pagination.page > 1
-          ? `<a href="${basePath}?page=${String(pagination.page - 1)}&pageSize=${String(pagination.pageSize)}">Previous</a>`
+          ? `<a href="${basePath}?page=${String(pagination.page - 1)}&pageSize=${String(pagination.pageSize)}${searchQuery ? `&q=${encodeURIComponent(searchQuery)}` : ''}">Previous</a>`
           : '<span>Previous</span>'}
         <span>Page ${String(pagination.page)} of ${String(pagination.totalPages)}</span>
         ${pagination.page < pagination.totalPages
-          ? `<a href="${basePath}?page=${String(pagination.page + 1)}&pageSize=${String(pagination.pageSize)}">Next</a>`
+          ? `<a href="${basePath}?page=${String(pagination.page + 1)}&pageSize=${String(pagination.pageSize)}${searchQuery ? `&q=${encodeURIComponent(searchQuery)}` : ''}">Next</a>`
           : '<span>Next</span>'}
       </div>`
     : '';
@@ -523,11 +664,18 @@ export function renderSessionList(
 <body>
   <main class="container">
     <h1>${escapeHtml(title)}</h1>
+    ${searchForm}
     <nav class="nav-tabs">
-      <a href="/c" class="${isArchived ? '' : 'active'}">Active</a>
+      <a href="/c" class="${!isArchived && !isFavorites && !activeTag && !searchQuery ? 'active' : ''}">Active</a>
+      <a href="/c/favorites" class="${isFavorites ? 'active' : ''}">Favorites</a>
       <a href="/c/archived" class="${isArchived ? 'active' : ''}">Archived</a>
     </nav>
-    ${sessionRows}
+    <div class="session-layout">
+      ${tagSidebar}
+      <div class="session-list">
+        ${sessionRows}
+      </div>
+    </div>
     ${paginationHtml}
   </main>
 </body>

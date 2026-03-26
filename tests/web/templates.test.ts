@@ -2,11 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
   renderConversation,
   renderMarkdownExport,
+  renderSessionList,
   render404,
   render401,
   renderError,
 } from '../../src/web/templates.js';
-import type { ConversationMessage, ToolCallLog } from '../../src/services/conversation-store.js';
+import type { ConversationMessage, ToolCallLog, SessionSummary, PaginationInfo } from '../../src/services/conversation-store.js';
 
 describe('web templates', () => {
   describe('renderConversation', () => {
@@ -592,6 +593,118 @@ describe('web templates', () => {
 
       expect(html).toContain('clipboard');
       expect(html).toContain('Copy');
+    });
+  });
+
+  describe('renderSessionList', () => {
+    const basePagination: PaginationInfo = {
+      page: 1,
+      pageSize: 20,
+      totalItems: 2,
+      totalPages: 1,
+    };
+
+    function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
+      return {
+        id: 1,
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        userId: 'U456DEF',
+        messageCount: 5,
+        toolCallCount: 3,
+        createdAt: Date.now() - 60000,
+        updatedAt: Date.now(),
+        archivedAt: null,
+        isActive: true,
+        isFavorited: false,
+        ...overrides,
+      };
+    }
+
+    it('should render search form', () => {
+      const html = renderSessionList([], basePagination);
+
+      expect(html).toContain('<form');
+      expect(html).toContain('name="q"');
+      expect(html).toContain('Search');
+    });
+
+    it('should show search query in input when provided', () => {
+      const html = renderSessionList([], basePagination, { searchQuery: 'nginx' });
+
+      expect(html).toContain('value="nginx"');
+    });
+
+    it('should escape HTML in search query', () => {
+      const html = renderSessionList([], basePagination, { searchQuery: '<script>alert(1)</script>' });
+
+      expect(html).not.toContain('<script>alert(1)</script>');
+      expect(html).toContain('&lt;script&gt;');
+    });
+
+    it('should render favorite indicator for favorited sessions', () => {
+      const sessions = [
+        makeSession({ isFavorited: true }),
+        makeSession({ id: 2, threadTs: '2222.0002', isFavorited: false }),
+      ];
+
+      const html = renderSessionList(sessions, basePagination);
+
+      // Should show filled star for favorited
+      expect(html).toContain('favorite-star active');
+      // Should show empty star for non-favorited
+      expect(html).toContain('favorite-star"');
+    });
+
+    it('should render tag pills for sessions with tags', () => {
+      const sessions = [
+        makeSession({ tags: ['nginx', 'production'] }),
+      ];
+
+      const html = renderSessionList(sessions, basePagination);
+
+      expect(html).toContain('class="tag"');
+      expect(html).toContain('nginx');
+      expect(html).toContain('production');
+    });
+
+    it('should render tag filter sidebar when tags exist', () => {
+      const html = renderSessionList([], basePagination, {
+        allTags: [
+          { name: 'nginx', count: 3 },
+          { name: 'debugging', count: 1 },
+        ],
+      });
+
+      expect(html).toContain('nginx');
+      expect(html).toContain('(3)');
+      expect(html).toContain('debugging');
+      expect(html).toContain('(1)');
+    });
+
+    it('should render favorites tab', () => {
+      const html = renderSessionList([], basePagination);
+
+      expect(html).toContain('Favorites');
+    });
+
+    it('should mark active tab based on options', () => {
+      const favHtml = renderSessionList([], basePagination, { favorites: true });
+
+      expect(favHtml).toContain('Favorites</a>');
+      // The favorites link should have the active class
+      expect(favHtml).toMatch(/Favorites<\/a>/);
+    });
+
+    it('should escape HTML in tag names', () => {
+      const sessions = [
+        makeSession({ tags: ['<script>xss</script>'] }),
+      ];
+
+      const html = renderSessionList(sessions, basePagination);
+
+      expect(html).not.toContain('<script>xss</script>');
+      expect(html).toContain('&lt;script&gt;');
     });
   });
 
