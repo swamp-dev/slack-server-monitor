@@ -441,6 +441,56 @@ export function threadLink(channelId: string, threadTs: string): string {
 }
 
 /**
+ * Maximum cell width before truncation
+ */
+const MAX_CELL_WIDTH = 40;
+
+/**
+ * Format data as a box-drawing table wrapped in a Slack code block.
+ *
+ * Produces output like:
+ * ```
+ * Name   │ Status  │ CPU
+ * ───────┼─────────┼─────
+ * nginx  │ online  │ 5%
+ * redis  │ stopped │ 0%
+ * ```
+ *
+ * @param headers - Column header strings
+ * @param rows - Array of row arrays (each row is an array of cell strings)
+ */
+export function formatTable(headers: string[], rows: string[][]): string {
+  // Truncate cell values that exceed max width
+  const truncate = (value: string): string =>
+    value.length > MAX_CELL_WIDTH ? value.slice(0, MAX_CELL_WIDTH - 1) + '\u2026' : value;
+
+  const safeHeaders = headers.map(truncate);
+  const safeRows = rows.map((row) => row.map(truncate));
+
+  // Calculate max width per column
+  const colWidths = safeHeaders.map((h, i) => {
+    const cellWidths = safeRows.map((row) => (row[i] ?? '').length);
+    return Math.max(h.length, ...cellWidths);
+  });
+
+  // Build a row string with │ separators
+  const buildRow = (cells: string[]): string =>
+    cells.map((cell, i) => cell.padEnd(colWidths[i] ?? 0)).join(' │ ');
+
+  // Build separator row with ─ and ┼
+  const separator = colWidths.map((w) => '─'.repeat(w)).join('─┼─');
+
+  const lines: string[] = [];
+  lines.push(buildRow(safeHeaders));
+  lines.push(separator);
+  for (const row of safeRows) {
+    lines.push(buildRow(row));
+  }
+
+  return '```\n' + lines.join('\n') + '\n```';
+}
+
+/**
  * Extract a snippet from a response for preview in Slack
  *
  * Truncates text at natural boundaries in this order of preference:

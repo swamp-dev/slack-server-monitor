@@ -195,7 +195,7 @@ describe('/pm2 command', () => {
         .filter((b: { type: string }) => b.type === 'section')
         .map((b: { text?: { text: string } }) => b.text?.text || '');
 
-      expect(sectionTexts.some((t: string) => t.includes('4 instances'))).toBe(true);
+      expect(sectionTexts.some((t: string) => t.includes('4x'))).toBe(true);
     });
 
     it('should show process details (uptime, memory, CPU)', async () => {
@@ -313,13 +313,16 @@ describe('/pm2 command', () => {
         .filter((b: { type: string }) => b.type === 'section')
         .map((b: { text?: { text: string } }) => b.text?.text || '');
 
-      // Find indices
-      const onlineIndex = sectionTexts.findIndex((t: string) => t.includes('online1'));
-      const erroredIndex = sectionTexts.findIndex((t: string) => t.includes('errored1'));
-      const stoppedIndex = sectionTexts.findIndex((t: string) => t.includes('stopped1'));
+      // All processes are in a single table section now — check order within the text
+      const tableText = sectionTexts.find((t: string) => t.includes('online1'));
+      expect(tableText).toBeDefined();
 
-      expect(onlineIndex).toBeLessThan(erroredIndex);
-      expect(erroredIndex).toBeLessThan(stoppedIndex);
+      const onlinePos = (tableText ?? '').indexOf('online1');
+      const erroredPos = (tableText ?? '').indexOf('errored1');
+      const stoppedPos = (tableText ?? '').indexOf('stopped1');
+
+      expect(onlinePos).toBeLessThan(erroredPos);
+      expect(erroredPos).toBeLessThan(stoppedPos);
     });
   });
 

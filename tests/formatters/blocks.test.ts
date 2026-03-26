@@ -31,6 +31,7 @@ import {
   relativeTime,
   threadLink,
   extractSnippet,
+  formatTable,
 } from '../../src/formatters/blocks.js';
 
 describe('block utilities', () => {
@@ -561,6 +562,79 @@ describe('enhanced output helpers', () => {
     it('should handle different channel and thread IDs', () => {
       const result = threadLink('C999XYZ', '9999999999.999999');
       expect(result).toBe('slack://channel?team=&id=C999XYZ&thread_ts=9999999999.999999');
+    });
+  });
+
+  describe('formatTable', () => {
+    it('should produce a box-drawing table with headers and rows', () => {
+      const result = formatTable(
+        ['Name', 'Status', 'CPU'],
+        [
+          ['nginx', 'online', '5%'],
+          ['redis', 'stopped', '0%'],
+        ]
+      );
+
+      expect(result).toContain('│');
+      expect(result).toContain('─');
+      expect(result).toContain('┼');
+      expect(result).toContain('nginx');
+      expect(result).toContain('redis');
+      expect(result).toContain('Name');
+      expect(result).toContain('Status');
+    });
+
+    it('should wrap output in backtick code block for Slack', () => {
+      const result = formatTable(['A'], [['1']]);
+      expect(result).toMatch(/^```\n/);
+      expect(result).toMatch(/\n```$/);
+    });
+
+    it('should right-pad columns to align', () => {
+      const result = formatTable(
+        ['Name', 'Value'],
+        [
+          ['short', 'x'],
+          ['muchlonger', 'y'],
+        ]
+      );
+
+      // All rows should have the same total width between the outer delimiters
+      const lines = result.split('\n').filter((l) => l.includes('│'));
+      const widths = lines.map((l) => l.length);
+      // All content lines should be the same length
+      expect(new Set(widths).size).toBe(1);
+    });
+
+    it('should produce header-only table when rows array is empty', () => {
+      const result = formatTable(['Name', 'Status'], []);
+
+      expect(result).toContain('Name');
+      expect(result).toContain('Status');
+      expect(result).toContain('─');
+      // Should have header row and separator, but no data rows
+      const contentLines = result.split('\n').filter((l) => l.includes('│'));
+      expect(contentLines).toHaveLength(1); // Only header row
+    });
+
+    it('should handle a single column table', () => {
+      const result = formatTable(['Item'], [['alpha'], ['beta']]);
+
+      expect(result).toContain('Item');
+      expect(result).toContain('alpha');
+      expect(result).toContain('beta');
+      expect(result).toContain('─'); // separator row still present
+    });
+
+    it('should truncate long cell values', () => {
+      const longValue = 'a'.repeat(100);
+      const result = formatTable(['Col'], [[longValue]]);
+
+      // Each line in the table should be reasonable length (not 100+ chars for the cell)
+      const lines = result.split('\n').filter((l) => l.length > 0);
+      for (const line of lines) {
+        expect(line.length).toBeLessThanOrEqual(80);
+      }
     });
   });
 

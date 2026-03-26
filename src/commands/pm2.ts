@@ -7,31 +7,29 @@ import {
   section,
   divider,
   context,
-  statusEmoji,
   error,
   statsBar,
   helpTip,
   link,
+  formatTable,
 } from '../formatters/blocks.js';
 import { logger } from '../utils/logger.js';
 
-/**
- * Get status emoji for PM2 process status
- */
-function getProcessStatusEmoji(status: Pm2Process['status']): string {
+/** Plain Unicode status indicators for use inside code blocks (Slack shortcodes don't render there) */
+function getProcessStatusIndicator(status: Pm2Process['status']): string {
   switch (status) {
     case 'online':
-      return statusEmoji('ok');
+      return '●';
     case 'stopped':
     case 'stopping':
-      return statusEmoji('warn');
+      return '○';
     case 'errored':
-      return statusEmoji('error');
+      return '✗';
     case 'launching':
     case 'one-launch-status':
-      return statusEmoji('warn');
+      return '◐';
     default:
-      return statusEmoji('unknown');
+      return '?';
   }
 }
 
@@ -107,27 +105,36 @@ export function registerPm2Command(app: App): void {
         divider(),
       ];
 
-      // Show all processes
-      for (const proc of [...online, ...errored, ...other, ...stopped]) {
-        const emoji = getProcessStatusEmoji(proc.status);
+      // Build process table
+      const sortedProcesses = [...online, ...errored, ...other, ...stopped];
+      const tableHeaders = ['', 'Name', 'Status', 'Uptime', 'Memory', 'CPU', 'Restarts'];
+      const tableRows = sortedProcesses.map((proc) => {
+        const indicator = getProcessStatusIndicator(proc.status);
         const uptimeStr = proc.status === 'online' ? formatProcessUptime(proc.uptime) : 'N/A';
         const memStr = proc.memory > 0 ? formatBytes(proc.memory) : 'N/A';
         const cpuStr = proc.cpu > 0 ? `${proc.cpu.toFixed(1)}%` : 'N/A';
-
         const modeInfo = proc.mode === 'cluster' && proc.instances > 1
-          ? ` (${String(proc.instances)} instances)`
+          ? ` (${String(proc.instances)}x)`
           : '';
 
-        blocks.push(
-          section(
-            `${emoji} *${proc.name}*${modeInfo}\n` +
-            `Status: ${proc.status} | ` +
-            `Uptime: ${uptimeStr} | ` +
-            `Memory: ${memStr} | ` +
-            `CPU: ${cpuStr}` +
-            (proc.restarts > 0 ? ` | Restarts: ${String(proc.restarts)}` : '')
-          )
-        );
+        return [
+          indicator,
+          `${proc.name}${modeInfo}`,
+          proc.status,
+          uptimeStr,
+          memStr,
+          cpuStr,
+          proc.restarts > 0 ? String(proc.restarts) : '-',
+        ];
+      });
+
+      const table = formatTable(tableHeaders, tableRows);
+      if (table.length > 2900) {
+        // Slack section text limit is 3000 chars — truncate with warning
+        const truncated = table.slice(0, 2850) + '\n```\n_Table truncated — too many processes_';
+        blocks.push(section(truncated));
+      } else {
+        blocks.push(section(table));
       }
 
       // Warning for processes with high restart counts
