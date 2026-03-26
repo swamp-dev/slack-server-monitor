@@ -321,8 +321,8 @@ describe('/services command', () => {
       expect(sectionTexts.some((t: string) => t.includes('Mounts'))).toBe(true);
     });
 
-    it('should limit displayed mounts to 5', async () => {
-      const manyMounts = Array.from({ length: 10 }, (_, i) => ({
+    it('should show all mounts when container has 12 mounts', async () => {
+      const manyMounts = Array.from({ length: 12 }, (_, i) => ({
         source: `/host/${i}`,
         destination: `/container/${i}`,
         mode: 'rw',
@@ -351,11 +351,105 @@ describe('/services command', () => {
         (b: { type: string }) => b.type === 'context'
       );
 
-      // Should have "...and X more" message
+      // All 12 mounts should be shown as context blocks (plus the timing context block)
+      const mountBlocks = contextBlocks.filter(
+        (b: { elements?: { text: string }[] }) =>
+          b.elements?.[0]?.text?.includes('/host/') || false
+      );
+      expect(mountBlocks).toHaveLength(12);
+
+      // Should NOT have a "...and X more" truncation message
       const contextTexts = contextBlocks.map(
         (b: { elements?: { text: string }[] }) => b.elements?.[0]?.text || ''
       );
-      expect(contextTexts.some((t: string) => t.includes('more'))).toBe(true);
+      expect(contextTexts.some((t: string) => t.includes('more'))).toBe(false);
+    });
+
+    it('should show all mounts at exactly the display limit (15)', async () => {
+      const exactMounts = Array.from({ length: 15 }, (_, i) => ({
+        source: `/host/${i}`,
+        destination: `/container/${i}`,
+        mode: 'rw',
+      }));
+
+      (getContainerDetails as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: '123',
+        name: 'test',
+        image: 'img',
+        state: { status: 'running', running: true, startedAt: '', finishedAt: '' },
+        restartCount: 0,
+        platform: 'linux',
+        mounts: exactMounts,
+        networks: [],
+        ports: {},
+      });
+
+      await commandHandler({
+        command: { text: 'test' },
+        ack: mockAck,
+        respond: mockRespond,
+      });
+
+      const response = mockRespond.mock.calls[0][0];
+      const contextBlocks = response.blocks.filter(
+        (b: { type: string }) => b.type === 'context'
+      );
+
+      const mountBlocks = contextBlocks.filter(
+        (b: { elements?: { text: string }[] }) =>
+          b.elements?.[0]?.text?.includes('/host/') || false
+      );
+      expect(mountBlocks).toHaveLength(15);
+
+      // No overflow message at exact boundary
+      const contextTexts = contextBlocks.map(
+        (b: { elements?: { text: string }[] }) => b.elements?.[0]?.text || ''
+      );
+      expect(contextTexts.some((t: string) => t.includes('more'))).toBe(false);
+    });
+
+    it('should truncate mounts at 15 and show overflow message', async () => {
+      const manyMounts = Array.from({ length: 20 }, (_, i) => ({
+        source: `/host/${i}`,
+        destination: `/container/${i}`,
+        mode: 'rw',
+      }));
+
+      (getContainerDetails as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: '123',
+        name: 'test',
+        image: 'img',
+        state: { status: 'running', running: true, startedAt: '', finishedAt: '' },
+        restartCount: 0,
+        platform: 'linux',
+        mounts: manyMounts,
+        networks: [],
+        ports: {},
+      });
+
+      await commandHandler({
+        command: { text: 'test' },
+        ack: mockAck,
+        respond: mockRespond,
+      });
+
+      const response = mockRespond.mock.calls[0][0];
+      const contextBlocks = response.blocks.filter(
+        (b: { type: string }) => b.type === 'context'
+      );
+
+      // Only 15 mount blocks should be shown
+      const mountBlocks = contextBlocks.filter(
+        (b: { elements?: { text: string }[] }) =>
+          b.elements?.[0]?.text?.includes('/host/') || false
+      );
+      expect(mountBlocks).toHaveLength(15);
+
+      // Should have "...and 5 more" message
+      const contextTexts = contextBlocks.map(
+        (b: { elements?: { text: string }[] }) => b.elements?.[0]?.text || ''
+      );
+      expect(contextTexts.some((t: string) => t.includes('_...and 5 more_'))).toBe(true);
     });
 
     it('should show stopped time for non-running containers', async () => {

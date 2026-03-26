@@ -1,5 +1,8 @@
 import type { App } from '@slack/bolt';
 import type { KnownBlock } from '@slack/types';
+
+/** Max mounts to display before truncating. Keeps detail view under Slack's 50-block limit. */
+const MOUNT_DISPLAY_LIMIT = 15;
 import { getContainerStatus, getContainerDetails } from '../executors/docker.js';
 import { sanitizeServiceName } from '../utils/sanitize.js';
 import {
@@ -66,11 +69,11 @@ export function registerServicesCommand(app: App): void {
         if (details.mounts.length > 0) {
           blocks.push(divider());
           blocks.push(section('*Mounts:*'));
-          for (const mount of details.mounts.slice(0, 5)) {
+          for (const mount of details.mounts.slice(0, MOUNT_DISPLAY_LIMIT)) {
             blocks.push(context(`\`${mount.source}\` -> \`${mount.destination}\` (${mount.mode || 'rw'})`));
           }
-          if (details.mounts.length > 5) {
-            blocks.push(context(`_...and ${String(details.mounts.length - 5)} more_`));
+          if (details.mounts.length > MOUNT_DISPLAY_LIMIT) {
+            blocks.push(context(`_...and ${String(details.mounts.length - MOUNT_DISPLAY_LIMIT)} more_`));
           }
         }
 
