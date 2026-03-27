@@ -114,11 +114,26 @@ describe('isUrlSafe', () => {
     expect(isUrlSafe('http://[::1]').safe).toBe(false);
   });
 
-  it('should reject invalid URLs', () => {
-    const result = isUrlSafe('http://');
-    // URL constructor may or may not throw for 'http://' depending on Node version
-    // but the result should not be safe for actual private IPs
-    expect(typeof result.safe).toBe('boolean');
+  it('should block IPv4-mapped IPv6 (SSRF bypass)', () => {
+    expect(isUrlSafe('http://[::ffff:127.0.0.1]').safe).toBe(false);
+    expect(isUrlSafe('http://[::ffff:10.0.0.1]').safe).toBe(false);
+    expect(isUrlSafe('http://[::ffff:192.168.1.1]').safe).toBe(false);
+  });
+
+  it('should block IPv6 private ranges', () => {
+    expect(isUrlSafe('http://[fc00::1]').safe).toBe(false);
+    expect(isUrlSafe('http://[fd12::1]').safe).toBe(false);
+    expect(isUrlSafe('http://[fe80::1]').safe).toBe(false);
+  });
+
+  it('should block .local mDNS hostnames', () => {
+    expect(isUrlSafe('http://nas.local').safe).toBe(false);
+    expect(isUrlSafe('http://printer.local:9100').safe).toBe(false);
+  });
+
+  it('should reject non-http(s) schemes', () => {
+    expect(isUrlSafe('ftp://example.com').safe).toBe(false);
+    expect(isUrlSafe('file:///etc/passwd').safe).toBe(false);
   });
 });
 
@@ -133,6 +148,14 @@ describe('stripHtmlTags', () => {
 
   it('should handle empty string', () => {
     expect(stripHtmlTags('')).toBe('');
+  });
+
+  it('should strip script blocks including content', () => {
+    expect(stripHtmlTags('<p>hi</p><script>var x="secret";</script><p>bye</p>')).toBe('hibye');
+  });
+
+  it('should strip style blocks including content', () => {
+    expect(stripHtmlTags('<p>hi</p><style>.x{color:red}</style><p>bye</p>')).toBe('hibye');
   });
 });
 
@@ -292,6 +315,7 @@ describe('web_search tool', () => {
 
 describe('fetch_page tool', () => {
   const originalFetch = global.fetch;
+  const hdr = { get: (n: string) => n === 'content-type' ? 'text/html; charset=utf-8' : null };
 
   afterEach(() => {
     global.fetch = originalFetch;
@@ -300,7 +324,7 @@ describe('fetch_page tool', () => {
 
   it('should return text content for a valid URL', async () => {
     global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
+      ok: true, headers: hdr,
       text: async () => '<html><body><h1>Hello</h1><p>World</p></body></html>',
     });
 
@@ -314,7 +338,7 @@ describe('fetch_page tool', () => {
 
   it('should strip HTML tags', async () => {
     global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
+      ok: true, headers: hdr,
       text: async () => '<div class="main"><a href="/link">Click <b>here</b></a></div>',
     });
 
@@ -326,7 +350,7 @@ describe('fetch_page tool', () => {
   it('should truncate long content to 10,000 characters', async () => {
     const longContent = '<html><body>' + 'a'.repeat(15_000) + '</body></html>';
     global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
+      ok: true, headers: hdr,
       text: async () => longContent,
     });
 
@@ -403,7 +427,7 @@ describe('fetch_page tool', () => {
 
   it('should return (empty page) for blank content', async () => {
     global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
+      ok: true, headers: hdr,
       text: async () => '',
     });
 

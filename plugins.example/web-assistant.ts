@@ -36,18 +36,12 @@ const USER_AGENT = 'Mozilla/5.0 (compatible; SlackServerMonitor/1.0; +https://gi
 
 /**
  * Private/internal IP patterns to block in fetch_page.
- * Prevents SSRF attacks against internal services.
+ * NOTE: Blocks by hostname string, not resolved IP. DNS rebinding not covered.
  */
 const BLOCKED_HOST_PATTERNS = [
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^0\./,
-  /^::1$/,
-  /^\[::1\]$/,
-  /^localhost$/i,
+  /^127\./, /^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./, /^169\.254\./, /^0\./,
+  /^\[?::1\]?$/, /^\[?::ffff:/i, /^\[?fc[0-9a-f]{2}:/i, /^\[?fd[0-9a-f]{2}:/i, /^\[?fe80:/i,
+  /^localhost$/i, /\.local$/i,
 ];
 
 /**
@@ -83,7 +77,11 @@ export function isUrlSafe(url: string): { safe: boolean; reason?: string } {
  * Strip HTML tags from a string.
  */
 export function stripHtmlTags(html: string): string {
-  return html.replace(/<[^>]+>/g, '').trim();
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .trim();
 }
 
 /**
@@ -225,6 +223,11 @@ const fetchPageTool: ToolDefinition = {
 
       if (!response.ok) {
         return `Error: request failed with status ${response.status}`;
+      }
+
+      const contentType = response.headers.get('content-type') ?? '';
+      if (!contentType.includes('text/') && !contentType.includes('application/json') && !contentType.includes('application/xml')) {
+        return `Error: unsupported content type (${contentType}) — only text content is supported`;
       }
 
       const html = await response.text();
