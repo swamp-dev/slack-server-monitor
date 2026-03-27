@@ -60,7 +60,7 @@ export function registerHelpCommand(app: App): void {
 
       let claudeText =
         '*Claude AI*\n' +
-        '`/ask <question>` - AI-powered server diagnostics\n' +
+        '`/ask <question> [--image <url>]` - AI-powered server diagnostics\n' +
         '`/sessions [mine|stats]` - Claude session history';
 
       if (config.claude.contextOptions.length > 0) {
@@ -68,7 +68,7 @@ export function registerHelpCommand(app: App): void {
       }
 
       blocks.push(section(claudeText));
-      blocks.push(context('Thread replies continue the conversation with context.'));
+      blocks.push(context('Thread replies continue the conversation. `/ask continue <thread_ts> [question]` resumes in a new thread.'));
     }
 
     // Web UI section (only if enabled)

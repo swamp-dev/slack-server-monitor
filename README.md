@@ -46,6 +46,7 @@ A **read-only** Slack bot for home server monitoring and diagnostics using Socke
 | `/sessions <thread_ts>` | Detailed view of specific session |
 | `/sessions mine` | Sessions initiated by current user |
 | `/sessions stats` | Aggregate statistics |
+| `/weblogin` | Get a login link for the web UI |
 
 ## Quick Start
 
@@ -85,6 +86,7 @@ In your Slack App settings, go to Slash Commands and add:
 - `/ask` - Ask Claude AI (optional, requires API key or CLI)
 - `/context` - Switch Claude context directory (optional)
 - `/sessions` - Claude AI session history (optional)
+- `/weblogin` - Get a login link for the web UI (optional, requires WEB_ENABLED=true)
 
 ### 3. Configure Environment
 
@@ -280,6 +282,7 @@ The optional `/ask` command provides AI-powered server diagnostics. Claude has a
 | `get_disk_usage` | Disk space per mount point |
 | `get_network_info` | Docker networks |
 | `read_file` | Read config files from allowed directories |
+| `run_command` | Execute read-only diagnostic commands (allowlisted) |
 
 ### Example Usage
 
@@ -287,6 +290,7 @@ The optional `/ask` command provides AI-powered server diagnostics. Claude has a
 /ask Why is nginx restarting frequently?
 /ask What's using the most disk space?
 /ask Check if the database container is healthy
+/ask What food is this? --image https://files.slack.com/files-pri/T.../image.jpg
 ```
 
 Thread replies continue the conversation with context preserved.
