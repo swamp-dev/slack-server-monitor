@@ -678,7 +678,7 @@ describe('web templates', () => {
       expect(html).toContain('class="nav-bar"');
       expect(html).toContain('href="/c"');
       expect(html).toContain('Back to conversations');
-      expect(html).toContain('Slack Server Monitor');
+      expect(html).toContain('Server Monitor');
     });
 
     it('should include favorite star with click handler on detail page (BUG-6, UX-3)', () => {
@@ -778,8 +778,47 @@ describe('web templates', () => {
       const html = renderConversation(messages, toolCalls, metadata);
 
       expect(html).toContain('id="archive-btn"');
-      expect(html).toContain('Archive');
       expect(html).toContain("fetch('/c/' + convId + '/archive'");
+    });
+
+    it('should have conv-header-compact class for compact header', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Test' },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        conversationId: 1,
+      };
+
+      const html = renderConversation(messages, [], metadata);
+
+      expect(html).toContain('conv-header-compact');
+    });
+
+    it('should render action buttons as icon-only without text labels', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Test' },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        conversationId: 1,
+      };
+
+      const html = renderConversation(messages, [], metadata);
+
+      // Buttons should use title attribute for tooltip, not text labels
+      expect(html).toContain('title="Export Markdown"');
+      expect(html).toContain('title="Copy to Clipboard"');
+      expect(html).toContain('title="Archive"');
+      // Should NOT have text labels next to icons
+      expect(html).not.toMatch(/Export Markdown<\/a>/);
+      expect(html).not.toMatch(/Copy to Clipboard<\/button>/);
     });
   });
 
@@ -928,6 +967,26 @@ describe('web templates', () => {
       const html = renderSessionList(sessions, basePagination);
 
       expect(html).toContain('font-size: 1.4rem');
+    });
+
+    it('should default to "My conversations" active state when currentUserId starts with U', () => {
+      const html = renderSessionList([], basePagination, { currentUserId: 'U01ABC123' });
+
+      // Both Mine and All links should be present
+      expect(html).toContain('?mine=true"');
+      expect(html).toContain('?mine=false"');
+      // The "Mine" link should be the active tab (Slack user default)
+      expect(html).toMatch(/class="[^"]*active[^"]*">Mine</);
+    });
+
+    it('should default to "All" active state when currentUserId is admin', () => {
+      const html = renderSessionList([], basePagination, { currentUserId: 'admin' });
+
+      // Both Mine and All links should be present
+      expect(html).toContain('?mine=true"');
+      expect(html).toContain('?mine=false"');
+      // "All" tab should be active (non-Slack user default), Mine should not be active
+      expect(html).not.toMatch(/class="[^"]*active[^"]*">Mine</);
     });
   });
 

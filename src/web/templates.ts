@@ -1792,6 +1792,8 @@ interface SessionListOptions {
   searchQuery?: string;
   activeTag?: string;
   allTags?: TagInfo[];
+  currentUserId?: string;
+  showMine?: boolean;
 }
 
 /**
@@ -1807,6 +1809,9 @@ export function renderSessionList(
   const searchQuery = options.searchQuery ?? '';
   const activeTag = options.activeTag;
   const allTags = options.allTags ?? [];
+  const currentUserId = options.currentUserId;
+  const isSlackUser = currentUserId?.startsWith('U') ?? false;
+  const showMine = options.showMine ?? isSlackUser;
 
   let title = 'Conversations';
   if (isArchived) title = 'Archived Conversations';
@@ -1927,7 +1932,12 @@ export function renderSessionList(
     <h1>${escapeHtml(title)}</h1>
     ${searchForm}
     <nav class="nav-tabs">
-      <a href="/c" class="${!isArchived && !isFavorites && !activeTag && !searchQuery ? 'active' : ''}">Active</a>
+      ${currentUserId ? `
+        <a href="/c?mine=true" class="${!isArchived && !isFavorites && !activeTag && !searchQuery && showMine ? 'active' : ''}">Mine</a>
+        <a href="/c?mine=false" class="${!isArchived && !isFavorites && !activeTag && !searchQuery && !showMine ? 'active' : ''}">All</a>
+      ` : `
+        <a href="/c" class="${!isArchived && !isFavorites && !activeTag && !searchQuery ? 'active' : ''}">All</a>
+      `}
       <a href="/c/favorites" class="${isFavorites ? 'active' : ''}">Favorites</a>
       <a href="/c/archived" class="${isArchived ? 'active' : ''}">${icon('archive', 14)} Archived</a>
     </nav>
@@ -2145,7 +2155,10 @@ const conversationDetailStyles = `
     z-index: 50;
     background: var(--card-bg);
     border-bottom: 1px solid var(--border);
-    padding: 16px 24px;
+    padding: 8px 24px;
+  }
+  .conv-header-compact .conv-header {
+    padding: 8px;
   }
   .conv-header-top {
     display: flex;
@@ -2280,26 +2293,28 @@ export function renderConversation(
       <input type="text" id="tag-input" placeholder="Add tag..." maxlength="50">
       <button type="submit">${icon('plus', 14)} Add</button>
     </form>` : '';
-  const archiveHtml = convId ? `<button class="archive-btn" id="archive-btn" type="button">${icon('archive', 14)} Archive</button>` : '';
+  const archiveIconBtn = convId ? `<button class="export-btn" id="archive-btn" title="Archive" type="button">${icon('archive', 14)}</button>` : '';
 
   const headerHtml = `
-  <div class="conv-header">
-    <div class="container">
-      <div class="conv-header-top">
-        <a href="/c" class="conv-back">${icon('arrow-left', 16)} Back to conversations</a>
-        <span style="color: var(--text-muted); font-size: 0.875rem;">Slack Server Monitor</span>
-      </div>
-      <h1 style="margin-top: 12px;">${convId ? `<span class="${starClass}" data-id="${convId}" id="detail-star">&#9733;</span> ` : ''}Claude Conversation</h1>
-      <div class="meta" style="color: var(--text-muted); font-size: 0.875rem; margin-top: 4px;">
-        ${icon('clock', 14)} Started: ${formatTimestamp(metadata.createdAt)} |
-        Last updated: ${formatTimestamp(metadata.updatedAt)}
-      </div>
-      <div class="detail-tags" id="detail-tags">${tagPills}</div>
-      ${tagInputHtml}
-      <div class="export-actions">
-        <a class="export-btn" id="export-md" href="/c/${metadata.threadTs}/${metadata.channelId}/export/md">${icon('download', 14)} Export Markdown</a>
-        <button class="export-btn" id="copy-clipboard" type="button">${icon('copy', 14)} Copy to Clipboard</button>
-        ${archiveHtml}
+  <div class="conv-header-compact">
+    <div class="conv-header">
+      <div class="container">
+        <div class="conv-header-top">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <a href="/c" class="conv-back">${icon('arrow-left', 16)} Back to conversations</a>
+            <h1 style="margin: 0; font-size: 1.1rem;">${convId ? `<span class="${starClass}" data-id="${convId}" id="detail-star">&#9733;</span> ` : ''}Claude Conversation</h1>
+          </div>
+          <div class="export-actions" style="margin-top: 0;">
+            <a class="export-btn" id="export-md" href="/c/${metadata.threadTs}/${metadata.channelId}/export/md" title="Export Markdown">${icon('download', 14)}</a>
+            <button class="export-btn" id="copy-clipboard" type="button" title="Copy to Clipboard">${icon('copy', 14)}</button>
+            ${archiveIconBtn}
+          </div>
+        </div>
+        <div class="meta" style="color: var(--text-muted); font-size: 0.8125rem; margin-top: 2px;">
+          ${icon('clock', 14)} ${formatTimestamp(metadata.createdAt)} &mdash; ${formatTimestamp(metadata.updatedAt)}
+        </div>
+        <div class="detail-tags" id="detail-tags">${tagPills}</div>
+        ${tagInputHtml}
       </div>
     </div>
   </div>`;

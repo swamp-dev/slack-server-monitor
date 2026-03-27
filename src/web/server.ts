@@ -226,13 +226,18 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
       const { page, pageSize, offset } = parsePagination(req);
 
-      const sessions = store.listRecentSessions(pageSize, offset);
+      const userId = res.locals.userId as string;
+      const isSlackUser = userId.startsWith('U');
+      const showMine = req.query.mine === 'true' || (isSlackUser && req.query.mine !== 'false');
+
+      const filterUserId = showMine ? userId : undefined;
+      const sessions = store.listRecentSessions(pageSize, offset, filterUserId);
       attachTags(sessions, store);
-      const totalItems = store.countSessions();
+      const totalItems = store.countSessions(filterUserId);
       const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
       const allTags = store.listAllTags();
 
-      const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages }, { allTags });
+      const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages }, { allTags, currentUserId: userId, showMine });
       res.type('html').send(html);
     } catch (err) {
       logger.error('Error serving session list', {
