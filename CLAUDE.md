@@ -657,6 +657,24 @@ The plugin loader uses [jiti](https://github.com/unjs/jiti) to dynamically impor
 - No coverage thresholds enforced - focus on critical path coverage, not percentages
 - Run `npm test` before committing
 
+## CI/CD
+
+### CI Pipeline (`.github/workflows/ci.yml`)
+
+Runs on push to `main` and PRs: lint, typecheck, build, test, and security audit.
+
+### Parent Submodule Update (`.github/workflows/update-parent-submodule.yml`)
+
+This repo is a git submodule of `swamp-dev/ansible`. When code merges to `main`, a workflow automatically:
+
+1. Checks out the parent repo
+2. Updates the submodule pointer to the new commit
+3. Creates a PR in the parent repo
+
+**Required secret:** `PARENT_REPO_TOKEN` — a GitHub PAT with `repo` scope for `swamp-dev/ansible`. Add it in Settings > Secrets and variables > Actions.
+
+The workflow skips runs triggered by `github-actions[bot]` to prevent loops.
+
 ## Deployment
 
 ### PM2 (Recommended)

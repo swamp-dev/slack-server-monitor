@@ -1,0 +1,63 @@
+name: Update Parent Repo Submodule
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  update-submodule:
+    runs-on: ubuntu-latest
+    # Only run for actual merges, not workflow commits
+    if: github.actor != 'github-actions[bot]'
+
+    steps:
+      - name: Checkout parent repo
+        uses: actions/checkout@v4
+        with:
+          repository: swamp-dev/ansible
+          token: ${{ secrets.PARENT_REPO_TOKEN }}
+          submodules: true
+          fetch-depth: 0
+
+      - name: Update submodule to latest
+        run: |
+          cd home-server-ansible/slack-server-monitor
+          git checkout ${{ github.sha }}
+          cd ../..
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create branch and commit
+        run: |
+          BRANCH="chore/update-slack-monitor-$(echo ${{ github.sha }} | cut -c1-7)"
+          git checkout -b "$BRANCH"
+          git add home-server-ansible/slack-server-monitor
+
+          # Get the commit message from the triggering push
+          COMMIT_MSG=$(git -C home-server-ansible/slack-server-monitor log -1 --pretty=format:"%s")
+
+          git commit -m "chore(slack_monitor): update submodule to latest main
+
+          Triggered by: ${COMMIT_MSG}
+          Commit: ${{ github.sha }}"
+
+          git push origin "$BRANCH"
+
+      - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.PARENT_REPO_TOKEN }}
+        run: |
+          COMMIT_MSG=$(git -C home-server-ansible/slack-server-monitor log -1 --pretty=format:"%s")
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+
+          gh pr create \
+            --repo swamp-dev/ansible \
+            --head "chore/update-slack-monitor-${SHORT_SHA}" \
+            --title "chore(slack_monitor): update submodule — ${COMMIT_MSG}" \
+            --body "Auto-generated submodule update.
+
+          **Triggered by:** [\`${SHORT_SHA}\`](https://github.com/swamp-dev/slack-server-monitor/commit/${{ github.sha }}) — ${COMMIT_MSG}
+
+          This PR was automatically created by the [update-parent-submodule](https://github.com/swamp-dev/slack-server-monitor/actions) workflow.
+
+          🤖 Auto-generated"
