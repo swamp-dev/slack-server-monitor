@@ -10,6 +10,7 @@ import { runMonitoringSection } from './sections/monitoring.js';
 import { runClaudeSection } from './sections/claude.js';
 import { runWebSection } from './sections/web.js';
 import { runAdvancedSection } from './sections/advanced.js';
+import { runHueSection } from './sections/hue.js';
 
 /** Convert empty string to undefined (for optional config values). */
 function emptyToUndefined(value: string | undefined): string | undefined {
@@ -34,6 +35,7 @@ const SECTIONS: Section[] = [
   { key: 'monitoring', label: 'Server Monitoring', run: runMonitoringSection },
   { key: 'claude', label: 'Claude AI Integration', run: runClaudeSection },
   { key: 'web', label: 'Web UI', run: runWebSection },
+  { key: 'hue', label: 'Philips Hue Lights', run: runHueSection },
   { key: 'advanced', label: 'Advanced Settings', run: runAdvancedSection },
 ];
 
@@ -50,6 +52,7 @@ const SECRET_KEYS = new Set([
   'SLACK_BOT_TOKEN',
   'SLACK_APP_TOKEN',
   'WEB_AUTH_TOKEN',
+  'HUE_API_KEY',
 ]);
 
 /**
