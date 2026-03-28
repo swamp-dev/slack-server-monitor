@@ -7,6 +7,7 @@ import {
   processConversationTurn,
 } from '../services/conversation-processor.js';
 import { getConversationUrl } from '../web/index.js';
+import { buildFooter } from './build-footer.js';
 import { logger } from '../utils/logger.js';
 import { parseSlackError } from '../utils/slack-errors.js';
 import { section, context as contextBlock, error as errorBlock, extractSnippet } from '../formatters/blocks.js';
@@ -272,12 +273,15 @@ export async function registerAskCommand(app: App): Promise<void> {
             section(`*Q:* ${question}`),
             section(snippet),
             section(`<${webUrl}|View full response> _(${result.response.length.toLocaleString()} chars)_`),
-            contextBlock(
-              `_Tools used: ${String(result.toolCalls.length)} | ` +
-              `Tokens: ${totalTokens.toLocaleString()} | ` +
-              `Thread: \`${threadTs}\` | ` +
-              `Reply in thread to continue_ | \`/ask continue ${threadTs}\``
-            ),
+            contextBlock(buildFooter({
+              toolCalls: result.toolCalls.length,
+              tokens: totalTokens,
+              threadTs,
+              channelId,
+              userId,
+              showReplyHint: true,
+              webUrl,
+            })),
           ],
         });
 
@@ -298,12 +302,15 @@ export async function registerAskCommand(app: App): Promise<void> {
           blocks: [
             section(`*Q:* ${question}`),
             section(result.response),
-            contextBlock(
-              `_Tools used: ${String(result.toolCalls.length)} | ` +
-              `Tokens: ${totalTokens.toLocaleString()} | ` +
-              `Thread: \`${threadTs}\` | ` +
-              `Reply in thread to continue_ | \`/ask continue ${threadTs}\``
-            ),
+            contextBlock(buildFooter({
+              toolCalls: result.toolCalls.length,
+              tokens: totalTokens,
+              threadTs,
+              channelId,
+              userId,
+              showReplyHint: true,
+              webConfig,
+            })),
           ],
         });
 
@@ -504,13 +511,16 @@ async function handleContinue(
           section(`*Q:* ${question}`),
           section(snippet),
           section(`<${webUrl}|View full response> _(${result.response.length.toLocaleString()} chars)_`),
-          contextBlock(
-            `_Tools used: ${String(result.toolCalls.length)} | ` +
-            `Tokens: ${totalTokens.toLocaleString()} | ` +
-            `History: ${String(originalConversation.messages.length)} msgs | ` +
-            `Thread: \`${newThreadTs}\` | ` +
-            `Reply in thread to continue_ | \`/ask continue ${newThreadTs}\``
-          ),
+          contextBlock(buildFooter({
+            toolCalls: result.toolCalls.length,
+            tokens: totalTokens,
+            threadTs: newThreadTs,
+            channelId,
+            userId,
+            historyMsgs: originalConversation.messages.length,
+            showReplyHint: true,
+            webUrl,
+          })),
         ],
       });
     } else {
@@ -522,13 +532,16 @@ async function handleContinue(
           section(`*Continued from* \`${originalThreadTs}\``),
           section(`*Q:* ${question}`),
           section(result.response),
-          contextBlock(
-            `_Tools used: ${String(result.toolCalls.length)} | ` +
-            `Tokens: ${totalTokens.toLocaleString()} | ` +
-            `History: ${String(originalConversation.messages.length)} msgs | ` +
-            `Thread: \`${newThreadTs}\` | ` +
-            `Reply in thread to continue_ | \`/ask continue ${newThreadTs}\``
-          ),
+          contextBlock(buildFooter({
+            toolCalls: result.toolCalls.length,
+            tokens: totalTokens,
+            threadTs: newThreadTs,
+            channelId,
+            userId,
+            historyMsgs: originalConversation.messages.length,
+            showReplyHint: true,
+            webConfig,
+          })),
         ],
       });
     }
@@ -685,10 +698,14 @@ export function registerThreadHandler(app: App): void {
             blocks: [
               section(snippet),
               section(`<${webUrl}|View full response> _(${result.response.length.toLocaleString()} chars)_`),
-              contextBlock(
-                `_Tools used: ${String(result.toolCalls.length)} | Tokens: ${totalTokens.toLocaleString()} | ` +
-                `Thread: \`${threadTs}\`_ | \`/ask continue ${threadTs}\``
-              ),
+              contextBlock(buildFooter({
+                toolCalls: result.toolCalls.length,
+                tokens: totalTokens,
+                threadTs,
+                channelId,
+                userId,
+                webUrl,
+              })),
             ],
           });
 
@@ -707,10 +724,14 @@ export function registerThreadHandler(app: App): void {
             text: result.response,
             blocks: [
               section(result.response),
-              contextBlock(
-                `_Tools used: ${String(result.toolCalls.length)} | Tokens: ${totalTokens.toLocaleString()} | ` +
-                `Thread: \`${threadTs}\`_ | \`/ask continue ${threadTs}\``
-              ),
+              contextBlock(buildFooter({
+                toolCalls: result.toolCalls.length,
+                tokens: totalTokens,
+                threadTs,
+                channelId,
+                userId,
+                webConfig,
+              })),
             ],
           });
 
