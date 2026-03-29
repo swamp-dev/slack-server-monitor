@@ -86,6 +86,8 @@ export interface PluginContext {
   version: string;
   /** Claude API (undefined if Claude is not enabled) */
   claude?: PluginClaude;
+  /** Send a notification (appears in web UI notification center) */
+  notify?: (title: string, level?: 'info' | 'warn' | 'error', body?: string, link?: string) => void;
 }
 
 /**

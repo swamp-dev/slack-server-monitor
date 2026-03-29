@@ -22,6 +22,7 @@ import { logger } from '../utils/logger.js';
 import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError } from './templates/index.js';
 import { processConversationTurn } from '../services/conversation-processor.js';
 import { checkAndRecordClaudeRequest } from '../commands/ask.js';
+import { getNotificationStore } from '../services/notification-store.js';
 
 const SESSION_COOKIE = 'ssm_session';
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -495,6 +496,48 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     } catch (err) {
       logger.error('Error removing quick link', { error: err instanceof Error ? err.message : String(err) });
       res.status(500).json({ error: 'Failed to remove quick link' });
+    }
+  });
+
+  // Notifications: GET /api/notifications
+  app.get('/api/notifications', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
+    try {
+      const notifStore = getNotificationStore(claudeConfig.dbPath);
+      const notifications = notifStore.getRecent(50);
+      const unreadCount = notifStore.countUnread();
+      res.json({ notifications, unreadCount });
+    } catch (err) {
+      logger.error('Error getting notifications', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to get notifications' });
+    }
+  });
+
+  // Mark notification read: POST /api/notifications/:id/read
+  app.post('/api/notifications/:id/read', sessionAuthMiddleware(webConfig, dbPath), (req: Request, res: Response) => {
+    try {
+      const notifStore = getNotificationStore(claudeConfig.dbPath);
+      const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
+      if (isNaN(id)) {
+        res.status(400).json({ error: 'Invalid notification ID' });
+        return;
+      }
+      const marked = notifStore.markRead(id);
+      res.json({ marked, unreadCount: notifStore.countUnread() });
+    } catch (err) {
+      logger.error('Error marking notification read', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to mark notification read' });
+    }
+  });
+
+  // Mark all notifications read: POST /api/notifications/read-all
+  app.post('/api/notifications/read-all', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
+    try {
+      const notifStore = getNotificationStore(claudeConfig.dbPath);
+      const count = notifStore.markAllRead();
+      res.json({ count, unreadCount: 0 });
+    } catch (err) {
+      logger.error('Error marking all notifications read', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to mark all read' });
     }
   });
 
