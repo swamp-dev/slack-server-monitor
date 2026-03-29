@@ -10,6 +10,7 @@ import { icon } from './icons.js';
 import { getThemeStyles } from './theme.js';
 import { getBaseStyles, getAnimationStyles } from './styles.js';
 import { getKeyboardShortcutScript, getKeyboardHelpOverlay } from './keyboard.js';
+import { getPluginNavEntries } from '../plugin-router.js';
 
 export interface ShellOptions {
   title: string;
@@ -34,9 +35,14 @@ export function wrapInShell(opts: ShellOptions): string {
   <script>hljs.highlightAll();</script>`
     : '';
 
+  const pluginNav = getPluginNavEntries().map((entry) =>
+    `<a href="${escapeHtml(entry.path)}" class="nav-plugin-link">${entry.icon ? icon(entry.icon, 16) : ''} ${escapeHtml(entry.label)}</a>`
+  ).join('');
+
   const navHtml = showNav ? `
   <nav class="nav-bar">
     <a href="/" class="nav-brand">${icon('robot', 22)} Server Monitor</a>
+    ${pluginNav ? `<div class="nav-plugins">${pluginNav}</div>` : ''}
     <button class="nav-hamburger" id="nav-hamburger" type="button" aria-label="Menu">${icon('chevron-down', 20)}</button>
     <div class="nav-actions" id="nav-actions">
       <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme"><span class="icon-sun">${icon('sun', 18)}</span><span class="icon-moon">${icon('moon', 18)}</span></button>

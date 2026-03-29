@@ -23,6 +23,7 @@ import { renderConversation, renderMarkdownExport, renderSessionList, renderDash
 import { processConversationTurn } from '../services/conversation-processor.js';
 import { checkAndRecordClaudeRequest } from '../commands/ask.js';
 import { getNotificationStore } from '../services/notification-store.js';
+import { getPluginRouters } from '../plugins/loader.js';
 
 const SESSION_COOKIE = 'ssm_session';
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -190,6 +191,13 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
 
   // Apply session auth middleware to conversation routes
   app.use('/c', sessionAuthMiddleware(webConfig, dbPath));
+
+  // Mount plugin web routes under /p/:pluginName with auth
+  app.use('/p', sessionAuthMiddleware(webConfig, dbPath));
+  for (const { name, router } of getPluginRouters()) {
+    app.use(`/p/${name}`, router);
+    logger.debug('Mounted plugin web routes', { plugin: name, prefix: `/p/${name}` });
+  }
 
   /**
    * Helper to parse pagination params from query string

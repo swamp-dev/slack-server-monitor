@@ -50,6 +50,27 @@ export function getBaseStyles(): string {
   }
   .nav-brand:hover { text-decoration: none; opacity: 0.85; }
   .nav-brand svg { color: var(--accent); }
+  .nav-plugins {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .nav-plugin-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    border-radius: 6px;
+    transition: color 0.2s, background 0.2s;
+  }
+  .nav-plugin-link:hover {
+    color: var(--text);
+    background: var(--surface);
+    text-decoration: none;
+  }
   .nav-actions {
     display: flex;
     align-items: center;
