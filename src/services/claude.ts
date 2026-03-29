@@ -43,6 +43,12 @@ export interface ClaudeConfig {
   maxIterations: number;
   /** CLI process timeout in milliseconds */
   cliTimeoutMs: number;
+  /** Context window size in tokens */
+  contextWindowTokens: number;
+  /** Percentage of context window at which to truncate (0-1) */
+  contextTruncationThreshold: number;
+  /** Percentage of context window at which to warn (0-1) */
+  contextWarningThreshold: number;
 }
 
 /**
@@ -65,6 +71,9 @@ export class ClaudeService {
       maxToolCalls: config.maxToolCalls,
       maxIterations: config.maxIterations,
       cliTimeoutMs: config.cliTimeoutMs,
+      contextWindowTokens: config.contextWindowTokens,
+      contextTruncationThreshold: config.contextTruncationThreshold,
+      contextWarningThreshold: config.contextWarningThreshold,
     };
 
     this.provider = createProvider(providerConfig);

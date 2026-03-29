@@ -42,6 +42,13 @@ export interface ConversationTurnResult {
     isError?: boolean;
   }[];
   usage: { inputTokens: number; outputTokens: number };
+  /** Context window status after this turn */
+  contextStatus?: {
+    wasTruncated: boolean;
+    removedCount: number;
+    percentUsed: number;
+    isWarning: boolean;
+  };
 }
 
 /** Cached default context from context directory */
@@ -135,6 +142,9 @@ export async function processConversationTurn(
     maxToolCalls: claudeConfig.maxToolCalls,
     maxIterations: claudeConfig.maxIterations,
     cliTimeoutMs: claudeConfig.cliTimeoutMs,
+    contextWindowTokens: claudeConfig.contextWindowTokens,
+    contextTruncationThreshold: claudeConfig.contextTruncationThreshold,
+    contextWarningThreshold: claudeConfig.contextWarningThreshold,
   });
 
   const result = await claude.ask(userMessage, history, userConfig, askOptions);
@@ -157,5 +167,6 @@ export async function processConversationTurn(
     response: result.response,
     toolCalls: result.toolCalls,
     usage: result.usage,
+    contextStatus: result.contextStatus,
   };
 }

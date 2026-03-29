@@ -106,6 +106,33 @@ function parseImageFromQuestion(question: string): { imageUrl: string; cleanQues
 }
 
 /**
+ * Build Slack blocks for context window warnings/truncation notices
+ */
+function buildContextWarningBlocks(
+  contextStatus: { wasTruncated: boolean; removedCount: number; percentUsed: number; isWarning: boolean } | undefined
+): ReturnType<typeof contextBlock>[] {
+  if (!contextStatus) return [];
+
+  const blocks: ReturnType<typeof contextBlock>[] = [];
+
+  if (contextStatus.wasTruncated) {
+    blocks.push(
+      contextBlock(
+        `_:memo: Conversation trimmed to fit context window (${String(contextStatus.removedCount)} earlier messages removed, ${String(Math.round(contextStatus.percentUsed * 100))}% context used)_`
+      )
+    );
+  } else if (contextStatus.isWarning) {
+    blocks.push(
+      contextBlock(
+        `_:warning: Long conversation — context ${String(Math.round(contextStatus.percentUsed * 100))}% used, older messages may be trimmed soon_`
+      )
+    );
+  }
+
+  return blocks;
+}
+
+/**
  * Register the /ask command
  *
  * Usage:
@@ -282,6 +309,7 @@ export async function registerAskCommand(app: App): Promise<void> {
               showReplyHint: true,
               webUrl,
             })),
+            ...buildContextWarningBlocks(result.contextStatus),
           ],
         });
 
@@ -311,6 +339,7 @@ export async function registerAskCommand(app: App): Promise<void> {
               showReplyHint: true,
               webConfig,
             })),
+            ...buildContextWarningBlocks(result.contextStatus),
           ],
         });
 
@@ -521,6 +550,7 @@ async function handleContinue(
             showReplyHint: true,
             webUrl,
           })),
+          ...buildContextWarningBlocks(result.contextStatus),
         ],
       });
     } else {
@@ -542,6 +572,7 @@ async function handleContinue(
             showReplyHint: true,
             webConfig,
           })),
+          ...buildContextWarningBlocks(result.contextStatus),
         ],
       });
     }
@@ -706,6 +737,7 @@ export function registerThreadHandler(app: App): void {
                 userId,
                 webUrl,
               })),
+              ...buildContextWarningBlocks(result.contextStatus),
             ],
           });
 
@@ -732,6 +764,7 @@ export function registerThreadHandler(app: App): void {
                 userId,
                 webConfig,
               })),
+              ...buildContextWarningBlocks(result.contextStatus),
             ],
           });
 

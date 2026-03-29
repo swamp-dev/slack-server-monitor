@@ -545,6 +545,107 @@ describe('registerAskCommand handler', () => {
     );
   });
 
+  it('should show truncation notice when context was truncated', async () => {
+    mockProcessConversationTurn.mockResolvedValue(defaultTurnResult({
+      contextStatus: {
+        wasTruncated: true,
+        removedCount: 12,
+        percentUsed: 0.79,
+        isWarning: false,
+      },
+    }));
+
+    const mock = createMockCommand();
+    await askHandler(mock);
+
+    expect(mock.client.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'context',
+            elements: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining('Conversation trimmed'),
+              }),
+            ]),
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('should show warning when context is approaching limit', async () => {
+    mockProcessConversationTurn.mockResolvedValue(defaultTurnResult({
+      contextStatus: {
+        wasTruncated: false,
+        removedCount: 0,
+        percentUsed: 0.75,
+        isWarning: true,
+      },
+    }));
+
+    const mock = createMockCommand();
+    await askHandler(mock);
+
+    expect(mock.client.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'context',
+            elements: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining('Long conversation'),
+              }),
+            ]),
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('should not show context warning when usage is low', async () => {
+    mockProcessConversationTurn.mockResolvedValue(defaultTurnResult({
+      contextStatus: {
+        wasTruncated: false,
+        removedCount: 0,
+        percentUsed: 0.3,
+        isWarning: false,
+      },
+    }));
+
+    const mock = createMockCommand();
+    await askHandler(mock);
+
+    const updateCall = mock.client.chat.update.mock.calls[0]?.[0] as { blocks?: { type: string; elements?: { text?: string }[] }[] } | undefined;
+    const blocks = updateCall?.blocks ?? [];
+    const contextBlocks = blocks.filter((b: { type: string; elements?: { text?: string }[] }) => b.type === 'context');
+    // Should have the footer context block but no warning/truncation block
+    const warningBlocks = contextBlocks.filter((b: { elements?: { text?: string }[] }) =>
+      b.elements?.some((e: { text?: string }) =>
+        e.text?.includes('trimmed') || e.text?.includes('Long conversation')
+      )
+    );
+    expect(warningBlocks).toHaveLength(0);
+  });
+
+  it('should not show context warning when contextStatus is undefined', async () => {
+    // Default result has no contextStatus
+    mockProcessConversationTurn.mockResolvedValue(defaultTurnResult());
+
+    const mock = createMockCommand();
+    await askHandler(mock);
+
+    const updateCall = mock.client.chat.update.mock.calls[0]?.[0] as { blocks?: { type: string; elements?: { text?: string }[] }[] } | undefined;
+    const blocks = updateCall?.blocks ?? [];
+    const contextBlocks = blocks.filter((b: { type: string; elements?: { text?: string }[] }) => b.type === 'context');
+    const warningBlocks = contextBlocks.filter((b: { elements?: { text?: string }[] }) =>
+      b.elements?.some((e: { text?: string }) =>
+        e.text?.includes('trimmed') || e.text?.includes('Long conversation')
+      )
+    );
+    expect(warningBlocks).toHaveLength(0);
+  });
+
   it('should generate web link for long responses', async () => {
     // Enable web config
     mockConfig.web = {
@@ -893,6 +994,49 @@ describe('registerAskCommand handler', () => {
         })
       );
     });
+
+    it('should include context warning blocks when truncated', async () => {
+      const store = createMockStore();
+      store.getConversationByThreadTs.mockReturnValue({
+        id: 1,
+        threadTs: '9876.5432',
+        channelId: 'C123TEST',
+        userId: 'U123TEST',
+        messages: [
+          { role: 'user', content: 'original question' },
+          { role: 'assistant', content: 'original answer' },
+        ],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      mockGetConversationStore.mockReturnValue(store);
+      mockProcessConversationTurn.mockResolvedValue(defaultTurnResult({
+        contextStatus: {
+          wasTruncated: true,
+          removedCount: 5,
+          percentUsed: 0.78,
+          isWarning: false,
+        },
+      }));
+
+      const mock = createMockCommand({ text: 'continue 9876.5432 more questions' });
+      await askHandler(mock);
+
+      expect(mock.client.chat.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          blocks: expect.arrayContaining([
+            expect.objectContaining({
+              type: 'context',
+              elements: expect.arrayContaining([
+                expect.objectContaining({
+                  text: expect.stringContaining('Conversation trimmed'),
+                }),
+              ]),
+            }),
+          ]),
+        })
+      );
+    });
   });
 
   // ──────────────────────────────────────────
@@ -1133,6 +1277,40 @@ describe('registerAskCommand handler', () => {
               text: expect.objectContaining({
                 text: expect.stringContaining('View full response'),
               }),
+            }),
+          ]),
+        })
+      );
+    });
+
+    it('should include context warning blocks when truncated in thread reply', async () => {
+      mockProcessConversationTurn.mockResolvedValue(defaultTurnResult({
+        contextStatus: {
+          wasTruncated: true,
+          removedCount: 8,
+          percentUsed: 0.77,
+          isWarning: false,
+        },
+      }));
+
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      await handler({
+        event: createThreadEvent({ text: 'question about containers' }),
+        client,
+      });
+
+      expect(client.chat.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          blocks: expect.arrayContaining([
+            expect.objectContaining({
+              type: 'context',
+              elements: expect.arrayContaining([
+                expect.objectContaining({
+                  text: expect.stringContaining('Conversation trimmed'),
+                }),
+              ]),
             }),
           ]),
         })

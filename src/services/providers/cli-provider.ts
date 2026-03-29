@@ -16,6 +16,10 @@ import type {
   AskOptions,
   ToolCallLog,
 } from './types.js';
+import {
+  truncateConversation,
+  getContextStatus,
+} from '../../utils/token-estimate.js';
 
 /**
  * Maximum context size in characters to prevent unbounded growth
@@ -93,8 +97,56 @@ export class CliProvider implements ClaudeProvider {
 
     const systemPromptWithTools = this.buildToolSystemPrompt(baseSystemPrompt, tools);
 
+    // Truncate conversation history if approaching context window limits.
+    // This is a message-level truncation that preserves the first message and most recent
+    // exchanges. The char-based MAX_CONTEXT_SIZE guard below in the tool loop is a separate
+    // safety net for when tool call outputs cause the serialized context string to grow
+    // beyond the pre-loop estimate — percentUsed reflects the pre-tool-call snapshot.
+    let contextStatusInfo: AskResult['contextStatus'];
+    let effectiveHistory = conversationHistory;
+
+    {
+      const truncationResult = truncateConversation(
+        conversationHistory,
+        systemPromptWithTools,
+        this.config.contextWindowTokens,
+        this.config.contextTruncationThreshold
+      );
+
+      if (truncationResult.truncated) {
+        logger.warn('Conversation history truncated to fit context window', {
+          originalMessages: conversationHistory.length,
+          keptMessages: truncationResult.messages.length,
+          removedCount: truncationResult.removedCount,
+          estimatedTokens: truncationResult.estimatedTokens,
+          contextWindowTokens: this.config.contextWindowTokens,
+        });
+        effectiveHistory = truncationResult.messages;
+      }
+
+      // Check post-truncation status (include the new question in estimate)
+      const allMessages: ConversationMessage[] = [
+        ...effectiveHistory,
+        { role: 'user' as const, content: effectiveQuestion },
+      ];
+      const status = getContextStatus(
+        allMessages,
+        systemPromptWithTools,
+        this.config.contextWindowTokens,
+        this.config.contextWarningThreshold,
+        this.config.contextTruncationThreshold
+      );
+
+      contextStatusInfo = {
+        wasTruncated: truncationResult.truncated,
+        removedCount: truncationResult.removedCount,
+        percentUsed: status.percentUsed,
+        isWarning: status.level === 'warning',
+      };
+    }
+
     // Build conversation context with escaped role markers
-    let context = this.buildConversationContext(conversationHistory);
+    let context = this.buildConversationContext(effectiveHistory);
     context += `\nUser: ${this.escapeRoleMarkers(effectiveQuestion)}\n`;
 
     // Tool loop with iteration limit (defense in depth)
@@ -141,6 +193,7 @@ export class CliProvider implements ClaudeProvider {
             inputTokens: 0, // CLI doesn't expose token usage
             outputTokens: 0,
           },
+          contextStatus: contextStatusInfo,
         };
       }
 
@@ -152,6 +205,7 @@ export class CliProvider implements ClaudeProvider {
           response: `I reached the maximum number of tool calls (${String(this.config.maxToolCalls)}) while investigating. Here's what I found so far:\n\n${text}`,
           toolCalls,
           usage: { inputTokens: 0, outputTokens: 0 },
+          contextStatus: contextStatusInfo,
         };
       }
 
@@ -199,6 +253,7 @@ export class CliProvider implements ClaudeProvider {
       response: 'I was unable to complete the analysis - maximum iterations reached.',
       toolCalls,
       usage: { inputTokens: 0, outputTokens: 0 },
+      contextStatus: contextStatusInfo,
     };
   }
 

@@ -189,6 +189,12 @@ export const ConfigSchema = z.object({
     contextOptions: z.array(ContextOptionSchema).default([]),
     /** CLI process timeout in milliseconds (default: 300000 = 5 minutes) */
     cliTimeoutMs: z.number().int().min(1000).max(3_600_000).default(300000),
+    /** Context window size in tokens (default: 200000 for Claude Sonnet) */
+    contextWindowTokens: z.number().int().positive().default(200000),
+    /** Percentage of context window at which to truncate (default: 0.8) */
+    contextTruncationThreshold: z.number().min(0.1).max(1.0).default(0.8),
+    /** Percentage of context window at which to warn user (default: 0.7) */
+    contextWarningThreshold: z.number().min(0.1).max(1.0).default(0.7),
     /** Enable periodic database backups */
     dbBackupEnabled: z.boolean().default(false),
     /** Interval between backups in hours */

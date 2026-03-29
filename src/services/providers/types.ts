@@ -51,6 +51,17 @@ export interface AskResult {
     inputTokens: number;
     outputTokens: number;
   };
+  /** Context window status after this turn */
+  contextStatus?: {
+    /** Whether conversation history was truncated for this turn */
+    wasTruncated: boolean;
+    /** Number of messages removed if truncated */
+    removedCount: number;
+    /** Percentage of context window estimated used */
+    percentUsed: number;
+    /** Whether usage is above the warning threshold (but below truncation) */
+    isWarning: boolean;
+  };
 }
 
 /**
@@ -78,6 +89,12 @@ export interface CliProviderConfig extends BaseProviderConfig {
   cliPath: string;
   /** CLI process timeout in milliseconds */
   cliTimeoutMs: number;
+  /** Context window size in tokens */
+  contextWindowTokens: number;
+  /** Percentage of context window at which to truncate (0-1) */
+  contextTruncationThreshold: number;
+  /** Percentage of context window at which to warn (0-1) */
+  contextWarningThreshold: number;
 }
 
 /**
