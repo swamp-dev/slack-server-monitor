@@ -21,6 +21,7 @@ import { resolveToken, parseCookies, createLinkToken } from './auth.js';
 import { logger } from '../utils/logger.js';
 import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError } from './templates/index.js';
 import { getPluginWidgets } from '../plugins/loader.js';
+import { getNotificationStore, closeNotificationStore } from '../services/notification-store.js';
 import { processConversationTurn } from '../services/conversation-processor.js';
 import { checkAndRecordClaudeRequest } from '../commands/ask.js';
 
@@ -619,6 +620,58 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
   });
 
+  // ─── Notification API ─────────────────────────────────────────────────
+
+  // GET /api/notifications — list notifications (optionally unread only)
+  app.get('/api/notifications', sessionAuthMiddleware(webConfig, dbPath), (req: Request, res: Response) => {
+    try {
+      const notifStore = getNotificationStore(claudeConfig.dbPath);
+      const unreadOnly = req.query.unread === 'true';
+      const limit = Math.min(Number(req.query.limit) || 50, 100);
+      const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+      const notifications = unreadOnly
+        ? notifStore.getUnread(limit)
+        : notifStore.getRecent(limit, offset);
+      const unreadCount = notifStore.countUnread();
+
+      res.json({ notifications, unreadCount });
+    } catch (err) {
+      logger.error('Error fetching notifications', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to fetch notifications' });
+    }
+  });
+
+  // POST /api/notifications/read-all — mark all notifications as read
+  // IMPORTANT: Must be registered before /:id/read to avoid Express treating "read-all" as an :id
+  app.post('/api/notifications/read-all', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
+    try {
+      const notifStore = getNotificationStore(claudeConfig.dbPath);
+      const count = notifStore.markAllRead();
+      res.json({ count, unreadCount: 0 });
+    } catch (err) {
+      logger.error('Error marking all notifications read', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to mark all read' });
+    }
+  });
+
+  // POST /api/notifications/:id/read — mark a single notification as read
+  app.post('/api/notifications/:id/read', sessionAuthMiddleware(webConfig, dbPath), (req: Request, res: Response) => {
+    try {
+      const notifStore = getNotificationStore(claudeConfig.dbPath);
+      const id = Number(req.params.id);
+      if (isNaN(id) || id <= 0) {
+        res.status(400).json({ error: 'Invalid notification ID' });
+        return;
+      }
+      const success = notifStore.markRead(id);
+      res.json({ success, unreadCount: notifStore.countUnread() });
+    } catch (err) {
+      logger.error('Error marking notification read', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to mark notification read' });
+    }
+  });
+
   // Dashboard home: GET /
   app.get('/', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
     try {
@@ -645,11 +698,14 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     res.status(404).send(render404());
   });
 
-  // Clean up expired sessions on startup and periodically
+  // Clean up expired sessions and old notifications on startup and periodically
   const sessionStore = getSessionStore(dbPath, webConfig.sessionTtlHours);
   sessionStore.cleanupExpired();
+  const notifStore = getNotificationStore(claudeConfig.dbPath);
+  notifStore.cleanup(30); // Remove read notifications older than 30 days
   cleanupTimer = setInterval(() => {
     sessionStore.cleanupExpired();
+    notifStore.cleanup(30);
   }, CLEANUP_INTERVAL_MS);
   cleanupTimer.unref();
 
@@ -685,6 +741,7 @@ export async function stopWebServer(): Promise<void> {
   }
 
   closeSessionStore();
+  closeNotificationStore();
 
   const serverInstance = server;
   if (!serverInstance) {

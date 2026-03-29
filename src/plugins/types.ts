@@ -77,6 +77,18 @@ export interface PluginClaude {
  * The database accessor is pre-configured to only allow access to tables
  * prefixed with "plugin_{name}_".
  */
+/**
+ * Options for plugin notifications
+ */
+export interface PluginNotifyOptions {
+  /** Notification severity (default: 'info') */
+  level?: 'info' | 'warn' | 'error';
+  /** Additional body text */
+  body?: string;
+  /** Link URL (relative or absolute) */
+  link?: string;
+}
+
 export interface PluginContext {
   /** Scoped database accessor for persistent storage */
   db: PluginDatabase;
@@ -86,6 +98,11 @@ export interface PluginContext {
   version: string;
   /** Claude API (undefined if Claude is not enabled) */
   claude?: PluginClaude;
+  /**
+   * Send a notification to the notification center.
+   * Source is automatically set to the plugin name.
+   */
+  notify: (title: string, opts?: PluginNotifyOptions) => void;
 }
 
 /**

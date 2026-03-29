@@ -35,6 +35,7 @@ export type {
   PluginClaudeResult,
   PluginImageInput,
   PluginHelpEntry,
+  PluginNotifyOptions,
   DashboardWidget,
 } from './types.js';
 export { isValidPlugin } from './types.js';

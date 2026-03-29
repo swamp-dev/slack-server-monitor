@@ -11,6 +11,7 @@ import { validatePluginTools } from '../services/tools/validation.js';
 import { getPluginDatabase, closePluginDatabases, removePluginDatabase } from '../services/plugin-database.js';
 import { createPluginClaude, createDisabledPluginClaude } from '../services/plugin-claude.js';
 import { getProvider, type ProviderConfig } from '../services/providers/index.js';
+import { getNotificationStore } from '../services/notification-store.js';
 import { logger } from '../utils/logger.js';
 
 import type { Config } from '../config/schema.js';
@@ -259,11 +260,28 @@ export async function registerPlugins(app: App): Promise<void> {
         pluginClaude = createDisabledPluginClaude();
       }
 
+      const notifStore = getNotificationStore(config.claude?.dbPath ?? './data/claude.db');
       const ctx: PluginContext = {
         db: pluginDb,
         name: plugin.name,
         version: plugin.version,
         claude: pluginClaude,
+        notify: (title, opts) => {
+          try {
+            notifStore.createNotification(
+              plugin.name,
+              opts?.level ?? 'info',
+              title,
+              opts?.body,
+              opts?.link,
+            );
+          } catch (error) {
+            logger.error('Plugin notification failed', {
+              plugin: plugin.name,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
       };
 
       // Run init hook with timeout
