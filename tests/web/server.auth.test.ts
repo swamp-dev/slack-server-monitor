@@ -17,7 +17,7 @@ vi.mock('../../src/utils/logger.js', () => ({
 
 import { resolveToken, parseCookies, createLinkToken } from '../../src/web/auth.js';
 import { SessionStore } from '../../src/services/session-store.js';
-import { renderLogin, render401, render404 } from '../../src/web/templates.js';
+import { renderLogin, render401, render404 } from '../../src/web/templates/index.js';
 import type { WebConfig } from '../../src/config/schema.js';
 
 const SESSION_COOKIE = 'ssm_session';

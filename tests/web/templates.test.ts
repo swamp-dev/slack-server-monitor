@@ -11,7 +11,7 @@ import {
   icon,
   getThemeStyles,
   wrapInShell,
-} from '../../src/web/templates.js';
+} from '../../src/web/templates/index.js';
 import type { ConversationMessage, ToolCallLog, SessionSummary, SessionStats, TagInfo, PaginationInfo } from '../../src/services/conversation-store.js';
 
 describe('web templates', () => {
