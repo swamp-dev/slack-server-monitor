@@ -103,6 +103,32 @@ export interface PluginHelpEntry {
 }
 
 /**
+ * Dashboard widget descriptor returned by plugins
+ *
+ * Plugins can contribute summary cards to the main dashboard
+ * via the `getWidgets()` method.
+ */
+export interface DashboardWidget {
+  /** Widget title displayed in the card header */
+  title: string;
+  /** Optional icon name (from the icon set in templates/icons.ts) */
+  icon?: string;
+  /**
+   * HTML content rendered inside the widget card.
+   *
+   * WARNING: Rendered verbatim without sanitization. The plugin author
+   * is responsible for escaping any user-derived values.
+   */
+  html: string;
+  /** Optional link URL — makes the widget title clickable */
+  link?: string;
+  /** Sort priority (lower values appear first, default: 100) */
+  priority?: number;
+  /** Card size in the grid layout */
+  size?: 'small' | 'medium' | 'large';
+}
+
+/**
  * Plugin interface for extending the Slack Server Monitor
  *
  * SECURITY WARNING: Plugins run with full process privileges.
@@ -165,6 +191,14 @@ export interface Plugin {
    * TIMEOUT: Must complete within 10 seconds or plugin loading fails.
    */
   init?: (ctx: PluginContext) => Promise<void>;
+
+  /**
+   * Return dashboard widgets for the home page
+   *
+   * Called on each dashboard render. Return an array of widget descriptors.
+   * Errors are caught per-plugin and do not break the dashboard.
+   */
+  getWidgets?: () => DashboardWidget[];
 
   /**
    * Cleanup hook called on app shutdown
@@ -237,6 +271,10 @@ export function isValidPlugin(obj: unknown): obj is Plugin {
   }
 
   if (plugin.destroy !== undefined && typeof plugin.destroy !== 'function') {
+    return false;
+  }
+
+  if (plugin.getWidgets !== undefined && typeof plugin.getWidgets !== 'function') {
     return false;
   }
 

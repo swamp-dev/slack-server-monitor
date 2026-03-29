@@ -20,6 +20,7 @@ import { getSessionStore, closeSessionStore } from '../services/session-store.js
 import { resolveToken, parseCookies, createLinkToken } from './auth.js';
 import { logger } from '../utils/logger.js';
 import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError } from './templates/index.js';
+import { getPluginWidgets } from '../plugins/loader.js';
 import { processConversationTurn } from '../services/conversation-processor.js';
 import { checkAndRecordClaudeRequest } from '../commands/ask.js';
 
@@ -629,8 +630,9 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const favCount = store.countFavoriteSessions();
       const allTags = store.listAllTags();
       const userId = (res.locals.userId as string) || 'user';
+      const widgets = getPluginWidgets();
 
-      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId);
+      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId, widgets);
       res.type('html').send(html);
     } catch (err) {
       logger.error('Error serving dashboard', { error: err instanceof Error ? err.message : String(err) });

@@ -35,6 +35,7 @@ export type {
   PluginClaudeResult,
   PluginImageInput,
   PluginHelpEntry,
+  DashboardWidget,
 } from './types.js';
 export { isValidPlugin } from './types.js';
 
@@ -42,7 +43,7 @@ export { isValidPlugin } from './types.js';
 export type { PluginDatabase } from '../services/plugin-database.js';
 
 // Loader functions for internal use
-export { registerPlugins, getPluginTools, destroyPlugins, getLoadedPlugins, getPluginHelpData } from './loader.js';
+export { registerPlugins, getPluginTools, destroyPlugins, getLoadedPlugins, getPluginHelpData, getPluginWidgets } from './loader.js';
 export type { PluginHelpData } from './loader.js';
 
 // Plugin app wrapper (for advanced plugin authors)

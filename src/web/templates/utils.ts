@@ -17,6 +17,20 @@ export function escapeHtml(text: string): string {
 }
 
 /**
+ * Sanitize a URL for use in href attributes.
+ * Uses an allowlist: only http://, https://, and relative paths (starting with /).
+ * Returns null for blocked URLs (javascript:, data:, vbscript:, etc.).
+ */
+export function sanitizeUrl(url: string): string | null {
+  const trimmed = url.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('http://') || lower.startsWith('https://') || trimmed.startsWith('/')) {
+    return url;
+  }
+  return null;
+}
+
+/**
  * Escape markdown characters that could create links or structure injection
  */
 export function escapeMarkdown(text: string): string {

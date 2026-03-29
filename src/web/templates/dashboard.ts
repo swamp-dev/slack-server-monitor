@@ -3,7 +3,8 @@
  */
 
 import type { SessionSummary, SessionStats, TagInfo } from '../../services/conversation-store.js';
-import { escapeHtml } from './utils.js';
+import type { DashboardWidget } from '../../plugins/types.js';
+import { escapeHtml, sanitizeUrl } from './utils.js';
 import { icon } from './icons.js';
 import { wrapInShell } from './shell.js';
 
@@ -228,6 +229,52 @@ const dashboardStyles = `
     border-color: var(--accent);
     color: var(--fg);
   }
+  .widget-section {
+    margin-bottom: 32px;
+  }
+  .widget-section > h2 {
+    font-size: 1rem;
+    margin: 0 0 16px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .widget-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 16px;
+  }
+  .widget-card {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 16px;
+    border: 1px solid var(--border);
+  }
+  .widget-card .widget-header {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .widget-card .widget-header a {
+    color: var(--fg);
+    text-decoration: none;
+  }
+  .widget-card .widget-header a:hover {
+    color: var(--accent);
+  }
+  .widget-card .widget-body {
+    font-size: 0.85rem;
+    color: var(--fg);
+  }
+  .widget-small { grid-column: span 1; }
+  .widget-medium { grid-column: span 1; }
+  .widget-large { grid-column: span 2; }
+  @media (max-width: 768px) {
+    .widget-large { grid-column: span 1; }
+  }
   .empty-welcome {
     text-align: center;
     padding: 80px 20px;
@@ -270,6 +317,7 @@ export function renderDashboard(
   favCount: number,
   allTags: TagInfo[],
   _userId: string,
+  widgets?: DashboardWidget[],
 ): string {
   const greeting = getGreeting();
 
@@ -388,6 +436,29 @@ export function renderDashboard(
       <a href="/c">${icon('message-circle', 16)} All Conversations</a>
     </div>`;
 
+  // Plugin widgets section
+  const effectiveWidgets = widgets && widgets.length > 0 ? widgets : [];
+  const widgetsHtml = effectiveWidgets.length > 0
+    ? `<div class="widget-section">
+        <h2>${icon('grid', 16)} Apps</h2>
+        <div class="widget-grid">
+          ${effectiveWidgets.map((w) => {
+            const VALID_SIZES = new Set(['small', 'medium', 'large']);
+            const size: string = (w.size && VALID_SIZES.has(w.size)) ? w.size : 'medium';
+            const safeLink = w.link ? sanitizeUrl(w.link) : null;
+            const titleContent = safeLink
+              ? `<a href="${escapeHtml(safeLink)}">${escapeHtml(w.title)}</a>`
+              : escapeHtml(w.title);
+            const iconHtml = w.icon ? `<span class="widget-icon">${escapeHtml(w.icon)}</span> ` : '';
+            return `<div class="widget-card widget-${size}">
+              <div class="widget-header">${iconHtml}${titleContent}</div>
+              <div class="widget-body">${w.html}</div>
+            </div>`;
+          }).join('\n')}
+        </div>
+      </div>`
+    : '';
+
   // Build the grid: left column = tools + tags, right column = recent + favorites
   const leftCol = [toolChartHtml, tagsHtml].filter(Boolean).join('\n');
   const rightCol = [recentHtml, favoritesHtml].filter(Boolean).join('\n');
@@ -400,6 +471,7 @@ export function renderDashboard(
     </div>
     ${quickActionsHtml}
     ${statsHtml}
+    ${widgetsHtml}
     <div class="dashboard-grid">
       ${leftCol || ''}
       ${rightCol || ''}

@@ -4,7 +4,7 @@ import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { createJiti } from 'jiti';
 import type { App } from '@slack/bolt';
-import type { Plugin, PluginToolDefinition, PluginContext, PluginClaude, PluginHelpEntry } from './types.js';
+import type { Plugin, PluginToolDefinition, PluginContext, PluginClaude, PluginHelpEntry, DashboardWidget } from './types.js';
 import { isValidPlugin } from './types.js';
 import { createPluginApp, clearRegisteredCommands } from './plugin-app.js';
 import { validatePluginTools } from '../services/tools/validation.js';
@@ -389,4 +389,35 @@ export function getPluginHelpData(): PluginHelpData[] {
     description: p.description,
     helpEntries: p.helpEntries,
   }));
+}
+
+/**
+ * Collect dashboard widgets from all loaded plugins
+ *
+ * Calls getWidgets() on each plugin that implements it.
+ * Errors are caught per-plugin so one failing plugin does not
+ * break the dashboard.
+ *
+ * @returns Flat array of widgets sorted by priority (lower first)
+ */
+export function getPluginWidgets(): DashboardWidget[] {
+  const widgets: DashboardWidget[] = [];
+
+  for (const plugin of loadedPlugins) {
+    if (!plugin.getWidgets) continue;
+
+    try {
+      const pluginWidgets = plugin.getWidgets();
+      if (Array.isArray(pluginWidgets)) {
+        widgets.push(...pluginWidgets);
+      }
+    } catch (error) {
+      logger.error('Failed to get widgets from plugin', {
+        name: plugin.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return widgets.sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100));
 }
