@@ -19,7 +19,7 @@ import { getConversationStore, type SessionSummary } from '../services/conversat
 import { getSessionStore, closeSessionStore } from '../services/session-store.js';
 import { resolveToken, parseCookies, createLinkToken } from './auth.js';
 import { logger } from '../utils/logger.js';
-import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError } from './templates/index.js';
+import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError, renderNotificationPage } from './templates/index.js';
 import { getPluginWidgets } from '../plugins/loader.js';
 import { getNotificationStore, closeNotificationStore } from '../services/notification-store.js';
 import { processConversationTurn } from '../services/conversation-processor.js';
@@ -672,6 +672,20 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
   });
 
+  // Notifications page: GET /notifications
+  app.get('/notifications', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
+    try {
+      const notifStore = getNotificationStore(claudeConfig.dbPath);
+      const notifications = notifStore.getRecent(50);
+      const unreadCount = notifStore.countUnread();
+      const html = renderNotificationPage(notifications, unreadCount);
+      res.type('html').send(html);
+    } catch (err) {
+      logger.error('Error serving notifications page', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).send(renderError('Failed to load notifications.'));
+    }
+  });
+
   // Dashboard home: GET /
   app.get('/', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
     try {
@@ -684,8 +698,10 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const allTags = store.listAllTags();
       const userId = (res.locals.userId as string) || 'user';
       const widgets = getPluginWidgets();
+      const notifStore = getNotificationStore(claudeConfig.dbPath);
+      const unreadCount = notifStore.countUnread();
 
-      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId, widgets);
+      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId, widgets, unreadCount);
       res.type('html').send(html);
     } catch (err) {
       logger.error('Error serving dashboard', { error: err instanceof Error ? err.message : String(err) });

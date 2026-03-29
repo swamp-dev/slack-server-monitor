@@ -7,6 +7,7 @@ import { getThemeStyles } from './theme.js';
 import { getBaseStyles, getAnimationStyles } from './styles.js';
 import { icon } from './icons.js';
 import { getKeyboardShortcutScript, getKeyboardHelpOverlay } from './keyboard.js';
+import { renderNotificationBell, renderNotificationDropdown } from './notifications.js';
 
 // ─── Shell / Layout ────────────────────────────────────────────────────
 
@@ -17,13 +18,15 @@ export interface ShellOptions {
   scripts?: string;
   showNav?: boolean;
   highlightJs?: boolean;
+  /** Unread notification count for nav bell badge */
+  unreadCount?: number;
 }
 
 /**
  * Wrap page content in the full HTML shell with nav, theme, fonts
  */
 export function wrapInShell(opts: ShellOptions): string {
-  const { title, styles: pageStyles, body, scripts = '', showNav = true, highlightJs = false } = opts;
+  const { title, styles: pageStyles, body, scripts = '', showNav = true, highlightJs = false, unreadCount = 0 } = opts;
 
   const hljsLink = highlightJs
     ? `<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH" crossorigin="anonymous">`
@@ -38,6 +41,7 @@ export function wrapInShell(opts: ShellOptions): string {
     <a href="/" class="nav-brand">${icon('robot', 22)} Server Monitor</a>
     <button class="nav-hamburger" id="nav-hamburger" type="button" aria-label="Menu">${icon('chevron-down', 20)}</button>
     <div class="nav-actions" id="nav-actions">
+      <div class="notif-bell-wrapper">${renderNotificationBell(unreadCount)}${renderNotificationDropdown([])}</div>
       <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme"><span class="icon-sun">${icon('sun', 18)}</span><span class="icon-moon">${icon('moon', 18)}</span></button>
       <form method="POST" action="/logout" style="margin:0;">
         <button class="logout-btn" type="submit" aria-label="Log out">${icon('logout', 18)}</button>
@@ -112,6 +116,68 @@ export function wrapInShell(opts: ShellOptions): string {
     btn.addEventListener('click', function() {
       actions.classList.toggle('open');
     });
+  })();
+  // Notification bell dropdown
+  (function() {
+    var bell = document.getElementById('notification-bell');
+    var dropdown = document.getElementById('notif-dropdown');
+    if (!bell || !dropdown) return;
+    bell.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var isOpen = dropdown.classList.contains('open');
+      dropdown.classList.toggle('open');
+      if (!isOpen) {
+        fetch('/api/notifications?unread=true&limit=5')
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (!data.notifications) return;
+            var items = data.notifications.map(function(n) {
+              var cls = 'notif-item notif-' + n.level + (n.readAt ? ' notif-read' : '');
+              var title = n.title.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+              var ago = formatTimeAgo(n.createdAt);
+              var inner = '<span class="notif-title">' + title + '</span><span class="notif-time">' + ago + '</span>';
+              var safeLink = n.link ? sanitizeLink(n.link) : null;
+              if (safeLink) inner = '<a href="' + safeLink.replace(/"/g, '&quot;') + '" class="notif-link">' + inner + '</a>';
+              else inner = '<div class="notif-link">' + inner + '</div>';
+              return '<div class="' + cls + '" data-id="' + n.id + '">' + inner + '</div>';
+            }).join('');
+            var header = data.notifications.length > 0
+              ? '<div class="notif-dropdown-header"><span>Notifications</span><button class="notif-mark-all" id="notif-mark-all" type="button">Mark all read</button></div>'
+              : '';
+            var empty = data.notifications.length === 0 ? '<div class="notif-dropdown-empty">No notifications</div>' : '';
+            dropdown.innerHTML = header + empty + items + '<div class="notif-dropdown-footer"><a href="/notifications">View all</a></div>';
+            var markAll = document.getElementById('notif-mark-all');
+            if (markAll) {
+              markAll.addEventListener('click', function() {
+                fetch('/api/notifications/read-all', { method: 'POST' })
+                  .then(function() {
+                    var badge = document.querySelector('.notif-badge');
+                    if (badge) badge.remove();
+                    dropdown.classList.remove('open');
+                  });
+              });
+            }
+          });
+      }
+    });
+    document.addEventListener('click', function() {
+      dropdown.classList.remove('open');
+    });
+    dropdown.addEventListener('click', function(e) { e.stopPropagation(); });
+    function sanitizeLink(url) {
+      var l = url.trim().toLowerCase();
+      if (l.startsWith('http://') || l.startsWith('https://') || url.trim().startsWith('/')) return url;
+      return null;
+    }
+    function formatTimeAgo(ts) {
+      var diff = Date.now() - ts;
+      var mins = Math.floor(diff / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return mins + 'm ago';
+      var hours = Math.floor(mins / 60);
+      if (hours < 24) return hours + 'h ago';
+      return Math.floor(hours / 24) + 'd ago';
+    }
   })();
   </script>
   ${getKeyboardShortcutScript()}

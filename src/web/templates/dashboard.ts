@@ -318,6 +318,7 @@ export function renderDashboard(
   allTags: TagInfo[],
   _userId: string,
   widgets?: DashboardWidget[],
+  unreadCount?: number,
 ): string {
   const greeting = getGreeting();
 
@@ -339,6 +340,7 @@ export function renderDashboard(
       title: 'Dashboard',
       styles: dashboardStyles,
       body: bodyHtml,
+      unreadCount,
     });
   }
 
@@ -482,5 +484,6 @@ export function renderDashboard(
     title: 'Dashboard',
     styles: dashboardStyles,
     body: bodyHtml,
+    unreadCount,
   });
 }
