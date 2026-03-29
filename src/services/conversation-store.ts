@@ -1155,11 +1155,11 @@ export class ConversationStore {
   addQuickLink(userId: string, title: string, url: string): QuickLink {
     const now = Date.now();
     const result = this.db
-      .prepare('INSERT OR IGNORE INTO quick_links (user_id, title, url, created_at) VALUES (?, ?, ?, ?)')
+      .prepare('INSERT INTO quick_links (user_id, title, url, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, url) DO UPDATE SET title = excluded.title')
       .run(userId, title, url, now);
 
-    if (result.changes === 0) {
-      // Duplicate — return the existing row
+    if (result.changes === 1 && result.lastInsertRowid === 0) {
+      // Updated existing row — fetch it
       const existing = this.db
         .prepare('SELECT id, user_id, title, url, created_at FROM quick_links WHERE user_id = ? AND url = ?')
         .get(userId, url) as { id: number; user_id: string; title: string; url: string; created_at: number };

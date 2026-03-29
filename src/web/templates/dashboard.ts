@@ -516,9 +516,8 @@ export function renderDashboard(
         e.preventDefault();
         e.stopPropagation();
         var id = btn.getAttribute('data-id');
-        fetch('/c/quick-links/' + id, { method: 'DELETE', credentials: 'same-origin' })
-          .then(function(res) { return res.json(); })
-          .then(function() { window.location.reload(); })
+        fetch('/c/quick-links/' + encodeURIComponent(id), { method: 'DELETE', credentials: 'same-origin' })
+          .then(function(res) { if (!res.ok) throw new Error('Failed'); window.location.reload(); })
           .catch(function() { showToast('Failed to remove link', 'error'); });
       });
     });

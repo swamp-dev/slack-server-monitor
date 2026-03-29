@@ -1064,12 +1064,13 @@ describe('ConversationStore', () => {
       expect(links[1]?.title).toBe('Grafana');
     });
 
-    it('should not duplicate quick links for same user and URL', () => {
+    it('should not duplicate quick links for same user and URL but update title', () => {
       store.addQuickLink('U123', 'Grafana', 'http://grafana.local:3000');
       store.addQuickLink('U123', 'Grafana v2', 'http://grafana.local:3000');
 
       const links = store.getQuickLinks('U123');
       expect(links).toHaveLength(1);
+      expect(links[0]?.title).toBe('Grafana v2');
     });
 
     it('should allow same URL for different users', () => {

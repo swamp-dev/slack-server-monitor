@@ -474,6 +474,13 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         return;
       }
 
+      // Prevent stored XSS via javascript: or data: URLs
+      const parsed = URL.canParse(url) ? new URL(url) : null;
+      if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) {
+        res.status(400).json({ error: 'URL must use http or https' });
+        return;
+      }
+
       const link = store.addQuickLink(userId, title, url);
       res.json({ quickLink: link, quickLinks: store.getQuickLinks(userId) });
     } catch (err) {
