@@ -434,6 +434,70 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
   });
 
+  // Quick links: GET /c/quick-links
+  app.get('/c/quick-links', (_req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const userId = res.locals.userId as string;
+      res.json({ quickLinks: store.getQuickLinks(userId) });
+    } catch (err) {
+      logger.error('Error getting quick links', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to get quick links' });
+    }
+  });
+
+  // Add quick link: POST /c/quick-links
+  app.post('/c/quick-links', (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const userId = res.locals.userId as string;
+      const body = req.body as Record<string, unknown>;
+      const title = typeof body.title === 'string' ? body.title.trim() : '';
+      const url = typeof body.url === 'string' ? body.url.trim() : '';
+
+      if (!title || !url) {
+        res.status(400).json({ error: 'Title and URL are required' });
+        return;
+      }
+
+      if (title.length > 100 || url.length > 2000) {
+        res.status(400).json({ error: 'Title max 100 chars, URL max 2000 chars' });
+        return;
+      }
+
+      const link = store.addQuickLink(userId, title, url);
+      res.json({ quickLink: link, quickLinks: store.getQuickLinks(userId) });
+    } catch (err) {
+      logger.error('Error adding quick link', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to add quick link' });
+    }
+  });
+
+  // Remove quick link: DELETE /c/quick-links/:id
+  app.delete('/c/quick-links/:id', (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const userId = res.locals.userId as string;
+      const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
+
+      if (isNaN(id)) {
+        res.status(400).json({ error: 'Invalid quick link ID' });
+        return;
+      }
+
+      const removed = store.removeQuickLink(id, userId);
+      if (!removed) {
+        res.status(404).json({ error: 'Quick link not found' });
+        return;
+      }
+
+      res.json({ removed: true, quickLinks: store.getQuickLinks(userId) });
+    } catch (err) {
+      logger.error('Error removing quick link', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to remove quick link' });
+    }
+  });
+
   // Conversation endpoint: GET /c/:threadTs/:channelId
   app.get('/c/:threadTs/:channelId', (req: Request, res: Response) => {
     const threadTs = req.params.threadTs;
@@ -629,8 +693,9 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const favCount = store.countFavoriteSessions();
       const allTags = store.listAllTags();
       const userId = (res.locals.userId as string) || 'user';
+      const quickLinks = store.getQuickLinks(userId, 8);
 
-      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId);
+      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId, quickLinks);
       res.type('html').send(html);
     } catch (err) {
       logger.error('Error serving dashboard', { error: err instanceof Error ? err.message : String(err) });

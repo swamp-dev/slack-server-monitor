@@ -2,7 +2,7 @@
  * Dashboard home page template
  */
 
-import type { SessionSummary, SessionStats, TagInfo } from '../../services/conversation-store.js';
+import type { SessionSummary, SessionStats, TagInfo, QuickLink } from '../../services/conversation-store.js';
 import { escapeHtml } from './utils.js';
 import { icon } from './icons.js';
 import { wrapInShell } from './shell.js';
@@ -242,6 +242,87 @@ const dashboardStyles = `
     color: var(--text-muted);
     margin: 0 0 24px 0;
   }
+  .quick-links-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .quick-link-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    text-decoration: none;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    transition: border-color 0.15s ease;
+    font-size: 0.85rem;
+  }
+  .quick-link-item:hover {
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+  .quick-link-item svg:first-child {
+    transform: rotate(225deg);
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .quick-link-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .quick-link-remove {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px;
+    display: flex;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+  }
+  .quick-link-item:hover .quick-link-remove {
+    opacity: 1;
+  }
+  .quick-link-remove:hover {
+    color: var(--red);
+  }
+  .quick-link-add {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .quick-link-add input {
+    flex: 1;
+    padding: 6px 10px;
+    font-size: 0.8125rem;
+    font-family: inherit;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    outline: none;
+  }
+  .quick-link-add input:focus {
+    border-color: var(--accent);
+  }
+  .quick-link-add button {
+    padding: 6px 12px;
+    font-size: 0.8125rem;
+    font-family: inherit;
+    color: #fff;
+    background: var(--accent);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
   @media (max-width: 768px) {
     .stats-row {
       flex-direction: column;
@@ -268,6 +349,7 @@ export function renderDashboard(
   favCount: number,
   allTags: TagInfo[],
   _userId: string,
+  quickLinks: QuickLink[] = [],
 ): string {
   const greeting = getGreeting();
 
@@ -378,6 +460,27 @@ export function renderDashboard(
       </div>`
     : '';
 
+  // Quick links (user bookmarks)
+  const quickLinkItems = quickLinks.map((ql) =>
+    `<a href="${escapeHtml(ql.url)}" class="quick-link-item" rel="noopener noreferrer" target="_blank">
+      ${icon('arrow-left', 14)}
+      <span class="quick-link-title">${escapeHtml(ql.title)}</span>
+      <button class="quick-link-remove" data-id="${String(ql.id)}" type="button" title="Remove">${icon('x', 12)}</button>
+    </a>`
+  ).join('\n');
+
+  const quickLinksHtml = `<div class="dashboard-section quick-links-section">
+      <h2>${icon('star', 16)} Quick Links</h2>
+      <div class="quick-links-list" id="quick-links-list">
+        ${quickLinkItems}
+      </div>
+      <form class="quick-link-add" id="quick-link-add">
+        <input type="text" name="title" placeholder="Title" maxlength="100" required>
+        <input type="text" name="url" placeholder="URL" maxlength="2000" required>
+        <button type="submit">${icon('plus', 14)} Add</button>
+      </form>
+    </div>`;
+
   // Quick actions
   const quickActionsHtml = `
     <div class="quick-actions">
@@ -386,8 +489,8 @@ export function renderDashboard(
       <a href="/c">${icon('message-circle', 16)} All Conversations</a>
     </div>`;
 
-  // Build the grid: left column = tools + tags, right column = recent + favorites
-  const leftCol = [toolChartHtml, tagsHtml].filter(Boolean).join('\n');
+  // Build the grid: left column = tools + tags + quick links, right column = recent + favorites
+  const leftCol = [toolChartHtml, tagsHtml, quickLinksHtml].filter(Boolean).join('\n');
   const rightCol = [recentHtml, favoritesHtml].filter(Boolean).join('\n');
 
   const bodyHtml = `
@@ -404,9 +507,49 @@ export function renderDashboard(
     </div>
   </main>`;
 
+  const quickLinksScript = `
+  <script>
+  (function() {
+    // Remove quick link
+    document.querySelectorAll('.quick-link-remove').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var id = btn.getAttribute('data-id');
+        fetch('/c/quick-links/' + id, { method: 'DELETE', credentials: 'same-origin' })
+          .then(function(res) { return res.json(); })
+          .then(function() { window.location.reload(); })
+          .catch(function() { showToast('Failed to remove link', 'error'); });
+      });
+    });
+    // Add quick link
+    var addForm = document.getElementById('quick-link-add');
+    if (addForm) {
+      addForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var titleInput = addForm.querySelector('input[name="title"]');
+        var urlInput = addForm.querySelector('input[name="url"]');
+        var title = titleInput.value.trim();
+        var url = urlInput.value.trim();
+        if (!title || !url) return;
+        fetch('/c/quick-links', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: title, url: url }),
+          credentials: 'same-origin'
+        })
+        .then(function(res) { return res.json(); })
+        .then(function() { window.location.reload(); })
+        .catch(function() { showToast('Failed to add link', 'error'); });
+      });
+    }
+  })();
+  </script>`;
+
   return wrapInShell({
     title: 'Dashboard',
     styles: dashboardStyles,
     body: bodyHtml,
+    scripts: quickLinksScript,
   });
 }

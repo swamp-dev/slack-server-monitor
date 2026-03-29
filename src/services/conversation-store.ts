@@ -115,6 +115,17 @@ export interface SessionStats {
 }
 
 /**
+ * Per-user quick link / bookmark
+ */
+export interface QuickLink {
+  id: number;
+  userId: string;
+  title: string;
+  url: string;
+  createdAt: number;
+}
+
+/**
  * SQLite-based conversation store
  */
 export class ConversationStore {
@@ -233,6 +244,20 @@ export class ConversationStore {
         insertFts.run(row.id, text);
       }
     }
+
+    // Quick links table (per-user bookmarks for dashboard)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS quick_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        url TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(user_id, url)
+      );
+      CREATE INDEX IF NOT EXISTS idx_quick_links_user
+        ON quick_links(user_id, created_at DESC);
+    `);
 
     logger.debug('Conversation store schema initialized');
   }
@@ -1120,6 +1145,49 @@ export class ConversationStore {
    */
   getDatabase(): Database.Database {
     return this.db;
+  }
+
+  // ─── Quick Links ──────────────────────────────────────────────────────
+
+  /**
+   * Add a quick link for a user. Ignores duplicates (same user + URL).
+   */
+  addQuickLink(userId: string, title: string, url: string): QuickLink {
+    const now = Date.now();
+    const result = this.db
+      .prepare('INSERT OR IGNORE INTO quick_links (user_id, title, url, created_at) VALUES (?, ?, ?, ?)')
+      .run(userId, title, url, now);
+
+    if (result.changes === 0) {
+      // Duplicate — return the existing row
+      const existing = this.db
+        .prepare('SELECT id, user_id, title, url, created_at FROM quick_links WHERE user_id = ? AND url = ?')
+        .get(userId, url) as { id: number; user_id: string; title: string; url: string; created_at: number };
+      return { id: existing.id, userId: existing.user_id, title: existing.title, url: existing.url, createdAt: existing.created_at };
+    }
+
+    return { id: result.lastInsertRowid as number, userId, title, url, createdAt: now };
+  }
+
+  /**
+   * Get quick links for a user, most recent first.
+   */
+  getQuickLinks(userId: string, limit = 20): QuickLink[] {
+    const rows = this.db
+      .prepare('SELECT id, user_id, title, url, created_at FROM quick_links WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?')
+      .all(userId, limit) as { id: number; user_id: string; title: string; url: string; created_at: number }[];
+
+    return rows.map((r) => ({ id: r.id, userId: r.user_id, title: r.title, url: r.url, createdAt: r.created_at }));
+  }
+
+  /**
+   * Remove a quick link by ID, only if owned by the given user.
+   */
+  removeQuickLink(linkId: number, userId: string): boolean {
+    const result = this.db
+      .prepare('DELETE FROM quick_links WHERE id = ? AND user_id = ?')
+      .run(linkId, userId);
+    return result.changes > 0;
   }
 
   /**
