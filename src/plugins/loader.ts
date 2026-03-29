@@ -4,7 +4,6 @@ import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { createJiti } from 'jiti';
 import type { App } from '@slack/bolt';
-import type { Router } from 'express';
 import type { Plugin, PluginToolDefinition, PluginContext, PluginClaude, PluginHelpEntry } from './types.js';
 import { isValidPlugin } from './types.js';
 import { createPluginApp, clearRegisteredCommands } from './plugin-app.js';
@@ -13,8 +12,6 @@ import { getPluginDatabase, closePluginDatabases, removePluginDatabase } from '.
 import { createPluginClaude, createDisabledPluginClaude } from '../services/plugin-claude.js';
 import { getProvider, type ProviderConfig } from '../services/providers/index.js';
 import { logger } from '../utils/logger.js';
-import { getNotificationStore } from '../services/notification-store.js';
-import { createPluginRouter, clearPluginNavEntries } from '../web/plugin-router.js';
 
 import type { Config } from '../config/schema.js';
 
@@ -67,8 +64,6 @@ interface LoadedPlugin extends Plugin {
   taggedTools?: PluginToolDefinition[];
   /** Plugin context for destroy() hook */
   _context?: PluginContext;
-  /** Express router for web routes (if registerWebRoutes was provided) */
-  _expressRouter?: Router;
 }
 
 const loadedPlugins: LoadedPlugin[] = [];
@@ -269,15 +264,6 @@ export async function registerPlugins(app: App): Promise<void> {
         name: plugin.name,
         version: plugin.version,
         claude: pluginClaude,
-        notify: (title: string, level: 'info' | 'warn' | 'error' = 'info', body?: string, link?: string) => {
-          try {
-            const cfg = configModule?.config;
-            const notifStore = getNotificationStore(cfg?.claude?.dbPath ?? './data/claude.db');
-            notifStore.createNotification(`plugin:${plugin.name}`, level, title, body, link);
-          } catch (err) {
-            logger.error('Plugin notify failed', { plugin: plugin.name, error: err instanceof Error ? err.message : String(err) });
-          }
-        },
       };
 
       // Run init hook with timeout
@@ -299,14 +285,6 @@ export async function registerPlugins(app: App): Promise<void> {
         await plugin.registerCommands(pluginApp);
       }
 
-      // Register web routes if provided
-      let pluginExpressRouter: Router | undefined;
-      if (plugin.registerWebRoutes) {
-        const { router: pluginRouter } = createPluginRouter(plugin.name, plugin.webNavEntry);
-        await plugin.registerWebRoutes(pluginRouter);
-        pluginExpressRouter = pluginRouter.expressRouter;
-      }
-
       // Tag tools with plugin name for namespacing
       const taggedTools: PluginToolDefinition[] = (plugin.tools ?? []).map((tool) => ({
         ...tool,
@@ -318,7 +296,6 @@ export async function registerPlugins(app: App): Promise<void> {
         ...plugin,
         taggedTools,
         _context: ctx,
-        _expressRouter: pluginExpressRouter,
       });
 
       logger.info('Plugin loaded successfully', {
@@ -326,7 +303,6 @@ export async function registerPlugins(app: App): Promise<void> {
         version: plugin.version,
         // eslint-disable-next-line @typescript-eslint/no-deprecated
         hasCommands: !!plugin.registerCommands,
-        hasWebRoutes: !!plugin.registerWebRoutes,
         toolCount: taggedTools.length,
       });
     } catch (error) {
@@ -351,16 +327,6 @@ export async function registerPlugins(app: App): Promise<void> {
  */
 export function getPluginTools(): PluginToolDefinition[] {
   return loadedPlugins.flatMap((plugin) => plugin.taggedTools ?? []);
-}
-
-/**
- * Get all plugin Express routers for mounting in the web server.
- * Returns pairs of [pluginName, router].
- */
-export function getPluginRouters(): { name: string; router: Router }[] {
-  return loadedPlugins
-    .filter((p) => p._expressRouter != null)
-    .map((p) => ({ name: p.name, router: p._expressRouter! })); // eslint-disable-line @typescript-eslint/no-non-null-assertion
 }
 
 /**
@@ -392,7 +358,6 @@ export async function destroyPlugins(): Promise<void> {
   // Clear the registries
   loadedPlugins.length = 0;
   clearRegisteredCommands();
-  clearPluginNavEntries();
 
   // Close all plugin database connections
   closePluginDatabases();

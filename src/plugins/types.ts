@@ -2,7 +2,6 @@ import type { App } from '@slack/bolt';
 import type { ToolDefinition } from '../services/tools/types.js';
 import type { PluginApp } from './plugin-app.js';
 import type { PluginDatabase } from '../services/plugin-database.js';
-import type { PluginRouter } from '../web/plugin-router.js';
 
 /**
  * Image input for multimodal Claude requests from plugins
@@ -87,8 +86,6 @@ export interface PluginContext {
   version: string;
   /** Claude API (undefined if Claude is not enabled) */
   claude?: PluginClaude;
-  /** Send a notification (appears in web UI notification center) */
-  notify?: (title: string, level?: 'info' | 'warn' | 'error', body?: string, link?: string) => void;
 }
 
 /**
@@ -177,19 +174,6 @@ export interface Plugin {
    * TIMEOUT: Must complete within 5 seconds.
    */
   destroy?: (ctx: PluginContext) => Promise<void>;
-
-  /**
-   * Register web routes for the plugin's web pages.
-   * Routes are mounted under /p/{pluginName}/.
-   * Auth middleware is applied automatically.
-   */
-  registerWebRoutes?: (router: PluginRouter) => void | Promise<void>;
-
-  /**
-   * Navigation entry for the web UI shell nav bar.
-   * Only shown if registerWebRoutes is also provided.
-   */
-  webNavEntry?: { label: string; icon?: string };
 }
 
 /**

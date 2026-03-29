@@ -67,7 +67,7 @@ vi.mock('../../src/services/conversation-store.js', () => ({
   })),
 }));
 
-import { renderConversation, renderMarkdownExport, render404, render401 } from '../../src/web/templates/index.js';
+import { renderConversation, renderMarkdownExport, render404, render401 } from '../../src/web/templates.js';
 
 // Create a test server that mirrors the real server's behavior
 function createTestServer(authToken: string) {

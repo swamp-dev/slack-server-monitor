@@ -19,11 +19,9 @@ import { getConversationStore, type SessionSummary } from '../services/conversat
 import { getSessionStore, closeSessionStore } from '../services/session-store.js';
 import { resolveToken, parseCookies, createLinkToken } from './auth.js';
 import { logger } from '../utils/logger.js';
-import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError } from './templates/index.js';
+import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError } from './templates.js';
 import { processConversationTurn } from '../services/conversation-processor.js';
 import { checkAndRecordClaudeRequest } from '../commands/ask.js';
-import { getNotificationStore } from '../services/notification-store.js';
-import { getPluginRouters } from '../plugins/loader.js';
 
 const SESSION_COOKIE = 'ssm_session';
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -191,13 +189,6 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
 
   // Apply session auth middleware to conversation routes
   app.use('/c', sessionAuthMiddleware(webConfig, dbPath));
-
-  // Mount plugin web routes under /p/:pluginName with auth
-  app.use('/p', sessionAuthMiddleware(webConfig, dbPath));
-  for (const { name, router } of getPluginRouters()) {
-    app.use(`/p/${name}`, router);
-    logger.debug('Mounted plugin web routes', { plugin: name, prefix: `/p/${name}` });
-  }
 
   /**
    * Helper to parse pagination params from query string
@@ -443,119 +434,6 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
   });
 
-  // Quick links: GET /c/quick-links
-  app.get('/c/quick-links', (_req: Request, res: Response) => {
-    try {
-      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
-      const userId = res.locals.userId as string;
-      res.json({ quickLinks: store.getQuickLinks(userId) });
-    } catch (err) {
-      logger.error('Error getting quick links', { error: err instanceof Error ? err.message : String(err) });
-      res.status(500).json({ error: 'Failed to get quick links' });
-    }
-  });
-
-  // Add quick link: POST /c/quick-links
-  app.post('/c/quick-links', (req: Request, res: Response) => {
-    try {
-      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
-      const userId = res.locals.userId as string;
-      const body = req.body as Record<string, unknown>;
-      const title = typeof body.title === 'string' ? body.title.trim() : '';
-      const url = typeof body.url === 'string' ? body.url.trim() : '';
-
-      if (!title || !url) {
-        res.status(400).json({ error: 'Title and URL are required' });
-        return;
-      }
-
-      if (title.length > 100 || url.length > 2000) {
-        res.status(400).json({ error: 'Title max 100 chars, URL max 2000 chars' });
-        return;
-      }
-
-      // Prevent stored XSS via javascript: or data: URLs
-      const parsed = URL.canParse(url) ? new URL(url) : null;
-      if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) {
-        res.status(400).json({ error: 'URL must use http or https' });
-        return;
-      }
-
-      const link = store.addQuickLink(userId, title, url);
-      res.json({ quickLink: link, quickLinks: store.getQuickLinks(userId) });
-    } catch (err) {
-      logger.error('Error adding quick link', { error: err instanceof Error ? err.message : String(err) });
-      res.status(500).json({ error: 'Failed to add quick link' });
-    }
-  });
-
-  // Remove quick link: DELETE /c/quick-links/:id
-  app.delete('/c/quick-links/:id', (req: Request, res: Response) => {
-    try {
-      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
-      const userId = res.locals.userId as string;
-      const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
-
-      if (isNaN(id)) {
-        res.status(400).json({ error: 'Invalid quick link ID' });
-        return;
-      }
-
-      const removed = store.removeQuickLink(id, userId);
-      if (!removed) {
-        res.status(404).json({ error: 'Quick link not found' });
-        return;
-      }
-
-      res.json({ removed: true, quickLinks: store.getQuickLinks(userId) });
-    } catch (err) {
-      logger.error('Error removing quick link', { error: err instanceof Error ? err.message : String(err) });
-      res.status(500).json({ error: 'Failed to remove quick link' });
-    }
-  });
-
-  // Notifications: GET /api/notifications
-  app.get('/api/notifications', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
-    try {
-      const notifStore = getNotificationStore(claudeConfig.dbPath);
-      const notifications = notifStore.getRecent(50);
-      const unreadCount = notifStore.countUnread();
-      res.json({ notifications, unreadCount });
-    } catch (err) {
-      logger.error('Error getting notifications', { error: err instanceof Error ? err.message : String(err) });
-      res.status(500).json({ error: 'Failed to get notifications' });
-    }
-  });
-
-  // Mark notification read: POST /api/notifications/:id/read
-  app.post('/api/notifications/:id/read', sessionAuthMiddleware(webConfig, dbPath), (req: Request, res: Response) => {
-    try {
-      const notifStore = getNotificationStore(claudeConfig.dbPath);
-      const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
-      if (isNaN(id)) {
-        res.status(400).json({ error: 'Invalid notification ID' });
-        return;
-      }
-      const marked = notifStore.markRead(id);
-      res.json({ marked, unreadCount: notifStore.countUnread() });
-    } catch (err) {
-      logger.error('Error marking notification read', { error: err instanceof Error ? err.message : String(err) });
-      res.status(500).json({ error: 'Failed to mark notification read' });
-    }
-  });
-
-  // Mark all notifications read: POST /api/notifications/read-all
-  app.post('/api/notifications/read-all', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
-    try {
-      const notifStore = getNotificationStore(claudeConfig.dbPath);
-      const count = notifStore.markAllRead();
-      res.json({ count, unreadCount: 0 });
-    } catch (err) {
-      logger.error('Error marking all notifications read', { error: err instanceof Error ? err.message : String(err) });
-      res.status(500).json({ error: 'Failed to mark all read' });
-    }
-  });
-
   // Conversation endpoint: GET /c/:threadTs/:channelId
   app.get('/c/:threadTs/:channelId', (req: Request, res: Response) => {
     const threadTs = req.params.threadTs;
@@ -751,9 +629,8 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const favCount = store.countFavoriteSessions();
       const allTags = store.listAllTags();
       const userId = (res.locals.userId as string) || 'user';
-      const quickLinks = store.getQuickLinks(userId, 8);
 
-      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId, quickLinks);
+      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId);
       res.type('html').send(html);
     } catch (err) {
       logger.error('Error serving dashboard', { error: err instanceof Error ? err.message : String(err) });
