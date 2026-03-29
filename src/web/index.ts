@@ -10,5 +10,5 @@ export {
   render401,
   renderLogin,
   renderError,
-} from './templates.js';
+} from './templates/index.js';
 export { resolveToken, parseCookies, createLinkToken, type TokenIdentity } from './auth.js';
