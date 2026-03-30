@@ -543,6 +543,141 @@ describe('shell security', () => {
     });
   });
 
+  describe('gh subcommand validation', () => {
+    it('should allow gh in the allowlist', () => {
+      expect(isCommandAllowed('gh')).toBe(true);
+    });
+
+    it('should allow read-only gh issue commands', async () => {
+      await expect(executeCommand('gh', ['issue', 'list', '--repo', 'owner/repo'])).resolves.toBeDefined();
+      await expect(executeCommand('gh', ['issue', 'view', '42', '--repo', 'owner/repo'])).resolves.toBeDefined();
+    });
+
+    it('should allow gh issue create', async () => {
+      await expect(executeCommand('gh', ['issue', 'create', '--repo', 'owner/repo', '--title', 'test', '--body', 'test body'])).resolves.toBeDefined();
+    });
+
+    it('should allow read-only gh pr commands', async () => {
+      await expect(executeCommand('gh', ['pr', 'list', '--repo', 'owner/repo'])).resolves.toBeDefined();
+      await expect(executeCommand('gh', ['pr', 'view', '42', '--repo', 'owner/repo'])).resolves.toBeDefined();
+    });
+
+    it('should allow read-only gh repo commands', async () => {
+      await expect(executeCommand('gh', ['repo', 'view', 'owner/repo'])).resolves.toBeDefined();
+    });
+
+    it('should reject dangerous gh issue actions', async () => {
+      await expect(executeCommand('gh', ['issue', 'close', '42'])).rejects.toThrow(
+        'gh issue action not allowed: close'
+      );
+      await expect(executeCommand('gh', ['issue', 'delete', '42'])).rejects.toThrow(
+        'gh issue action not allowed: delete'
+      );
+      await expect(executeCommand('gh', ['issue', 'edit', '42'])).rejects.toThrow(
+        'gh issue action not allowed: edit'
+      );
+    });
+
+    it('should reject dangerous gh pr actions', async () => {
+      await expect(executeCommand('gh', ['pr', 'merge', '42'])).rejects.toThrow(
+        'gh pr action not allowed: merge'
+      );
+      await expect(executeCommand('gh', ['pr', 'close', '42'])).rejects.toThrow(
+        'gh pr action not allowed: close'
+      );
+      await expect(executeCommand('gh', ['pr', 'create'])).rejects.toThrow(
+        'gh pr action not allowed: create'
+      );
+    });
+
+    it('should reject dangerous gh repo actions', async () => {
+      await expect(executeCommand('gh', ['repo', 'create', 'new-repo'])).rejects.toThrow(
+        'gh repo action not allowed: create'
+      );
+      await expect(executeCommand('gh', ['repo', 'delete', 'owner/repo'])).rejects.toThrow(
+        'gh repo action not allowed: delete'
+      );
+    });
+
+    it('should reject disallowed gh subcommands', async () => {
+      await expect(executeCommand('gh', ['auth', 'login'])).rejects.toThrow(
+        'gh subcommand not allowed: auth'
+      );
+      await expect(executeCommand('gh', ['ssh-key', 'add'])).rejects.toThrow(
+        'gh subcommand not allowed: ssh-key'
+      );
+    });
+
+    it('should reject gh without subcommand', async () => {
+      await expect(executeCommand('gh', [])).rejects.toThrow(
+        'gh command requires a subcommand'
+      );
+    });
+
+    it('should reject gh subcommand without action', async () => {
+      await expect(executeCommand('gh', ['issue'])).rejects.toThrow(
+        'gh issue requires an action'
+      );
+    });
+  });
+
+  describe('docker compose subcommand validation', () => {
+    it('should allow read-only docker compose subcommands', async () => {
+      await expect(executeCommand('docker', ['compose', 'ps'])).resolves.toBeDefined();
+      await expect(executeCommand('docker', ['compose', 'config'])).resolves.toBeDefined();
+      await expect(executeCommand('docker', ['compose', 'ls'])).resolves.toBeDefined();
+      await expect(executeCommand('docker', ['compose', 'images'])).resolves.toBeDefined();
+      await expect(executeCommand('docker', ['compose', 'logs'])).resolves.toBeDefined();
+      await expect(executeCommand('docker', ['compose', 'top'])).resolves.toBeDefined();
+    });
+
+    it('should reject dangerous docker compose subcommands', async () => {
+      await expect(executeCommand('docker', ['compose', 'up'])).rejects.toThrow(
+        'Docker compose subcommand not allowed: up'
+      );
+      await expect(executeCommand('docker', ['compose', 'down'])).rejects.toThrow(
+        'Docker compose subcommand not allowed: down'
+      );
+      await expect(executeCommand('docker', ['compose', 'start'])).rejects.toThrow(
+        'Docker compose subcommand not allowed: start'
+      );
+      await expect(executeCommand('docker', ['compose', 'stop'])).rejects.toThrow(
+        'Docker compose subcommand not allowed: stop'
+      );
+      await expect(executeCommand('docker', ['compose', 'restart'])).rejects.toThrow(
+        'Docker compose subcommand not allowed: restart'
+      );
+      await expect(executeCommand('docker', ['compose', 'rm'])).rejects.toThrow(
+        'Docker compose subcommand not allowed: rm'
+      );
+      await expect(executeCommand('docker', ['compose', 'exec'])).rejects.toThrow(
+        'Docker compose subcommand not allowed: exec'
+      );
+      await expect(executeCommand('docker', ['compose', 'run'])).rejects.toThrow(
+        'Docker compose subcommand not allowed: run'
+      );
+      await expect(executeCommand('docker', ['compose', 'build'])).rejects.toThrow(
+        'Docker compose subcommand not allowed: build'
+      );
+      await expect(executeCommand('docker', ['compose', 'pull'])).rejects.toThrow(
+        'Docker compose subcommand not allowed: pull'
+      );
+      await expect(executeCommand('docker', ['compose', 'push'])).rejects.toThrow(
+        'Docker compose subcommand not allowed: push'
+      );
+    });
+
+    it('should reject docker compose without subcommand', async () => {
+      await expect(executeCommand('docker', ['compose'])).rejects.toThrow(
+        'Docker compose requires a subcommand'
+      );
+    });
+
+    it('should allow docker stats', async () => {
+      await expect(executeCommand('docker', ['stats', '--no-stream'])).resolves.toBeDefined();
+    });
+  });
+
   describe('ShellSecurityError', () => {
     it('should have correct name and message', () => {
       const error = new ShellSecurityError('Test message');

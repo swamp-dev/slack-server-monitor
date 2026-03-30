@@ -88,7 +88,7 @@ export function isSafeExtension(filePath: string): boolean {
 export const readFileTool: ToolDefinition = {
   spec: {
     name: 'read_file',
-    description: 'Read a text file from allowed directories (ansible configs, docker-compose files, etc.). Only text files are supported. Sensitive data like passwords and tokens are automatically redacted.',
+    description: 'Read a text file from allowed directories (ansible configs, docker-compose files, etc.). Only text files are supported. Sensitive data like passwords and tokens are automatically redacted. Supports line ranges and pattern searching for investigating large files.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -100,6 +100,18 @@ export const readFileTool: ToolDefinition = {
           type: 'number',
           description: 'Maximum number of lines to read (default: 200, max: 500)',
         },
+        start_line: {
+          type: 'number',
+          description: 'Start reading from this line number (1-indexed). Useful for reading specific sections of large files.',
+        },
+        end_line: {
+          type: 'number',
+          description: 'Stop reading at this line number (inclusive). Used with start_line for reading specific ranges.',
+        },
+        search_pattern: {
+          type: 'string',
+          description: 'Only return lines containing this text pattern (case-insensitive). Lines are returned with their original line numbers.',
+        },
       },
       required: ['path'],
     },
@@ -108,6 +120,9 @@ export const readFileTool: ToolDefinition = {
     try {
       const filePath = input.path as string;
       let maxLines = input.max_lines as number | undefined;
+      const startLine = input.start_line as number | undefined;
+      const endLine = input.end_line as number | undefined;
+      const searchPattern = input.search_pattern as string | undefined;
 
       if (!filePath) {
         return 'Error: path is required';
@@ -155,18 +170,62 @@ export const readFileTool: ToolDefinition = {
       }
 
       const content = buffer.toString('utf-8');
+      const allLines = content.split('\n');
 
-      // Limit lines
+      // Handle search_pattern mode: return matching lines with line numbers
+      if (searchPattern) {
+        const pattern = searchPattern.toLowerCase();
+        const matchingLines: string[] = [];
+        for (let i = 0; i < allLines.length; i++) {
+          const line = allLines[i] ?? '';
+          if (line.toLowerCase().includes(pattern)) {
+            matchingLines.push(`${String(i + 1)}: ${line}`);
+          }
+        }
+
+        if (matchingLines.length === 0) {
+          return `No matches found for "${searchPattern}" in ${filePath} (${String(allLines.length)} lines).`;
+        }
+
+        maxLines = Math.min(maxLines ?? 200, 500);
+        const truncated = matchingLines.length > maxLines;
+        const output = matchingLines.slice(0, maxLines).join('\n');
+        const scrubbed = scrubSensitiveData(output);
+        const header = `Found ${String(matchingLines.length)} matches for "${searchPattern}" in ${filePath}:`;
+        const footer = truncated
+          ? `\n\n... [showing ${String(maxLines)} of ${String(matchingLines.length)} matches]`
+          : '';
+        return `${header}\n\n${scrubbed}${footer}`;
+      }
+
+      // Handle line range mode
+      if (startLine !== undefined || endLine !== undefined) {
+        const start = Math.max((startLine ?? 1) - 1, 0); // Convert to 0-indexed
+        const end = endLine !== undefined ? Math.min(endLine, allLines.length) : allLines.length;
+        const rangeLines = allLines.slice(start, end);
+
+        maxLines = Math.min(maxLines ?? 500, 500);
+        const truncated = rangeLines.length > maxLines;
+        const output = rangeLines.slice(0, maxLines).map((line, i) => `${String(start + i + 1)}: ${line}`).join('\n');
+        const scrubbed = scrubSensitiveData(output);
+
+        const header = `Lines ${String(start + 1)}-${String(Math.min(end, start + maxLines))} of ${String(allLines.length)} in ${filePath}:`;
+        const footer = truncated
+          ? `\n\n... [showing ${String(maxLines)} of ${String(rangeLines.length)} lines in range]`
+          : '';
+        return `${header}\n\n${scrubbed}${footer}`;
+      }
+
+      // Default mode: read from beginning with max_lines cap
       maxLines = Math.min(maxLines ?? 200, 500);
-      const lines = content.split('\n');
-      const truncated = lines.length > maxLines;
-      const limitedContent = lines.slice(0, maxLines).join('\n');
+      const truncated = allLines.length > maxLines;
+      const limitedContent = allLines.slice(0, maxLines).join('\n');
 
       // Scrub sensitive data
       const scrubbed = scrubSensitiveData(limitedContent);
 
       if (truncated) {
-        return `${scrubbed}\n\n... [truncated, showing ${String(maxLines)} of ${String(lines.length)} lines]`;
+        return `${scrubbed}\n\n... [truncated, showing ${String(maxLines)} of ${String(allLines.length)} lines]`;
       }
 
       return scrubbed;

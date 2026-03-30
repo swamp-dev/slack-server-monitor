@@ -255,6 +255,8 @@ export async function registerPlugins(app: App): Promise<void> {
             allowedDirs: config.claude.allowedDirs,
             maxFileSizeKb: config.claude.maxFileSizeKb,
             maxLogLines: config.claude.maxLogLines,
+            githubRepo: config.claude.githubRepo,
+            githubDefaultLabels: config.claude.githubDefaultLabels,
           },
         });
       } else {

@@ -33,6 +33,8 @@ export interface DefaultToolConfig {
   maxLogLines: number;
   contextDir?: string;
   contextDirContent?: string;
+  githubRepo?: string;
+  githubDefaultLabels?: string[];
 }
 
 /**
@@ -97,6 +99,8 @@ export async function loadUserConfig(
       allowedDirs,
       maxFileSizeKb: defaults.maxFileSizeKb,
       maxLogLines: userFileConfig?.maxLogLines ?? defaults.maxLogLines,
+      githubRepo: defaults.githubRepo,
+      githubDefaultLabels: defaults.githubDefaultLabels,
     },
   };
 }

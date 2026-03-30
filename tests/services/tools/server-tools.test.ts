@@ -34,9 +34,11 @@ vi.mock('../../../src/utils/shell.js', () => ({
 const {
   containerStatusTool,
   containerLogsTool,
+  searchContainerLogsTool,
   systemResourcesTool,
   diskUsageTool,
   networkInfoTool,
+  dockerImagesTool,
   runCommandTool,
   serverTools,
 } = await import('../../../src/services/tools/server-tools.js');
@@ -48,12 +50,14 @@ const { executeCommand } = await import('../../../src/utils/shell.js');
 
 describe('serverTools', () => {
   it('should export all tools', () => {
-    expect(serverTools).toHaveLength(6);
+    expect(serverTools).toHaveLength(8);
     expect(serverTools).toContain(containerStatusTool);
     expect(serverTools).toContain(containerLogsTool);
+    expect(serverTools).toContain(searchContainerLogsTool);
     expect(serverTools).toContain(systemResourcesTool);
     expect(serverTools).toContain(diskUsageTool);
     expect(serverTools).toContain(networkInfoTool);
+    expect(serverTools).toContain(dockerImagesTool);
     expect(serverTools).toContain(runCommandTool);
   });
 });
@@ -446,5 +450,118 @@ describe('runCommandTool', () => {
       expect(result).toContain('Error');
       expect(result).toContain('sensitive path');
     });
+  });
+});
+
+describe('searchContainerLogsTool', () => {
+  beforeEach(() => {
+    vi.mocked(executeCommand).mockReset();
+    vi.mocked(scrubSensitiveData).mockImplementation((data: string) => data);
+  });
+
+    it('should have correct spec', () => {
+      expect(searchContainerLogsTool.spec.name).toBe('search_container_logs');
+      expect(searchContainerLogsTool.spec.input_schema.required).toContain('container_name');
+      expect(searchContainerLogsTool.spec.input_schema.required).toContain('search_pattern');
+    });
+
+    it('should search logs and return matching lines', async () => {
+      (executeCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
+        stdout: 'line 1: normal\nline 2: ERROR something failed\nline 3: normal\nline 4: ERROR another issue',
+        stderr: '',
+        exitCode: 0,
+      });
+
+      const result = await searchContainerLogsTool.execute(
+        { container_name: 'nginx', search_pattern: 'ERROR' },
+        defaultConfig
+      );
+
+      expect(result).toContain('Found 2 matches');
+      expect(result).toContain('ERROR something failed');
+      expect(result).toContain('ERROR another issue');
+    });
+
+    it('should handle case-insensitive search', async () => {
+      (executeCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
+        stdout: 'Error: something\nerror: another\nERROR: third',
+        stderr: '',
+        exitCode: 0,
+      });
+
+      const result = await searchContainerLogsTool.execute(
+        { container_name: 'nginx', search_pattern: 'error', case_insensitive: true },
+        defaultConfig
+      );
+
+      expect(result).toContain('Found 3 matches');
+    });
+
+    it('should return no matches message when pattern not found', async () => {
+      (executeCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
+        stdout: 'normal line 1\nnormal line 2',
+        stderr: '',
+        exitCode: 0,
+      });
+
+      const result = await searchContainerLogsTool.execute(
+        { container_name: 'nginx', search_pattern: 'FATAL' },
+        defaultConfig
+      );
+
+      expect(result).toContain('No matches found');
+    });
+
+    it('should require container_name', async () => {
+      const result = await searchContainerLogsTool.execute(
+        { search_pattern: 'error' },
+        defaultConfig
+      );
+      expect(result).toContain('Error: container_name is required');
+    });
+
+    it('should require search_pattern', async () => {
+      const result = await searchContainerLogsTool.execute(
+        { container_name: 'nginx' },
+        defaultConfig
+      );
+      expect(result).toContain('Error: search_pattern is required');
+    });
+});
+
+describe('dockerImagesTool', () => {
+  beforeEach(() => {
+    vi.mocked(executeCommand).mockReset();
+  });
+
+  it('should have correct spec', () => {
+    expect(dockerImagesTool.spec.name).toBe('get_docker_images');
+  });
+
+  it('should list docker images', async () => {
+    (executeCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
+      stdout: 'nginx\tlatest\t150MB\t2024-01-01 00:00:00\tabc123\nredis\t7-alpine\t30MB\t2024-01-02 00:00:00\tdef456',
+      stderr: '',
+      exitCode: 0,
+    });
+
+    const result = await dockerImagesTool.execute({}, defaultConfig);
+    const parsed = JSON.parse(result);
+
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0].repository).toBe('nginx');
+    expect(parsed[0].tag).toBe('latest');
+    expect(parsed[1].repository).toBe('redis');
+  });
+
+  it('should handle no images', async () => {
+    (executeCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+    });
+
+    const result = await dockerImagesTool.execute({}, defaultConfig);
+    expect(result).toContain('No Docker images found');
   });
 });

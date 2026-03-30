@@ -19,11 +19,16 @@ const TOOL_NAME_REGEX = /^[a-z][a-z0-9_]{2,49}$/;
 export const BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   'get_container_status',
   'get_container_logs',
+  'search_container_logs',
   'get_system_resources',
   'get_disk_usage',
   'get_network_info',
+  'get_docker_images',
   'run_command',
   'read_file',
+  'create_github_issue',
+  'list_github_issues',
+  'view_github_issue',
 ]);
 
 /**

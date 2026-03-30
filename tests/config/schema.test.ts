@@ -275,7 +275,7 @@ describe('ConfigSchema', () => {
       const result = ConfigSchema.safeParse(config);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.claude?.cliTimeoutMs).toBe(300000);
+        expect(result.data.claude?.cliTimeoutMs).toBe(1_200_000);
       }
     });
 

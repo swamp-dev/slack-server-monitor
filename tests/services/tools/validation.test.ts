@@ -101,7 +101,15 @@ describe('tool validation', () => {
     });
 
     it('should have correct set of built-in tools', () => {
-      expect(BUILTIN_TOOL_NAMES.size).toBe(7);
+      expect(BUILTIN_TOOL_NAMES.size).toBe(12);
+    });
+
+    it('should include new debugging and github tools', () => {
+      expect(isBuiltInToolName('search_container_logs')).toBe(true);
+      expect(isBuiltInToolName('get_docker_images')).toBe(true);
+      expect(isBuiltInToolName('create_github_issue')).toBe(true);
+      expect(isBuiltInToolName('list_github_issues')).toBe(true);
+      expect(isBuiltInToolName('view_github_issue')).toBe(true);
     });
   });
 

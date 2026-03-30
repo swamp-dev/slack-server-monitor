@@ -129,7 +129,7 @@ function loadConfig(): Config {
           maxLogLines: parseIntWithDefault(process.env.CLAUDE_MAX_LOG_LINES, 50),
           contextDir: process.env.CLAUDE_CONTEXT_DIR ?? undefined,
           contextOptions: parseContextOptions(process.env.CLAUDE_CONTEXT_OPTIONS),
-          cliTimeoutMs: parseIntWithDefault(process.env.CLAUDE_CLI_TIMEOUT_MS, 300000),
+          cliTimeoutMs: parseIntWithDefault(process.env.CLAUDE_CLI_TIMEOUT_MS, 1_200_000),
           contextWindowTokens: parseIntWithDefault(process.env.CLAUDE_CONTEXT_WINDOW_TOKENS, 200000),
           contextTruncationThreshold: parseFloat(process.env.CLAUDE_CONTEXT_TRUNCATION_THRESHOLD ?? '0.8'),
           contextWarningThreshold: parseFloat(process.env.CLAUDE_CONTEXT_WARNING_THRESHOLD ?? '0.7'),
@@ -137,6 +137,8 @@ function loadConfig(): Config {
           dbBackupIntervalHours: parseIntWithDefault(process.env.CLAUDE_DB_BACKUP_INTERVAL_HOURS, 6),
           dbBackupDir: process.env.CLAUDE_DB_BACKUP_DIR ?? undefined,
           dbBackupRetain: parseIntWithDefault(process.env.CLAUDE_DB_BACKUP_RETAIN, 3),
+          githubRepo: process.env.GITHUB_REPO ?? undefined,
+          githubDefaultLabels: parseCommaSeparated(process.env.GITHUB_DEFAULT_LABELS),
         }
       : undefined,
     // Enable web server if WEB_ENABLED is set to true

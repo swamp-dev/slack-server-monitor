@@ -129,6 +129,8 @@ export async function processConversationTurn(
     maxLogLines: claudeConfig.maxLogLines,
     contextDir: claudeConfig.contextDir,
     contextDirContent: activeContext?.combined,
+    githubRepo: claudeConfig.githubRepo,
+    githubDefaultLabels: claudeConfig.githubDefaultLabels,
   });
 
   // Get Claude service and ask

@@ -22,9 +22,11 @@ describe('tools/index', () => {
 
       expect(names).toContain('get_container_status');
       expect(names).toContain('get_container_logs');
+      expect(names).toContain('search_container_logs');
       expect(names).toContain('get_system_resources');
       expect(names).toContain('get_disk_usage');
       expect(names).toContain('get_network_info');
+      expect(names).toContain('get_docker_images');
     });
 
     it('should include file tools', () => {
@@ -32,6 +34,15 @@ describe('tools/index', () => {
       const names = specs.map(s => s.name);
 
       expect(names).toContain('read_file');
+    });
+
+    it('should include github tools', () => {
+      const specs = getToolSpecs();
+      const names = specs.map(s => s.name);
+
+      expect(names).toContain('create_github_issue');
+      expect(names).toContain('list_github_issues');
+      expect(names).toContain('view_github_issue');
     });
 
     it('should exclude disabled tools', () => {
@@ -50,10 +61,15 @@ describe('tools/index', () => {
 
       expect(names).toContain('get_container_status');
       expect(names).toContain('get_container_logs');
+      expect(names).toContain('search_container_logs');
       expect(names).toContain('get_system_resources');
       expect(names).toContain('get_disk_usage');
       expect(names).toContain('get_network_info');
+      expect(names).toContain('get_docker_images');
       expect(names).toContain('read_file');
+      expect(names).toContain('create_github_issue');
+      expect(names).toContain('list_github_issues');
+      expect(names).toContain('view_github_issue');
     });
   });
 });

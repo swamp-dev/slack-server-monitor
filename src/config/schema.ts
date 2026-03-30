@@ -187,8 +187,8 @@ export const ConfigSchema = z.object({
     contextDir: z.string().optional(),
     /** Available context directories that can be switched per-channel */
     contextOptions: z.array(ContextOptionSchema).default([]),
-    /** CLI process timeout in milliseconds (default: 300000 = 5 minutes) */
-    cliTimeoutMs: z.number().int().min(1000).max(3_600_000).default(300000),
+    /** CLI process timeout in milliseconds (default: 1200000 = 20 minutes) */
+    cliTimeoutMs: z.number().int().min(1000).max(3_600_000).default(1_200_000),
     /** Context window size in tokens (default: 200000 for Claude Sonnet) */
     contextWindowTokens: z.number().int().positive().default(200000),
     /** Percentage of context window at which to truncate (default: 0.8) */
@@ -203,6 +203,10 @@ export const ConfigSchema = z.object({
     dbBackupDir: z.string().optional(),
     /** Number of backup files to retain */
     dbBackupRetain: z.number().int().positive().default(3),
+    /** Default GitHub repository for issue creation (owner/repo format) */
+    githubRepo: z.string().regex(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/, 'GitHub repo must be in owner/repo format').optional(),
+    /** GitHub labels to always apply to created issues */
+    githubDefaultLabels: z.array(z.string()).default([]),
   }).optional(),
 
   /** Web server for hosting long Claude responses */

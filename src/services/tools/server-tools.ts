@@ -224,6 +224,147 @@ export const networkInfoTool: ToolDefinition = {
 };
 
 /**
+ * Tool: search_container_logs
+ * Search container logs for a pattern
+ */
+export const searchContainerLogsTool: ToolDefinition = {
+  spec: {
+    name: 'search_container_logs',
+    description: 'Search Docker container logs for a specific pattern. Returns only matching lines with line numbers. Useful for finding errors, specific events, or patterns in large log outputs.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        container_name: {
+          type: 'string',
+          description: 'Name of the container to search logs from',
+        },
+        search_pattern: {
+          type: 'string',
+          description: 'Text pattern to search for in log lines',
+        },
+        lines: {
+          type: 'number',
+          description: 'Number of recent log lines to search through (default: 500, max: 2000)',
+        },
+        since: {
+          type: 'string',
+          description: 'Only search logs since this duration (e.g., "1h", "30m", "2h30m")',
+        },
+        case_insensitive: {
+          type: 'boolean',
+          description: 'Case-insensitive search (default: true)',
+        },
+      },
+      required: ['container_name', 'search_pattern'],
+    },
+  },
+  async execute(input: Record<string, unknown>, config: ToolConfig): Promise<string> {
+    try {
+      const containerName = input.container_name as string;
+      const searchPattern = input.search_pattern as string;
+      const lines = Math.min(typeof input.lines === 'number' ? input.lines : 500, 2000);
+      const since = input.since as string | undefined;
+      const caseInsensitive = typeof input.case_insensitive === 'boolean' ? input.case_insensitive : true;
+
+      if (!containerName) return 'Error: container_name is required';
+      if (!searchPattern) return 'Error: search_pattern is required';
+
+      // Build docker logs args
+      const args: string[] = ['logs', '--tail', String(lines)];
+      if (since) {
+        args.push('--since', since);
+      }
+      args.push(containerName);
+
+      const result = await executeCommand('docker', args, { timeout: 30000 });
+
+      // Docker logs outputs to both stdout and stderr (stderr for older logs)
+      const allOutput = (result.stdout + '\n' + result.stderr).trim();
+
+      if (!allOutput) {
+        return 'No logs found for the specified criteria.';
+      }
+
+      // Filter lines in-process (no shell pipes needed)
+      const logLines = allOutput.split('\n');
+      const matchingLines: string[] = [];
+      const pattern = caseInsensitive ? searchPattern.toLowerCase() : searchPattern;
+
+      for (let i = 0; i < logLines.length; i++) {
+        const line = logLines[i];
+        if (!line) continue;
+        const compareLine = caseInsensitive ? line.toLowerCase() : line;
+        if (compareLine.includes(pattern)) {
+          matchingLines.push(`[${String(i + 1)}] ${line}`);
+        }
+      }
+
+      if (matchingLines.length === 0) {
+        return `No matches found for "${searchPattern}" in the last ${String(lines)} log lines of ${containerName}.`;
+      }
+
+      // Cap output to prevent overwhelming responses
+      const maxResults = Math.min(matchingLines.length, config.maxLogLines * 2);
+      const truncated = matchingLines.length > maxResults;
+      const output = matchingLines.slice(0, maxResults).join('\n');
+
+      const header = `Found ${String(matchingLines.length)} matches for "${searchPattern}" in ${containerName}:`;
+      const footer = truncated
+        ? `\n\n... [showing ${String(maxResults)} of ${String(matchingLines.length)} matches]`
+        : '';
+
+      return scrubSensitiveData(`${header}\n\n${output}${footer}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return `Error searching logs: ${message}`;
+    }
+  },
+};
+
+/**
+ * Tool: get_docker_images
+ * List Docker images with size and creation info
+ */
+export const dockerImagesTool: ToolDefinition = {
+  spec: {
+    name: 'get_docker_images',
+    description: 'List all Docker images on the server with repository, tag, size, and creation date. Useful for identifying large or outdated images.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  async execute(): Promise<string> {
+    try {
+      const result = await executeCommand('docker', [
+        'images',
+        '--format', '{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}\t{{.ID}}',
+      ]);
+
+      if (result.exitCode !== 0) {
+        return `Error listing images: ${result.stderr || 'Unknown error'}`;
+      }
+
+      if (!result.stdout.trim()) {
+        return 'No Docker images found.';
+      }
+
+      // Parse and format as structured output
+      const lines = result.stdout.trim().split('\n');
+      const images = lines.map(line => {
+        const [repository, tag, size, createdAt, id] = line.split('\t');
+        return { repository, tag, size, createdAt, id };
+      });
+
+      return JSON.stringify(images, null, 2);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return `Error listing Docker images: ${message}`;
+    }
+  },
+};
+
+/**
  * Tool: run_command
  * Execute a shell command from the allowlist
  */
@@ -232,10 +373,11 @@ export const runCommandTool: ToolDefinition = {
     name: 'run_command',
     description: `Execute a read-only shell command for system diagnostics. Available commands: ${getAllowedCommands().join(', ')}.
 Commands have security restrictions:
-- docker: only ps, inspect, logs, network, images, version, info
+- docker: only ps, inspect, logs, network, images, version, info, compose (ps/config/ls/images/logs/top), stats
 - systemctl: only status, show, list-units, list-unit-files, is-active, is-enabled, cat
 - journalctl: read-only (no flush/rotate/vacuum)
 - curl: GET only (no POST/PUT/upload)
+- gh: only issue (create/list/view), pr (list/view), repo (view)
 - File commands (cat, ls, head, tail, find, grep): restricted to allowed directories`,
     input_schema: {
       type: 'object' as const,
@@ -285,8 +427,10 @@ Commands have security restrictions:
 export const serverTools: ToolDefinition[] = [
   containerStatusTool,
   containerLogsTool,
+  searchContainerLogsTool,
   systemResourcesTool,
   diskUsageTool,
   networkInfoTool,
+  dockerImagesTool,
   runCommandTool,
 ];

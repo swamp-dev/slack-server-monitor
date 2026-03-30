@@ -31,6 +31,10 @@ export interface ToolConfig {
   maxFileSizeKb: number;
   /** Maximum log lines */
   maxLogLines: number;
+  /** Default GitHub repository (owner/repo format) */
+  githubRepo?: string;
+  /** Default labels to apply to GitHub issues */
+  githubDefaultLabels?: string[];
 }
 
 /**

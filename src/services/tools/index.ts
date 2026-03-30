@@ -1,6 +1,7 @@
 import type { ToolDefinition, ToolConfig, ToolResult, ToolSpec } from './types.js';
 import { serverTools } from './server-tools.js';
 import { fileTools } from './file-tools.js';
+import { githubTools } from './github-tools.js';
 import { getPluginTools } from '../../plugins/index.js';
 import { scrubSensitiveData } from '../../formatters/scrub.js';
 import { logger } from '../../utils/logger.js';
@@ -10,7 +11,7 @@ import { logger } from '../../utils/logger.js';
 /**
  * Built-in tools (always available)
  */
-const BUILTIN_TOOLS: ToolDefinition[] = [...serverTools, ...fileTools];
+const BUILTIN_TOOLS: ToolDefinition[] = [...serverTools, ...fileTools, ...githubTools];
 
 /**
  * Namespace a plugin tool name with the plugin prefix

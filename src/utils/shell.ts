@@ -61,6 +61,8 @@ const ALLOWED_COMMANDS = new Map<string, string>([
   // Other
   ['pm2', '/usr/local/bin/pm2'],
   ['aws', '/usr/local/bin/aws'],
+  // GitHub CLI
+  ['gh', '/usr/bin/gh'],
 ]);
 
 /**
@@ -75,7 +77,42 @@ const ALLOWED_DOCKER_SUBCOMMANDS = new Set([
   'images',
   'version',
   'info',
+  'compose',
+  'stats',
 ]);
+
+/**
+ * SECURITY: Docker Compose subcommands that are allowed (read-only only)
+ * Blocks: up, down, start, stop, restart, rm, exec, run, pull, push, build, etc.
+ */
+const ALLOWED_DOCKER_COMPOSE_SUBCOMMANDS = new Set([
+  'ps',
+  'config',
+  'ls',
+  'images',
+  'logs',
+  'top',
+]);
+
+/**
+ * SECURITY: GitHub CLI subcommands that are allowed
+ */
+const ALLOWED_GH_SUBCOMMANDS = new Set(['issue', 'pr', 'repo']);
+
+/**
+ * SECURITY: gh issue subcommands that are allowed
+ */
+const ALLOWED_GH_ISSUE_SUBCOMMANDS = new Set(['create', 'list', 'view']);
+
+/**
+ * SECURITY: gh pr subcommands that are allowed (read-only)
+ */
+const ALLOWED_GH_PR_SUBCOMMANDS = new Set(['list', 'view']);
+
+/**
+ * SECURITY: gh repo subcommands that are allowed (read-only)
+ */
+const ALLOWED_GH_REPO_SUBCOMMANDS = new Set(['view']);
 
 /**
  * SECURITY: AWS CLI subcommands that are allowed (read-only only)
@@ -215,6 +252,7 @@ function validateArguments(args: readonly string[]): void {
 
 /**
  * SECURITY: Validate docker command has an allowed subcommand
+ * For 'compose' subcommand, also validates the compose sub-subcommand
  */
 function validateDockerCommand(args: readonly string[]): void {
   if (args.length === 0) {
@@ -224,6 +262,51 @@ function validateDockerCommand(args: readonly string[]): void {
   const subcommand = args[0];
   if (!subcommand || !ALLOWED_DOCKER_SUBCOMMANDS.has(subcommand)) {
     throw new ShellSecurityError(`Docker subcommand not allowed: ${subcommand ?? 'undefined'}`);
+  }
+
+  // Additional validation for docker compose sub-subcommands
+  if (subcommand === 'compose') {
+    if (args.length < 2) {
+      throw new ShellSecurityError('Docker compose requires a subcommand');
+    }
+    const composeSubcommand = args[1];
+    if (!composeSubcommand || !ALLOWED_DOCKER_COMPOSE_SUBCOMMANDS.has(composeSubcommand)) {
+      throw new ShellSecurityError(`Docker compose subcommand not allowed: ${composeSubcommand ?? 'undefined'}`);
+    }
+  }
+}
+
+/**
+ * SECURITY: Validate GitHub CLI command has allowed subcommands
+ * Validates both the top-level subcommand and the action (e.g., gh issue create)
+ */
+function validateGhCommand(args: readonly string[]): void {
+  if (args.length === 0) {
+    throw new ShellSecurityError('gh command requires a subcommand');
+  }
+
+  const subcommand = args[0];
+  if (!subcommand || !ALLOWED_GH_SUBCOMMANDS.has(subcommand)) {
+    throw new ShellSecurityError(`gh subcommand not allowed: ${subcommand ?? 'undefined'}`);
+  }
+
+  if (args.length < 2) {
+    throw new ShellSecurityError(`gh ${subcommand} requires an action`);
+  }
+
+  const action = args[1];
+  if (subcommand === 'issue') {
+    if (!action || !ALLOWED_GH_ISSUE_SUBCOMMANDS.has(action)) {
+      throw new ShellSecurityError(`gh issue action not allowed: ${action ?? 'undefined'}`);
+    }
+  } else if (subcommand === 'pr') {
+    if (!action || !ALLOWED_GH_PR_SUBCOMMANDS.has(action)) {
+      throw new ShellSecurityError(`gh pr action not allowed: ${action ?? 'undefined'}`);
+    }
+  } else if (subcommand === 'repo') {
+    if (!action || !ALLOWED_GH_REPO_SUBCOMMANDS.has(action)) {
+      throw new ShellSecurityError(`gh repo action not allowed: ${action ?? 'undefined'}`);
+    }
   }
 }
 
@@ -475,6 +558,8 @@ export async function executeCommand(
     validateJournalctlCommand(args);
   } else if (command === 'curl') {
     validateCurlCommand(args);
+  } else if (command === 'gh') {
+    validateGhCommand(args);
   } else if (['cat', 'ls', 'head', 'tail', 'find', 'grep', 'du', 'file', 'wc'].includes(command)) {
     validateFileCommand(command, args);
   }
