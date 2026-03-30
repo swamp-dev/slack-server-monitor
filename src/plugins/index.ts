@@ -49,3 +49,7 @@ export type { PluginHelpData } from './loader.js';
 
 // Plugin app wrapper (for advanced plugin authors)
 export { createPluginApp, clearRegisteredCommands, getRegisteredCommands } from './plugin-app.js';
+
+// Plugin web routes
+export type { PluginRouter, PluginRouteHandler, PluginNavEntry } from '../web/plugin-router.js';
+export { getPluginExpressRouter, getPluginNavEntries, clearPluginRoutes } from '../web/plugin-router.js';

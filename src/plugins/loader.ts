@@ -12,6 +12,7 @@ import { getPluginDatabase, closePluginDatabases, removePluginDatabase } from '.
 import { createPluginClaude, createDisabledPluginClaude } from '../services/plugin-claude.js';
 import { getProvider, type ProviderConfig } from '../services/providers/index.js';
 import { getNotificationStore } from '../services/notification-store.js';
+import { createPluginRouter, clearPluginRoutes } from '../web/plugin-router.js';
 import { logger } from '../utils/logger.js';
 
 import type { Config } from '../config/schema.js';
@@ -303,6 +304,20 @@ export async function registerPlugins(app: App): Promise<void> {
         await plugin.registerCommands(pluginApp);
       }
 
+      // Register web routes if plugin provides them
+      if (plugin.registerWebRoutes) {
+        try {
+          const pluginRouter = createPluginRouter(plugin.name, ctx, plugin.webNavEntry);
+          plugin.registerWebRoutes(pluginRouter);
+        } catch (routeError) {
+          logger.error('Plugin web route registration failed', {
+            name: plugin.name,
+            error: routeError instanceof Error ? routeError.message : String(routeError),
+          });
+          // Continue loading — web routes are optional
+        }
+      }
+
       // Tag tools with plugin name for namespacing
       const taggedTools: PluginToolDefinition[] = (plugin.tools ?? []).map((tool) => ({
         ...tool,
@@ -376,6 +391,7 @@ export async function destroyPlugins(): Promise<void> {
   // Clear the registries
   loadedPlugins.length = 0;
   clearRegisteredCommands();
+  clearPluginRoutes();
 
   // Close all plugin database connections
   closePluginDatabases();

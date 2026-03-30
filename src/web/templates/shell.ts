@@ -8,6 +8,7 @@ import { getBaseStyles, getAnimationStyles } from './styles.js';
 import { icon } from './icons.js';
 import { getKeyboardShortcutScript, getKeyboardHelpOverlay } from './keyboard.js';
 import { renderNotificationBell, renderNotificationDropdown } from './notifications.js';
+import { getPluginNavEntries } from '../plugin-router.js';
 
 // ─── Shell / Layout ────────────────────────────────────────────────────
 
@@ -36,9 +37,18 @@ export function wrapInShell(opts: ShellOptions): string {
   <script>hljs.highlightAll();</script>`
     : '';
 
+  const pluginNavEntries = getPluginNavEntries();
+  const pluginNavHtml = pluginNavEntries.length > 0
+    ? pluginNavEntries.map((entry) => {
+        const iconHtml = entry.icon ? `${icon(entry.icon, 14)} ` : '';
+        return `<a href="/p/${escapeHtml(entry.pluginName)}/" class="nav-plugin-link">${iconHtml}${escapeHtml(entry.label)}</a>`;
+      }).join('')
+    : '';
+
   const navHtml = showNav ? `
   <nav class="nav-bar">
     <a href="/" class="nav-brand">${icon('robot', 22)} Server Monitor</a>
+    ${pluginNavHtml ? `<div class="nav-plugins">${pluginNavHtml}</div>` : ''}
     <button class="nav-hamburger" id="nav-hamburger" type="button" aria-label="Menu">${icon('chevron-down', 20)}</button>
     <div class="nav-actions" id="nav-actions">
       <div class="notif-bell-wrapper">${renderNotificationBell(unreadCount)}${renderNotificationDropdown([])}</div>
@@ -165,8 +175,9 @@ export function wrapInShell(opts: ShellOptions): string {
     });
     dropdown.addEventListener('click', function(e) { e.stopPropagation(); });
     function sanitizeLink(url) {
-      var l = url.trim().toLowerCase();
-      if (l.startsWith('http://') || l.startsWith('https://') || url.trim().startsWith('/')) return url;
+      var t = url.trim();
+      var l = t.toLowerCase();
+      if (l.startsWith('http://') || l.startsWith('https://') || t.startsWith('/')) return t;
       return null;
     }
     function formatTimeAgo(ts) {

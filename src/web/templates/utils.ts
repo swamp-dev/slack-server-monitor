@@ -25,7 +25,7 @@ export function sanitizeUrl(url: string): string | null {
   const trimmed = url.trim();
   const lower = trimmed.toLowerCase();
   if (lower.startsWith('http://') || lower.startsWith('https://') || trimmed.startsWith('/')) {
-    return url;
+    return trimmed;
   }
   return null;
 }

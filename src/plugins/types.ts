@@ -2,6 +2,7 @@ import type { App } from '@slack/bolt';
 import type { ToolDefinition } from '../services/tools/types.js';
 import type { PluginApp } from './plugin-app.js';
 import type { PluginDatabase } from '../services/plugin-database.js';
+import type { PluginRouter } from '../web/plugin-router.js';
 
 /**
  * Image input for multimodal Claude requests from plugins
@@ -218,6 +219,19 @@ export interface Plugin {
   getWidgets?: () => DashboardWidget[];
 
   /**
+   * Register web routes for the plugin.
+   * Routes are mounted under /p/{pluginName}/.
+   * Called after init() during plugin loading.
+   */
+  registerWebRoutes?: (router: PluginRouter) => void;
+
+  /**
+   * Nav bar entry for this plugin's web pages.
+   * Only shown if the plugin has registered web routes.
+   */
+  webNavEntry?: { label: string; icon?: string };
+
+  /**
    * Cleanup hook called on app shutdown
    *
    * Receives the same PluginContext as init().
@@ -249,8 +263,8 @@ export function isValidPlugin(obj: unknown): obj is Plugin {
 
   const plugin = obj as Record<string, unknown>;
 
-  // Required fields
-  if (typeof plugin.name !== 'string' || plugin.name.trim() === '') {
+  // Required fields — name must be URL-safe (lowercase, alphanumeric, hyphens, underscores)
+  if (typeof plugin.name !== 'string' || !/^[a-z][a-z0-9_-]{0,49}$/.test(plugin.name)) {
     return false;
   }
 
@@ -292,6 +306,10 @@ export function isValidPlugin(obj: unknown): obj is Plugin {
   }
 
   if (plugin.getWidgets !== undefined && typeof plugin.getWidgets !== 'function') {
+    return false;
+  }
+
+  if (plugin.registerWebRoutes !== undefined && typeof plugin.registerWebRoutes !== 'function') {
     return false;
   }
 

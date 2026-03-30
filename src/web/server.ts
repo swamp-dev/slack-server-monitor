@@ -21,6 +21,7 @@ import { resolveToken, parseCookies, createLinkToken } from './auth.js';
 import { logger } from '../utils/logger.js';
 import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError, renderNotificationPage } from './templates/index.js';
 import { getPluginWidgets } from '../plugins/loader.js';
+import { getPluginExpressRouter } from './plugin-router.js';
 import { getNotificationStore, closeNotificationStore } from '../services/notification-store.js';
 import { getQuickLinksStore, closeQuickLinksStore } from '../services/quick-links-store.js';
 import { processConversationTurn } from '../services/conversation-processor.js';
@@ -767,6 +768,10 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       res.status(500).json({ error: 'Failed to mark notification read' });
     }
   });
+
+  // ─── Plugin Web Routes ────────────────────────────────────────────────
+  // Mount all plugin-registered web routes under /p/ with auth
+  app.use('/p', sessionAuthMiddleware(webConfig, dbPath), getPluginExpressRouter());
 
   // Notifications page: GET /notifications
   app.get('/notifications', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
