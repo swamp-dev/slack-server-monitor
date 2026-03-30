@@ -205,6 +205,11 @@ export const ConfigSchema = z.object({
     dbBackupRetain: z.number().int().positive().default(3),
     /** Default GitHub repository for issue creation (owner/repo format) */
     githubRepo: z.string().regex(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/, 'GitHub repo must be in owner/repo format').optional(),
+    /** Available GitHub repositories with descriptions for issue creation */
+    githubRepos: z.array(z.object({
+      repo: z.string().regex(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/, 'Must be owner/repo format'),
+      description: z.string(),
+    })).default([]),
     /** GitHub labels to always apply to created issues */
     githubDefaultLabels: z.array(z.string()).default([]),
   }).optional(),

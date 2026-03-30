@@ -314,3 +314,122 @@ describe('viewGithubIssueTool', () => {
     expect(args).toContain('other/repo');
   });
 });
+
+describe('repo allowlist validation', () => {
+  const configWithAllowlist = {
+    ...defaultConfig,
+    githubRepos: [
+      { repo: 'org/allowed-a', description: 'Repo A' },
+      { repo: 'org/allowed-b', description: 'Repo B' },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should reject a repo not in the allowlist', async () => {
+    const result = await createGithubIssueTool.execute({
+      repo: 'org/not-allowed',
+      title: 'Test',
+      body: 'Body',
+    }, configWithAllowlist);
+
+    expect(result).toContain('Error');
+    expect(result).toContain('not in the configured allowlist');
+    expect(result).toContain('org/allowed-a');
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
+  it('should allow a repo in the allowlist', async () => {
+    (executeCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
+      stdout: 'https://github.com/org/allowed-a/issues/1\n',
+      stderr: '',
+      exitCode: 0,
+    });
+
+    const result = await createGithubIssueTool.execute({
+      repo: 'org/allowed-a',
+      title: 'Test',
+      body: 'Body',
+    }, configWithAllowlist);
+
+    expect(result).toContain('Issue created successfully');
+    expect(executeCommand).toHaveBeenCalled();
+  });
+
+  it('should reject hallucinated repos in list_github_issues', async () => {
+    const result = await listGithubIssuesTool.execute({
+      repo: 'hallucinated/repo',
+    }, configWithAllowlist);
+
+    expect(result).toContain('Error');
+    expect(result).toContain('not in the configured allowlist');
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
+  it('should reject hallucinated repos in view_github_issue', async () => {
+    const result = await viewGithubIssueTool.execute({
+      repo: 'hallucinated/repo',
+      issue_number: 1,
+    }, configWithAllowlist);
+
+    expect(result).toContain('Error');
+    expect(result).toContain('not in the configured allowlist');
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
+  it('should skip allowlist validation when no repos configured', async () => {
+    (executeCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
+      stdout: 'https://github.com/any/repo/issues/1\n',
+      stderr: '',
+      exitCode: 0,
+    });
+
+    const result = await createGithubIssueTool.execute({
+      repo: 'any/repo',
+      title: 'Test',
+      body: 'Body',
+    }, defaultConfig);
+
+    expect(result).toContain('Issue created successfully');
+  });
+
+  it('should return error when no repo and no default configured', async () => {
+    const configNoDefault = { ...defaultConfig, githubRepo: undefined };
+
+    const result = await createGithubIssueTool.execute({
+      title: 'Test',
+      body: 'Body',
+    }, configNoDefault);
+
+    expect(result).toContain('Error');
+    expect(result).toContain('No repository specified');
+  });
+
+  it('should accept default repo when it is in the allowlist', async () => {
+    const configDefaultInList = {
+      ...defaultConfig,
+      githubRepo: 'org/allowed-a',
+      githubRepos: [
+        { repo: 'org/allowed-a', description: 'Repo A' },
+        { repo: 'org/allowed-b', description: 'Repo B' },
+      ],
+    };
+
+    (executeCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
+      stdout: 'https://github.com/org/allowed-a/issues/1\n',
+      stderr: '',
+      exitCode: 0,
+    });
+
+    const result = await createGithubIssueTool.execute({
+      title: 'Test',
+      body: 'Body',
+    }, configDefaultInList);
+
+    expect(result).toContain('Issue created successfully');
+    const mockCall = (executeCommand as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(mockCall[1]).toContain('org/allowed-a');
+  });
+});

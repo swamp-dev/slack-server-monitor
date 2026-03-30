@@ -26,6 +26,7 @@ export interface AskOptions {
 export interface UserConfig {
   systemPromptAddition?: string;
   contextDirContent?: string;
+  githubRepos?: { repo: string; description: string }[];
   disabledTools: string[];
   toolConfig: ToolConfig;
 }

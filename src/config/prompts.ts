@@ -94,6 +94,10 @@ export interface SystemPromptOptions {
   userAddition?: string;
   /** Context loaded from CLAUDE_CONTEXT_DIR */
   contextDirContent?: string;
+  /** Available GitHub repositories for issue creation */
+  githubRepos?: { repo: string; description: string }[];
+  /** Default GitHub repository (used when repo not specified) */
+  githubDefaultRepo?: string;
 }
 
 /**
@@ -105,6 +109,18 @@ export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
   // Add context directory content first (infrastructure context)
   if (options.contextDirContent) {
     parts.push(options.contextDirContent);
+  }
+
+  // Add GitHub repository context
+  if (options.githubRepos && options.githubRepos.length > 0) {
+    const repoList = options.githubRepos
+      .map((r) => `- \`${r.repo}\`${r.description ? ` — ${r.description}` : ''}`)
+      .join('\n');
+    let section = `## GitHub Repositories\n\nWhen creating or searching GitHub issues, use ONLY these repositories:\n\n${repoList}`;
+    if (options.githubDefaultRepo) {
+      section += `\n\nDefault repository (used when not specified): \`${options.githubDefaultRepo}\``;
+    }
+    parts.push(section);
   }
 
   // Add user-specific additions

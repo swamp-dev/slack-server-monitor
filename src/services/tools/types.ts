@@ -33,6 +33,8 @@ export interface ToolConfig {
   maxLogLines: number;
   /** Default GitHub repository (owner/repo format) */
   githubRepo?: string;
+  /** Available GitHub repositories (for validation) */
+  githubRepos?: { repo: string; description: string }[];
   /** Default labels to apply to GitHub issues */
   githubDefaultLabels?: string[];
 }

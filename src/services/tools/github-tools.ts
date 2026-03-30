@@ -4,12 +4,28 @@ import { scrubSensitiveData } from '../../formatters/scrub.js';
 import { logger } from '../../utils/logger.js';
 
 /**
- * Get the GitHub repo from tool input or fall back to config default
+ * Get the GitHub repo from tool input or fall back to config default.
+ * When githubRepos is configured, validates the repo is in the allowlist.
+ * Returns { repo } on success or { error } on validation failure.
  */
-function resolveRepo(input: Record<string, unknown>, config: ToolConfig): string | undefined {
+function resolveRepo(input: Record<string, unknown>, config: ToolConfig): { repo: string } | { error: string } {
   const inputRepo = input.repo as string | undefined;
-  if (inputRepo) return inputRepo;
-  return config.githubRepo;
+  const repo = inputRepo ?? config.githubRepo;
+
+  if (!repo) {
+    return { error: 'No repository specified and no default configured. Set GITHUB_REPO or pass repo parameter.' };
+  }
+
+  // Validate against allowlist when configured
+  if (config.githubRepos && config.githubRepos.length > 0) {
+    const allowed = config.githubRepos.some((r) => r.repo === repo);
+    if (!allowed) {
+      const validRepos = config.githubRepos.map((r) => r.repo).join(', ');
+      return { error: `Repository "${repo}" is not in the configured allowlist. Valid repos: ${validRepos}` };
+    }
+  }
+
+  return { repo };
 }
 
 /**
@@ -39,7 +55,7 @@ Requires gh CLI to be installed and authenticated.`,
       properties: {
         repo: {
           type: 'string',
-          description: 'GitHub repo in owner/repo format (optional, falls back to configured default)',
+          description: 'GitHub repo in owner/repo format. Must be one of the repos listed in the system prompt. Falls back to configured default if omitted.',
         },
         title: {
           type: 'string',
@@ -69,7 +85,10 @@ Requires gh CLI to be installed and authenticated.`,
   },
   async execute(input: Record<string, unknown>, config: ToolConfig): Promise<string> {
     try {
-      const repo = resolveRepo(input, config);
+      const resolved = resolveRepo(input, config);
+      if ('error' in resolved) return `Error: ${resolved.error}`;
+      const { repo } = resolved;
+
       const title = input.title as string;
       const body = input.body as string;
       const labels = input.labels as string[] | undefined;
@@ -78,7 +97,6 @@ Requires gh CLI to be installed and authenticated.`,
 
       if (!title) return 'Error: title is required';
       if (!body) return 'Error: body is required';
-      if (!repo) return 'Error: repo is required (set GITHUB_REPO in config or pass repo parameter)';
 
       // Build gh issue create args
       // Body is passed via stdin to avoid shell metacharacter issues
@@ -132,7 +150,7 @@ export const listGithubIssuesTool: ToolDefinition = {
       properties: {
         repo: {
           type: 'string',
-          description: 'GitHub repo in owner/repo format (optional, falls back to configured default)',
+          description: 'GitHub repo in owner/repo format. Must be one of the repos listed in the system prompt. Falls back to configured default if omitted.',
         },
         search: {
           type: 'string',
@@ -156,13 +174,14 @@ export const listGithubIssuesTool: ToolDefinition = {
   },
   async execute(input: Record<string, unknown>, config: ToolConfig): Promise<string> {
     try {
-      const repo = resolveRepo(input, config);
+      const resolved = resolveRepo(input, config);
+      if ('error' in resolved) return `Error: ${resolved.error}`;
+      const { repo } = resolved;
+
       const search = input.search as string | undefined;
       const labels = input.labels as string[] | undefined;
       const state = typeof input.state === 'string' ? input.state : 'open';
       const limit = Math.min(typeof input.limit === 'number' ? input.limit : 20, 50);
-
-      if (!repo) return 'Error: repo is required (set GITHUB_REPO in config or pass repo parameter)';
 
       const args: string[] = [
         'issue', 'list',
@@ -209,7 +228,7 @@ export const viewGithubIssueTool: ToolDefinition = {
       properties: {
         repo: {
           type: 'string',
-          description: 'GitHub repo in owner/repo format (optional, falls back to configured default)',
+          description: 'GitHub repo in owner/repo format. Must be one of the repos listed in the system prompt. Falls back to configured default if omitted.',
         },
         issue_number: {
           type: 'number',
@@ -221,11 +240,13 @@ export const viewGithubIssueTool: ToolDefinition = {
   },
   async execute(input: Record<string, unknown>, config: ToolConfig): Promise<string> {
     try {
-      const repo = resolveRepo(input, config);
+      const resolved = resolveRepo(input, config);
+      if ('error' in resolved) return `Error: ${resolved.error}`;
+      const { repo } = resolved;
+
       const issueNumber = input.issue_number as number;
 
       if (!issueNumber) return 'Error: issue_number is required';
-      if (!repo) return 'Error: repo is required (set GITHUB_REPO in config or pass repo parameter)';
 
       const args: string[] = [
         'issue', 'view',

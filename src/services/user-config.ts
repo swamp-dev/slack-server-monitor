@@ -20,6 +20,7 @@ const UserConfigFileSchema = z.object({
 export interface UserConfig {
   systemPromptAddition?: string;
   contextDirContent?: string;
+  githubRepos?: { repo: string; description: string }[];
   disabledTools: string[];
   toolConfig: ToolConfig;
 }
@@ -34,6 +35,7 @@ export interface DefaultToolConfig {
   contextDir?: string;
   contextDirContent?: string;
   githubRepo?: string;
+  githubRepos?: { repo: string; description: string }[];
   githubDefaultLabels?: string[];
 }
 
@@ -94,12 +96,14 @@ export async function loadUserConfig(
   return {
     systemPromptAddition,
     contextDirContent: defaults.contextDirContent,
+    githubRepos: defaults.githubRepos,
     disabledTools: userFileConfig?.disabledTools ?? [],
     toolConfig: {
       allowedDirs,
       maxFileSizeKb: defaults.maxFileSizeKb,
       maxLogLines: userFileConfig?.maxLogLines ?? defaults.maxLogLines,
       githubRepo: defaults.githubRepo,
+      githubRepos: defaults.githubRepos,
       githubDefaultLabels: defaults.githubDefaultLabels,
     },
   };

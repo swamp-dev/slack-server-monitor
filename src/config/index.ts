@@ -64,6 +64,26 @@ export function parseContextOptions(value: string | undefined): { alias: string;
 }
 
 /**
+ * Parse GitHub repos from comma-separated owner/repo:description pairs
+ * Example: "swamp-dev/ansible:Home server playbooks,swamp-dev/bot:Slack bot"
+ */
+export function parseGithubRepos(value: string | undefined): { repo: string; description: string }[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map((entry) => {
+      const colonIndex = entry.indexOf(':');
+      if (colonIndex === -1) return { repo: entry.trim(), description: '' };
+      return {
+        repo: entry.slice(0, colonIndex).trim(),
+        description: entry.slice(colonIndex + 1).trim().replace(/\n/g, ' '),
+      };
+    });
+}
+
+/**
  * Parse a JSON string into a record, returning empty object on failure
  */
 export function parseJsonRecord(value: string | undefined): Record<string, unknown> {
@@ -138,6 +158,7 @@ function loadConfig(): Config {
           dbBackupDir: process.env.CLAUDE_DB_BACKUP_DIR ?? undefined,
           dbBackupRetain: parseIntWithDefault(process.env.CLAUDE_DB_BACKUP_RETAIN, 3),
           githubRepo: process.env.GITHUB_REPO ?? undefined,
+          githubRepos: parseGithubRepos(process.env.GITHUB_REPOS),
           githubDefaultLabels: parseCommaSeparated(process.env.GITHUB_DEFAULT_LABELS),
         }
       : undefined,
@@ -166,6 +187,18 @@ function loadConfig(): Config {
   // Validate CLI binary exists at startup if Claude is enabled
   if (result.data.claude) {
     validateCliBinary(result.data.claude.cliPath);
+
+    // Warn if default repo is not in the allowlist
+    const { githubRepo, githubRepos } = result.data.claude;
+    if (githubRepo && githubRepos.length > 0) {
+      const inList = githubRepos.some((r) => r.repo === githubRepo);
+      if (!inList) {
+        console.warn(
+          `[config] Warning: GITHUB_REPO "${githubRepo}" is not listed in GITHUB_REPOS. ` +
+          `Tool calls using the default repo will be rejected by the allowlist.`
+        );
+      }
+    }
   }
 
   return result.data;

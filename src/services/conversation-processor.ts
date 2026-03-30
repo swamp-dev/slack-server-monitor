@@ -130,6 +130,7 @@ export async function processConversationTurn(
     contextDir: claudeConfig.contextDir,
     contextDirContent: activeContext?.combined,
     githubRepo: claudeConfig.githubRepo,
+    githubRepos: claudeConfig.githubRepos,
     githubDefaultLabels: claudeConfig.githubDefaultLabels,
   });
 

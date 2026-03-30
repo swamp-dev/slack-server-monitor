@@ -73,5 +73,70 @@ describe('prompts', () => {
       // Context should come before user addition
       expect(result.indexOf(contextContent)).toBeLessThan(result.indexOf(userAddition));
     });
+
+    it('should include GitHub repos section when repos are provided', () => {
+      const result = buildSystemPrompt({
+        githubRepos: [
+          { repo: 'swamp-dev/ansible', description: 'Home server Ansible playbooks' },
+          { repo: 'swamp-dev/slack-server-monitor', description: 'Slack monitoring bot' },
+        ],
+      });
+
+      expect(result).toContain('## GitHub Repositories');
+      expect(result).toContain('`swamp-dev/ansible`');
+      expect(result).toContain('Home server Ansible playbooks');
+      expect(result).toContain('`swamp-dev/slack-server-monitor`');
+      expect(result).toContain('Slack monitoring bot');
+      expect(result).toContain('use ONLY these repositories');
+    });
+
+    it('should include default repo when provided with repos', () => {
+      const result = buildSystemPrompt({
+        githubRepos: [
+          { repo: 'org/repo-a', description: 'Repo A' },
+        ],
+        githubDefaultRepo: 'org/repo-a',
+      });
+
+      expect(result).toContain('Default repository');
+      expect(result).toContain('`org/repo-a`');
+    });
+
+    it('should not include default repo line when not provided', () => {
+      const result = buildSystemPrompt({
+        githubRepos: [
+          { repo: 'org/repo-a', description: 'Repo A' },
+        ],
+      });
+
+      expect(result).not.toContain('Default repository');
+    });
+
+    it('should not include GitHub repos section when array is empty', () => {
+      const result = buildSystemPrompt({ githubRepos: [] });
+      expect(result).not.toContain('## GitHub Repositories');
+    });
+
+    it('should handle repos without descriptions', () => {
+      const result = buildSystemPrompt({
+        githubRepos: [
+          { repo: 'org/repo', description: '' },
+        ],
+      });
+
+      // The repo line should not have a description suffix
+      expect(result).toMatch(/- `org\/repo`(?!\s*—)/);
+    });
+
+    it('should place GitHub repos before user addition', () => {
+      const result = buildSystemPrompt({
+        githubRepos: [{ repo: 'org/repo', description: 'Test' }],
+        userAddition: 'Custom context',
+      });
+
+      expect(result.indexOf('GitHub Repositories')).toBeLessThan(
+        result.indexOf('Additional Context from User Configuration')
+      );
+    });
   });
 });

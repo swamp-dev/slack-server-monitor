@@ -12,7 +12,7 @@ vi.stubEnv('SLACK_APP_TOKEN', 'xapp-test-token');
 vi.stubEnv('AUTHORIZED_USER_IDS', 'U12345678');
 
 // Now we can safely import the parsing functions
-const { parseCommaSeparated, parseIntWithDefault, parseContextOptions } = await import(
+const { parseCommaSeparated, parseIntWithDefault, parseContextOptions, parseGithubRepos } = await import(
   '../../src/config/index.js'
 );
 
@@ -161,6 +161,52 @@ describe('config parsing functions', () => {
       expect(result).toEqual([
         { alias: 'homelab', path: '/opt/homelab' },
         { alias: 'infra', path: '/opt/infra' },
+      ]);
+    });
+  });
+
+  describe('parseGithubRepos', () => {
+    it('should parse repo:description pairs', () => {
+      const result = parseGithubRepos('swamp-dev/ansible:Home server Ansible playbooks');
+      expect(result).toEqual([{ repo: 'swamp-dev/ansible', description: 'Home server Ansible playbooks' }]);
+    });
+
+    it('should parse multiple pairs', () => {
+      const result = parseGithubRepos('org/repo-a:Repo A,org/repo-b:Repo B');
+      expect(result).toEqual([
+        { repo: 'org/repo-a', description: 'Repo A' },
+        { repo: 'org/repo-b', description: 'Repo B' },
+      ]);
+    });
+
+    it('should handle empty string', () => {
+      expect(parseGithubRepos('')).toEqual([]);
+    });
+
+    it('should handle undefined', () => {
+      expect(parseGithubRepos(undefined)).toEqual([]);
+    });
+
+    it('should trim whitespace', () => {
+      const result = parseGithubRepos('  org/repo : Description  ');
+      expect(result).toEqual([{ repo: 'org/repo', description: 'Description' }]);
+    });
+
+    it('should handle repo without description (no colon)', () => {
+      const result = parseGithubRepos('org/repo');
+      expect(result).toEqual([{ repo: 'org/repo', description: '' }]);
+    });
+
+    it('should handle description with colons', () => {
+      const result = parseGithubRepos('org/repo:Has colons: in description');
+      expect(result).toEqual([{ repo: 'org/repo', description: 'Has colons: in description' }]);
+    });
+
+    it('should filter empty entries from trailing commas', () => {
+      const result = parseGithubRepos('org/repo-a:A,,org/repo-b:B,');
+      expect(result).toEqual([
+        { repo: 'org/repo-a', description: 'A' },
+        { repo: 'org/repo-b', description: 'B' },
       ]);
     });
   });

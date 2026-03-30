@@ -93,6 +93,8 @@ export class CliProvider implements ClaudeProvider {
     const baseSystemPrompt = buildSystemPrompt({
       userAddition: userConfig.systemPromptAddition,
       contextDirContent: userConfig.contextDirContent,
+      githubRepos: userConfig.githubRepos,
+      githubDefaultRepo: userConfig.toolConfig.githubRepo,
     });
 
     const systemPromptWithTools = this.buildToolSystemPrompt(baseSystemPrompt, tools);
