@@ -69,6 +69,17 @@ function renderToolCalls(toolCalls: ToolCallLog[]): string {
     return '';
   }
 
+  const successCount = toolCalls.filter((tc) => tc.success).length;
+  const failureCount = toolCalls.length - successCount;
+  const totalDurationMs = toolCalls.reduce((sum, tc) => sum + (tc.durationMs ?? 0), 0);
+  const totalDuration = totalDurationMs >= 1000
+    ? `${(totalDurationMs / 1000).toFixed(1)}s`
+    : `${String(totalDurationMs)}ms`;
+
+  const statusSummary = failureCount > 0
+    ? `<span class="tool-calls-summary-stat success">${icon('check', 12)} ${String(successCount)}</span><span class="tool-calls-summary-stat failure">${icon('x', 12)} ${String(failureCount)}</span>`
+    : `<span class="tool-calls-summary-stat success">${icon('check', 12)} ${String(successCount)}</span>`;
+
   const toolCallsHtml = toolCalls
     .map((tc) => {
       const inputJson = JSON.stringify(tc.input, null, 2);
@@ -102,10 +113,15 @@ function renderToolCalls(toolCalls: ToolCallLog[]): string {
     .join('\n');
 
   return `
-    <div class="tool-calls">
-      <h2>${icon('wrench', 18)} Tool Calls (${String(toolCalls.length)})</h2>
-      ${toolCallsHtml}
-    </div>
+    <details class="tool-calls-wrapper" id="tool-calls-wrapper">
+      <summary class="tool-calls-summary">
+        ${icon('wrench', 16)} <span>Tool Calls (${String(toolCalls.length)})</span>
+        <span class="tool-calls-summary-stats">${statusSummary}<span class="tool-calls-summary-duration">${icon('clock', 12)} ${totalDuration}</span></span>
+      </summary>
+      <div class="tool-calls">
+        ${toolCallsHtml}
+      </div>
+    </details>
   `;
 }
 
@@ -372,8 +388,8 @@ export function renderConversation(
   ${headerHtml}
   <main class="container">
     ${messagesHtml}
-    ${toolCallsHtml}
     ${continueFormHtml}
+    ${toolCallsHtml}
   </main>`;
 
   const scripts = `
@@ -471,7 +487,22 @@ export function renderConversation(
     }
   })();
   </script>
-  ${continueScriptHtml}`;
+  ${continueScriptHtml}${toolCalls.length > 0 ? `
+  <script>
+  (function() {
+    var wrapper = document.getElementById('tool-calls-wrapper');
+    if (!wrapper) return;
+    var key = 'tool-calls-expanded';
+    try {
+      if (localStorage.getItem(key) === 'true') {
+        wrapper.setAttribute('open', '');
+      }
+      wrapper.addEventListener('toggle', function() {
+        try { localStorage.setItem(key, wrapper.open ? 'true' : 'false'); } catch(e) {}
+      });
+    } catch(e) {}
+  })();
+  </script>` : ''}`;
 
   return wrapInShell({
     title: 'Claude Conversation',

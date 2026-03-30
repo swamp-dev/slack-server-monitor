@@ -322,8 +322,8 @@ describe('web templates', () => {
       expect(html).toContain('Tool Calls (2)');
       expect(html).toContain('get_disk_usage');
       expect(html).toContain('get_system_resources');
-      // Each tool call should be a separate details element
-      const detailsCount = (html.match(/<details/g) || []).length;
+      // Each tool call should be a separate details element (+ 1 for the wrapper)
+      const detailsCount = (html.match(/<details class="tool-call"/g) || []).length;
       expect(detailsCount).toBe(2);
     });
 
@@ -383,6 +383,158 @@ describe('web templates', () => {
       expect(html).toContain('run_command');
       // Should not render an output div for empty output
       expect(html).not.toContain('class="tool-call-output"');
+    });
+
+    it('should wrap tool calls in a collapsible wrapper with summary stats', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Check it' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'get_disk_usage',
+          input: {},
+          outputPreview: '45%',
+          timestamp: Date.now(),
+          durationMs: 120,
+          success: true,
+        },
+        {
+          conversationId: 1,
+          toolName: 'get_system_resources',
+          input: {},
+          outputPreview: 'ok',
+          timestamp: Date.now(),
+          durationMs: 80,
+          success: false,
+        },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      // Wrapper details element
+      expect(html).toContain('tool-calls-wrapper');
+      expect(html).toContain('tool-calls-summary');
+      // Summary stats
+      expect(html).toContain('tool-calls-summary-stats');
+      expect(html).toContain('tool-calls-summary-stat success');
+      expect(html).toContain('tool-calls-summary-stat failure');
+      // Total duration (120 + 80 = 200ms)
+      expect(html).toContain('200ms');
+    });
+
+    it('should render tool calls below the continue form', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Test' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'test_tool',
+          input: {},
+          outputPreview: 'ok',
+          timestamp: Date.now(),
+          durationMs: 50,
+          success: true,
+        },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        canContinue: true,
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      // Continue form should appear before tool calls in the body HTML
+      const continueFormIndex = html.indexOf('id="continue-form"');
+      const toolCallsIndex = html.indexOf('id="tool-calls-wrapper"');
+      expect(continueFormIndex).toBeGreaterThan(-1);
+      expect(toolCallsIndex).toBeGreaterThan(-1);
+      expect(continueFormIndex).toBeLessThan(toolCallsIndex);
+    });
+
+    it('should format total duration in seconds when over 1000ms', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Test' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'slow_tool',
+          input: {},
+          outputPreview: 'done',
+          timestamp: Date.now(),
+          durationMs: 2500,
+          success: true,
+        },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      // 2500ms should be formatted as 2.5s in the summary
+      expect(html).toContain('2.5s');
+    });
+
+    it('should include localStorage persistence script for tool calls toggle', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Test' },
+      ];
+      const toolCalls: ToolCallLog[] = [
+        {
+          conversationId: 1,
+          toolName: 'test_tool',
+          input: {},
+          outputPreview: 'ok',
+          timestamp: Date.now(),
+          durationMs: 50,
+          success: true,
+        },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, toolCalls, metadata);
+
+      expect(html).toContain('tool-calls-expanded');
+      expect(html).toContain('localStorage');
+    });
+
+    it('should not include tool calls script when there are no tool calls', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi' },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, [], metadata);
+
+      // No localStorage script or tool calls element in the body
+      expect(html).not.toContain('tool-calls-expanded');
+      expect(html).not.toContain('id="tool-calls-wrapper"');
     });
 
     it('should handle empty conversation', () => {

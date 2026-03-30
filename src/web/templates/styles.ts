@@ -531,20 +531,75 @@ export function getBaseStyles(): string {
     text-decoration: underline;
   }
 
-  /* Tool calls */
-  .tool-calls {
+  /* Tool calls wrapper */
+  .tool-calls-wrapper {
     margin-top: 30px;
-    border-top: 1px solid var(--border);
-    padding-top: 20px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card-bg);
   }
 
-  .tool-calls h2 {
-    font-size: 1.125rem;
-    color: var(--text-muted);
-    margin-bottom: 16px;
+  .tool-calls-summary {
+    padding: 12px 16px;
+    cursor: pointer;
     display: flex;
     align-items: center;
     gap: 8px;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    list-style: none;
+    user-select: none;
+    transition: color 0.2s;
+  }
+
+  .tool-calls-summary:hover {
+    color: var(--text);
+  }
+
+  .tool-calls-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .tool-calls-summary::before {
+    content: '\\25B6';
+    font-size: 0.625rem;
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+
+  .tool-calls-wrapper[open] > .tool-calls-summary::before {
+    transform: rotate(90deg);
+  }
+
+  .tool-calls-summary-stats {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.75rem;
+    font-weight: 400;
+  }
+
+  .tool-calls-summary-stat {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+
+  .tool-calls-summary-stat.success { color: var(--green); }
+  .tool-calls-summary-stat.failure { color: var(--red); }
+
+  .tool-calls-summary-duration {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    color: var(--text-muted);
+  }
+
+  /* Tool calls inner */
+  .tool-calls {
+    padding: 0 16px 16px;
   }
 
   .tool-call {
