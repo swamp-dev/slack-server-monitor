@@ -230,6 +230,70 @@ export function getBaseStyles(): string {
     font-size: 0.85rem;
   }
 
+  /* Plugin component styles */
+  .plugin-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .plugin-card-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .plugin-card-title a {
+    color: var(--fg);
+    text-decoration: none;
+  }
+  .plugin-card-title a:hover { color: var(--accent); }
+  .plugin-card-body { font-size: 0.85rem; }
+  .plugin-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  .plugin-table th, .plugin-table td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .plugin-table th {
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .plugin-table tr:last-child td { border-bottom: none; }
+  .plugin-chart {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .plugin-chart-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .plugin-chart-label {
+    font-size: 0.8rem;
+    min-width: 80px;
+    white-space: nowrap;
+  }
+  .plugin-chart-bar {
+    height: 20px;
+    background: var(--accent);
+    border-radius: 4px;
+    min-width: 4px;
+    opacity: 0.8;
+  }
+  .plugin-chart-value {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+
   /* Mobile hamburger */
   .nav-hamburger {
     display: none;

@@ -53,3 +53,16 @@ export { createPluginApp, clearRegisteredCommands, getRegisteredCommands } from 
 // Plugin web routes
 export type { PluginRouter, PluginRouteHandler, PluginNavEntry } from '../web/plugin-router.js';
 export { getPluginExpressRouter, getPluginNavEntries, clearPluginRoutes } from '../web/plugin-router.js';
+
+// Plugin template helpers for building themed web pages
+export {
+  renderPluginPage,
+  pluginStyles,
+  pluginCard,
+  pluginTable,
+  pluginChart,
+  escapeHtml,
+  icon,
+  formatTimestamp,
+  sanitizeUrl,
+} from '../web/plugin-helpers.js';

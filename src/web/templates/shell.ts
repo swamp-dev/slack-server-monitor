@@ -143,7 +143,7 @@ export function wrapInShell(opts: ShellOptions): string {
             if (!data.notifications) return;
             var items = data.notifications.map(function(n) {
               var cls = 'notif-item notif-' + n.level + (n.readAt ? ' notif-read' : '');
-              var title = n.title.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+              var title = n.title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
               var ago = formatTimeAgo(n.createdAt);
               var inner = '<span class="notif-title">' + title + '</span><span class="notif-time">' + ago + '</span>';
               var safeLink = n.link ? sanitizeLink(n.link) : null;
