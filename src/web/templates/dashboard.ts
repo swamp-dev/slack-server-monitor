@@ -4,6 +4,7 @@
 
 import type { SessionSummary, SessionStats, TagInfo } from '../../services/conversation-store.js';
 import type { DashboardWidget } from '../../plugins/types.js';
+import type { QuickLink } from '../../services/quick-links-store.js';
 import { escapeHtml, sanitizeUrl } from './utils.js';
 import { icon } from './icons.js';
 import { wrapInShell } from './shell.js';
@@ -275,6 +276,39 @@ const dashboardStyles = `
   @media (max-width: 768px) {
     .widget-large { grid-column: span 1; }
   }
+  .quick-links-section {
+    margin-bottom: 24px;
+  }
+  .quick-links-section h2 {
+    font-size: 0.9rem;
+    margin: 0 0 10px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+  }
+  .quick-links-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .quick-link-card {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    text-decoration: none;
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    transition: border-color 0.15s ease;
+  }
+  .quick-link-card:hover {
+    border-color: var(--accent);
+    text-decoration: none;
+  }
   .empty-welcome {
     text-align: center;
     padding: 80px 20px;
@@ -319,6 +353,7 @@ export function renderDashboard(
   _userId: string,
   widgets?: DashboardWidget[],
   unreadCount?: number,
+  quickLinks?: QuickLink[],
 ): string {
   const greeting = getGreeting();
 
@@ -438,6 +473,24 @@ export function renderDashboard(
       <a href="/c">${icon('message-circle', 16)} All Conversations</a>
     </div>`;
 
+  // Quick links section
+  const effectiveLinks = quickLinks && quickLinks.length > 0 ? quickLinks : [];
+  const quickLinksHtml = effectiveLinks.length > 0
+    ? `<div class="quick-links-section">
+        <h2>${icon('star', 14)} Quick Links</h2>
+        <div class="quick-links-bar">
+          ${effectiveLinks.map((link) => {
+            const safeUrl = sanitizeUrl(link.url);
+            if (!safeUrl) return '';
+            const isExternal = safeUrl.startsWith('http://') || safeUrl.startsWith('https://');
+            const target = isExternal ? ' target="_blank" rel="noopener noreferrer"' : '';
+            const iconHtml = link.icon ? `${icon(link.icon, 14)} ` : '';
+            return `<a href="${escapeHtml(safeUrl)}" class="quick-link-card"${target}>${iconHtml}${escapeHtml(link.title)}</a>`;
+          }).filter(Boolean).join('\n')}
+        </div>
+      </div>`
+    : '';
+
   // Plugin widgets section
   const effectiveWidgets = widgets && widgets.length > 0 ? widgets : [];
   const widgetsHtml = effectiveWidgets.length > 0
@@ -472,6 +525,7 @@ export function renderDashboard(
       <div class="subtitle">Last 24 hours: ${String(stats.totalSessions)} sessions, ${String(stats.totalMessages)} messages, ${String(stats.totalToolCalls)} tool calls</div>
     </div>
     ${quickActionsHtml}
+    ${quickLinksHtml}
     ${statsHtml}
     ${widgetsHtml}
     <div class="dashboard-grid">

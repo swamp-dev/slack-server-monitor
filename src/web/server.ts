@@ -22,6 +22,7 @@ import { logger } from '../utils/logger.js';
 import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError, renderNotificationPage } from './templates/index.js';
 import { getPluginWidgets } from '../plugins/loader.js';
 import { getNotificationStore, closeNotificationStore } from '../services/notification-store.js';
+import { getQuickLinksStore, closeQuickLinksStore } from '../services/quick-links-store.js';
 import { processConversationTurn } from '../services/conversation-processor.js';
 import { checkAndRecordClaudeRequest } from '../commands/ask.js';
 
@@ -620,6 +621,101 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
   });
 
+  // ─── Quick Links API ──────────────────────────────────────────────────
+
+  // GET /api/links — list quick links for authenticated user
+  app.get('/api/links', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
+    try {
+      const linksStore = getQuickLinksStore(claudeConfig.dbPath);
+      const userId = (res.locals.userId as string) || '';
+      const links = linksStore.getLinks(userId);
+      res.json({ links });
+    } catch (err) {
+      logger.error('Error fetching quick links', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to fetch links' });
+    }
+  });
+
+  // POST /api/links — add a quick link
+  app.post('/api/links', sessionAuthMiddleware(webConfig, dbPath), (req: Request, res: Response) => {
+    try {
+      const linksStore = getQuickLinksStore(claudeConfig.dbPath);
+      const userId = (res.locals.userId as string) || '';
+      const { title, url, icon: linkIcon } = req.body as { title?: string; url?: string; icon?: string };
+
+      if (!title || !url || typeof title !== 'string' || typeof url !== 'string') {
+        res.status(400).json({ error: 'title and url are required' });
+        return;
+      }
+
+      if (title.length > 100 || url.length > 2000) {
+        res.status(400).json({ error: 'title or url too long' });
+        return;
+      }
+
+      if (typeof linkIcon === 'string' && linkIcon.length > 50) {
+        res.status(400).json({ error: 'icon name too long' });
+        return;
+      }
+
+      // Reject dangerous URL schemes at write time
+      const trimmedUrl = url.trim().toLowerCase();
+      if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://') && !url.trim().startsWith('/')) {
+        res.status(400).json({ error: 'url must be http://, https://, or a relative path' });
+        return;
+      }
+
+      const link = linksStore.addLink(userId, title.trim(), url.trim(), typeof linkIcon === 'string' ? linkIcon.trim() : undefined);
+      res.status(201).json({ link });
+    } catch (err) {
+      logger.error('Error adding quick link', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to add link' });
+    }
+  });
+
+  // DELETE /api/links/:id — remove a quick link
+  app.delete('/api/links/:id', sessionAuthMiddleware(webConfig, dbPath), (req: Request, res: Response) => {
+    try {
+      const linksStore = getQuickLinksStore(claudeConfig.dbPath);
+      const userId = (res.locals.userId as string) || '';
+      const id = Number(req.params.id);
+      if (isNaN(id) || id <= 0) {
+        res.status(400).json({ error: 'Invalid link ID' });
+        return;
+      }
+      const success = linksStore.removeLink(userId, id);
+      res.json({ success });
+    } catch (err) {
+      logger.error('Error removing quick link', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to remove link' });
+    }
+  });
+
+  // PUT /api/links/reorder — reorder quick links
+  app.put('/api/links/reorder', sessionAuthMiddleware(webConfig, dbPath), (req: Request, res: Response) => {
+    try {
+      const linksStore = getQuickLinksStore(claudeConfig.dbPath);
+      const userId = (res.locals.userId as string) || '';
+      const { orderedIds } = req.body as { orderedIds?: number[] };
+
+      if (!Array.isArray(orderedIds) || !orderedIds.every((id) => typeof id === 'number' && id > 0)) {
+        res.status(400).json({ error: 'orderedIds must be an array of positive numbers' });
+        return;
+      }
+
+      if (orderedIds.length > 100) {
+        res.status(400).json({ error: 'Too many items to reorder (max 100)' });
+        return;
+      }
+
+      const updated = linksStore.reorderLinks(userId, orderedIds);
+      res.json({ updated });
+    } catch (err) {
+      logger.error('Error reordering quick links', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to reorder links' });
+    }
+  });
+
   // ─── Notification API ─────────────────────────────────────────────────
 
   // GET /api/notifications — list notifications (optionally unread only)
@@ -700,8 +796,10 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const widgets = getPluginWidgets();
       const notifStore = getNotificationStore(claudeConfig.dbPath);
       const unreadCount = notifStore.countUnread();
+      const linksStore = getQuickLinksStore(claudeConfig.dbPath);
+      const userLinks = linksStore.getLinks(userId);
 
-      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId, widgets, unreadCount);
+      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId, widgets, unreadCount, userLinks);
       res.type('html').send(html);
     } catch (err) {
       logger.error('Error serving dashboard', { error: err instanceof Error ? err.message : String(err) });
@@ -758,6 +856,7 @@ export async function stopWebServer(): Promise<void> {
 
   closeSessionStore();
   closeNotificationStore();
+  closeQuickLinksStore();
 
   const serverInstance = server;
   if (!serverInstance) {
