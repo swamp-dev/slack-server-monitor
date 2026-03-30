@@ -24,6 +24,7 @@ import { getPluginWidgets } from '../plugins/loader.js';
 import { getPluginExpressRouter } from './plugin-router.js';
 import { getNotificationStore, closeNotificationStore } from '../services/notification-store.js';
 import { getQuickLinksStore, closeQuickLinksStore } from '../services/quick-links-store.js';
+import { getServerHealth } from '../services/server-health.js';
 import { processConversationTurn } from '../services/conversation-processor.js';
 import { checkAndRecordClaudeRequest } from '../commands/ask.js';
 
@@ -622,6 +623,23 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
   });
 
+  // ─── Server Health API ────────────────────────────────────────────────
+
+  // GET /api/health/server — cached server health metrics
+  app.get('/api/health/server', sessionAuthMiddleware(webConfig, dbPath), async (_req: Request, res: Response) => {
+    try {
+      const health = await getServerHealth();
+      if (!health) {
+        res.status(503).json({ error: 'Health metrics unavailable' });
+        return;
+      }
+      res.json(health);
+    } catch (err) {
+      logger.error('Error fetching server health', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Failed to fetch health' });
+    }
+  });
+
   // ─── Quick Links API ──────────────────────────────────────────────────
 
   // GET /api/links — list quick links for authenticated user
@@ -788,7 +806,7 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   });
 
   // Dashboard home: GET /
-  app.get('/', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
+  app.get('/', sessionAuthMiddleware(webConfig, dbPath), async (_req: Request, res: Response) => {
     try {
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
       const stats = store.getSessionStats(24);
@@ -803,8 +821,9 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const unreadCount = notifStore.countUnread();
       const linksStore = getQuickLinksStore(claudeConfig.dbPath);
       const userLinks = linksStore.getLinks(userId);
+      const health = await getServerHealth();
 
-      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId, widgets, unreadCount, userLinks);
+      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId, widgets, unreadCount, userLinks, health);
       res.type('html').send(html);
     } catch (err) {
       logger.error('Error serving dashboard', { error: err instanceof Error ? err.message : String(err) });

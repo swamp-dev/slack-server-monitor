@@ -45,6 +45,9 @@ src/
 │   ├── context-store.ts      # SQLite storage for channel context
 │   ├── user-config.ts        # Per-user config from ~/.claude/
 │   ├── context-loader.ts     # Load CLAUDE.md and .claude/context/ from context dir
+│   ├── notification-store.ts # SQLite notification center
+│   ├── quick-links-store.ts  # Per-user dashboard bookmarks
+│   ├── server-health.ts      # Cached server health metrics
 │   ├── providers/
 │   │   ├── index.ts          # Provider factory
 │   │   ├── types.ts          # Provider type definitions
@@ -62,7 +65,22 @@ src/
 ├── web/
 │   ├── index.ts              # Web module exports
 │   ├── server.ts             # Express HTTP server for long responses
-│   └── templates.ts          # HTML templates for conversation pages
+│   ├── plugin-router.ts      # Plugin web route registration (/p/{name}/)
+│   ├── plugin-helpers.ts     # Template helpers for plugin pages
+│   └── templates/
+│       ├── index.ts          # Template barrel exports
+│       ├── shell.ts          # HTML shell with nav, theme, notifications
+│       ├── dashboard.ts      # Dashboard with health, widgets, quick links
+│       ├── notifications.ts  # Notification bell, dropdown, page
+│       ├── session-list.ts   # Conversation list page
+│       ├── conversation.ts   # Single conversation page
+│       ├── icons.ts          # Inline SVG icon system
+│       ├── theme.ts          # Theme CSS variables
+│       ├── styles.ts         # Base CSS styles
+│       ├── keyboard.ts       # Keyboard shortcut system
+│       ├── utils.ts          # escapeHtml, sanitizeUrl, formatTimestamp
+│       ├── errors.ts         # 404, 401, error pages
+│       └── export.ts         # Markdown export
 ├── utils/
 │   ├── shell.ts              # SECURE shell execution
 │   ├── sanitize.ts           # Input sanitization
@@ -276,7 +294,7 @@ openssl rand -hex 16
 ```
 
 **Web UI features:**
-- Dashboard home page with stats, top tools, recent conversations
+- Dashboard home page with server health, stats, widgets, quick links, recent conversations
 - Dracula theme (default) + light theme with toggle (persisted)
 - Collapsible tool call display with duration and output
 - Favorites, tags, archive with functional UI controls
@@ -286,6 +304,11 @@ openssl rand -hex 16
 - User ownership filtering ("My conversations" / "All")
 - `/weblogin` Slack command for magic login links
 - Login page at `/login` for emergency admin access
+- Notification bell in nav with unread badge, dropdown, and `/notifications` page
+- Server health cards (uptime, load, memory, disk) with 60s auto-refresh
+- Per-user quick links / bookmarks on dashboard
+- Plugin dashboard widgets (contributed via `getWidgets()`)
+- Plugin web pages under `/p/{pluginName}/` with nav bar entries
 - Mobile responsive with hamburger menu at 640px
 - Keyboard shortcuts (press `?` in the web UI for full list):
 
@@ -313,6 +336,19 @@ openssl rand -hex 16
 - Sessions are stored in SQLite and cleaned up hourly
 - Re-login invalidates existing sessions for that user
 - Keep `WEB_AUTH_TOKEN` secret — it is both the signing key and the emergency admin credential
+
+**REST API endpoints** (all require session auth):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health/server` | Server health metrics (cached 60s) |
+| GET | `/api/notifications?unread=true&limit=50` | List notifications |
+| POST | `/api/notifications/read-all` | Mark all as read |
+| POST | `/api/notifications/:id/read` | Mark single as read |
+| GET | `/api/links` | List user's quick links |
+| POST | `/api/links` | Add a quick link (`{ title, url, icon? }`) |
+| DELETE | `/api/links/:id` | Remove a quick link |
+| PUT | `/api/links/reorder` | Reorder links (`{ orderedIds: number[] }`) |
 
 ### Context Directory
 
@@ -403,11 +439,15 @@ Extend the bot with custom slash commands and Claude AI tools via plugins.
 
 ```typescript
 import type { Plugin, PluginContext } from '../src/plugins/index.js';
+import { renderPluginPage, pluginCard } from '../src/plugins/index.js';
 
 const myPlugin: Plugin = {
   name: 'my-plugin',
   version: '1.0.0',
   description: 'My custom plugin',
+
+  // Nav bar link to plugin pages
+  webNavEntry: { label: 'My Plugin', icon: 'star' },
 
   // Register slash commands
   registerCommands(app) {
@@ -416,6 +456,22 @@ const myPlugin: Plugin = {
       await respond('Hello from my plugin!');
     });
   },
+
+  // Register web pages under /p/my-plugin/
+  registerWebRoutes(router) {
+    router.get('/', (req, res, ctx) => {
+      res.send(renderPluginPage({
+        title: 'My Plugin',
+        pluginName: ctx.name,
+        body: pluginCard('Status', '<p>All good</p>'),
+      }));
+    });
+  },
+
+  // Dashboard widgets
+  getWidgets: () => [
+    { title: 'My Plugin', html: '<p>Status: OK</p>', priority: 50 },
+  ],
 
   // Optional: Provide Claude AI tools
   tools: [
@@ -431,6 +487,8 @@ const myPlugin: Plugin = {
 
   // Optional: Async initialization with database access
   init: async (ctx: PluginContext) => {
+    ctx.notify('Plugin loaded', { level: 'info' });
+
     // Create plugin tables using ctx.db (scoped to plugin_myname_*)
     ctx.db.exec(`
       CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}data (
@@ -453,11 +511,14 @@ export default myPlugin;
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | Unique identifier |
+| `name` | Yes | Unique identifier (lowercase, `[a-z][a-z0-9_-]{0,49}`) |
 | `version` | Yes | Semver version |
 | `description` | No | Help text |
 | `helpEntries` | No | Structured help entries for `/help` display |
 | `registerCommands` | No | Function to register Slack commands |
+| `registerWebRoutes` | No | Register web pages under `/p/{name}/` (see Web Routes) |
+| `webNavEntry` | No | `{ label, icon? }` — nav bar link to plugin pages |
+| `getWidgets` | No | Return `DashboardWidget[]` for the home page (see Widgets) |
 | `tools` | No | Array of Claude AI tool definitions |
 | `init` | No | Async setup hook with `PluginContext` (10s timeout) |
 | `destroy` | No | Cleanup hook with `PluginContext` (5s timeout) |
@@ -531,6 +592,110 @@ init: async (ctx: PluginContext) => {
 | `maxTokens` | plugin default | Max response tokens |
 | `images` | - | Base64-encoded images for multimodal requests |
 | `localImagePath` | - | Local image file path (CLI provider only) |
+
+### Plugin Notifications
+
+Plugins can send notifications to the notification center via `ctx.notify()`.
+
+```typescript
+init: async (ctx: PluginContext) => {
+  ctx.notify('Plugin initialized', { level: 'info', body: 'v1.0.0 loaded' });
+},
+
+// In a command handler:
+ctx.notify('Backup failed', {
+  level: 'error',
+  body: 'S3 upload timed out',
+  link: '/p/my-plugin/backups',
+});
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `level` | `'info'` | `'info'`, `'warn'`, or `'error'` |
+| `body` | - | Additional detail text |
+| `link` | - | URL to navigate to when clicked |
+
+Notifications appear in the nav bar bell icon and the `/notifications` page.
+
+### Dashboard Widgets
+
+Plugins can contribute summary cards to the dashboard home page.
+
+```typescript
+const myPlugin: Plugin = {
+  name: 'my-plugin',
+  version: '1.0.0',
+  getWidgets: () => [
+    {
+      title: 'My Stats',
+      html: '<p>Active: 5</p>',
+      icon: 'chart',
+      link: '/p/my-plugin/',
+      priority: 10,
+      size: 'medium',
+    },
+  ],
+};
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `title` | Yes | Card header (HTML-escaped) |
+| `html` | Yes | Card body (**rendered verbatim** — plugin must escape user data) |
+| `icon` | No | Icon name from the icon system |
+| `link` | No | Makes title clickable (sanitized via allowlist) |
+| `priority` | No | Sort order (lower first, default: 100) |
+| `size` | No | `'small'`, `'medium'`, or `'large'` (grid span) |
+
+### Plugin Web Routes
+
+Plugins can register web pages mounted under `/p/{pluginName}/`.
+
+```typescript
+const myPlugin: Plugin = {
+  name: 'my-plugin',
+  version: '1.0.0',
+  webNavEntry: { label: 'My Plugin', icon: 'star' },
+
+  registerWebRoutes(router) {
+    router.get('/', (req, res, ctx) => {
+      res.send(renderPluginPage({
+        title: 'My Plugin',
+        pluginName: ctx.name,
+        body: pluginCard('Stats', pluginTable(['Metric', 'Value'], [['CPU', '42%']])),
+      }));
+    });
+
+    router.post('/action', (req, res, ctx) => {
+      // Handle form submission
+      res.json({ success: true });
+    });
+  },
+};
+```
+
+Routes are:
+- Scoped to `/p/{pluginName}/` — path traversal rejected
+- Protected by session auth middleware
+- Wrapped with error handling (500 on uncaught errors)
+- Provided `PluginContext` as third argument
+
+### Plugin Template Helpers
+
+Shared utilities for building themed plugin pages. Import from `../src/plugins/index.js`:
+
+| Function | Description |
+|----------|-------------|
+| `renderPluginPage(opts)` | Full page wrapped in standard shell (nav, theme, shortcuts) |
+| `pluginStyles(name, css)` | Scope CSS under `.plugin-{name}` class |
+| `pluginCard(title, body, opts?)` | Themed card component |
+| `pluginTable(headers, rows)` | Theme-aware HTML table (auto-escaped) |
+| `pluginChart(data)` | Horizontal CSS bar chart |
+| `escapeHtml(text)` | HTML entity escaping |
+| `icon(name, size)` | Inline SVG icon |
+| `sanitizeUrl(url)` | URL allowlist (http/https/relative only) |
+| `formatTimestamp(ts)` | Human-readable date/time |
 
 ### Plugin Security
 

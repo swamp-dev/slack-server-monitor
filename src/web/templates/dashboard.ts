@@ -5,6 +5,7 @@
 import type { SessionSummary, SessionStats, TagInfo } from '../../services/conversation-store.js';
 import type { DashboardWidget } from '../../plugins/types.js';
 import type { QuickLink } from '../../services/quick-links-store.js';
+import type { ServerHealth } from '../../services/server-health.js';
 import { escapeHtml, sanitizeUrl } from './utils.js';
 import { icon } from './icons.js';
 import { wrapInShell } from './shell.js';
@@ -276,6 +277,60 @@ const dashboardStyles = `
   @media (max-width: 768px) {
     .widget-large { grid-column: span 1; }
   }
+  .health-section {
+    margin-bottom: 24px;
+  }
+  .health-section h2 {
+    font-size: 0.9rem;
+    margin: 0 0 12px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+  }
+  .health-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .health-card {
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+  }
+  .health-card .health-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .health-card .health-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+  .health-card .health-detail {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+  .health-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-top: 8px;
+    overflow: hidden;
+  }
+  .health-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.5s ease;
+  }
+  .health-bar-fill.ok { background: var(--green); }
+  .health-bar-fill.warn { background: #f1fa8c; }
+  .health-bar-fill.danger { background: #ff5555; }
   .quick-links-section {
     margin-bottom: 24px;
   }
@@ -354,6 +409,7 @@ export function renderDashboard(
   widgets?: DashboardWidget[],
   unreadCount?: number,
   quickLinks?: QuickLink[],
+  health?: ServerHealth | null,
 ): string {
   const greeting = getGreeting();
 
@@ -473,6 +529,51 @@ export function renderDashboard(
       <a href="/c">${icon('message-circle', 16)} All Conversations</a>
     </div>`;
 
+  // Server health section
+  const healthHtml = health
+    ? (() => {
+        const memPct = health.memory.percentUsed;
+        const memClass = memPct > 90 ? 'danger' : memPct > 70 ? 'warn' : 'ok';
+        const load1 = health.loadAverage[0];
+        const loadClass = load1 > health.cpu.cores * 2 ? 'danger' : load1 > health.cpu.cores ? 'warn' : 'ok';
+        const topDisk = health.disks.length > 0
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+          ? health.disks.reduce((max, d) => d.percentUsed > max.percentUsed ? d : max, health.disks[0]!)
+          : null;
+        const diskPct = topDisk?.percentUsed ?? 0;
+        const diskClass = diskPct > 90 ? 'danger' : diskPct > 75 ? 'warn' : 'ok';
+
+        return `<div class="health-section" id="health-section">
+          <h2>${icon('home', 14)} Server Health</h2>
+          <div class="health-grid">
+            <div class="health-card">
+              <div class="health-label">Uptime</div>
+              <div class="health-value" id="h-uptime">${escapeHtml(health.uptime)}</div>
+              <div class="health-detail">${String(health.cpu.cores)} cores</div>
+            </div>
+            <div class="health-card">
+              <div class="health-label">Load Average</div>
+              <div class="health-value" id="h-load">${load1.toFixed(2)}</div>
+              <div class="health-detail">5m: ${health.loadAverage[1].toFixed(2)} · 15m: ${health.loadAverage[2].toFixed(2)}</div>
+              <div class="health-bar"><div class="health-bar-fill ${loadClass}" style="width:${String(Math.min(100, Math.round((load1 / Math.max(1, health.cpu.cores)) * 100)))}%"></div></div>
+            </div>
+            <div class="health-card">
+              <div class="health-label">Memory</div>
+              <div class="health-value" id="h-mem">${String(memPct)}%</div>
+              <div class="health-detail">${String(health.memory.used)}MB / ${String(health.memory.total)}MB</div>
+              <div class="health-bar"><div class="health-bar-fill ${memClass}" style="width:${String(memPct)}%"></div></div>
+            </div>
+            <div class="health-card">
+              <div class="health-label">Disk</div>
+              <div class="health-value" id="h-disk">${String(diskPct)}%</div>
+              <div class="health-detail">${topDisk ? `${escapeHtml(topDisk.used)} / ${escapeHtml(topDisk.size)} (${escapeHtml(topDisk.mountPoint)})` : 'N/A'}</div>
+              <div class="health-bar"><div class="health-bar-fill ${diskClass}" style="width:${String(diskPct)}%"></div></div>
+            </div>
+          </div>
+        </div>`;
+      })()
+    : '';
+
   // Quick links section
   const effectiveLinks = quickLinks && quickLinks.length > 0 ? quickLinks : [];
   const quickLinksHtml = effectiveLinks.length > 0
@@ -525,6 +626,7 @@ export function renderDashboard(
       <div class="subtitle">Last 24 hours: ${String(stats.totalSessions)} sessions, ${String(stats.totalMessages)} messages, ${String(stats.totalToolCalls)} tool calls</div>
     </div>
     ${quickActionsHtml}
+    ${healthHtml}
     ${quickLinksHtml}
     ${statsHtml}
     ${widgetsHtml}
@@ -534,10 +636,37 @@ export function renderDashboard(
     </div>
   </main>`;
 
+  // Auto-refresh health cards every 60s
+  const healthRefreshScript = health ? `
+  <script>
+  (function() {
+    setInterval(function() {
+      fetch('/api/health/server')
+        .then(function(r) { return r.json(); })
+        .then(function(h) {
+          if (!h || !h.uptime) return;
+          var u = document.getElementById('h-uptime');
+          var l = document.getElementById('h-load');
+          var m = document.getElementById('h-mem');
+          var d = document.getElementById('h-disk');
+          if (u) u.textContent = h.uptime;
+          if (l) l.textContent = h.loadAverage[0].toFixed(2);
+          if (m) m.textContent = h.memory.percentUsed + '%';
+          if (d && h.disks && h.disks.length > 0) {
+            var top = h.disks.reduce(function(mx, dk) { return dk.percentUsed > mx.percentUsed ? dk : mx; }, h.disks[0]);
+            d.textContent = top.percentUsed + '%';
+          }
+        })
+        .catch(function() {});
+    }, 60000);
+  })();
+  </script>` : '';
+
   return wrapInShell({
     title: 'Dashboard',
     styles: dashboardStyles,
     body: bodyHtml,
+    scripts: healthRefreshScript,
     unreadCount,
   });
 }
