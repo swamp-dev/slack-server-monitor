@@ -34,7 +34,28 @@ export function wrapInShell(opts: ShellOptions): string {
     : '';
   const hljsScript = highlightJs
     ? `<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp" crossorigin="anonymous"></script>
-  <script>hljs.highlightAll();</script>`
+  <script>hljs.highlightAll();</script>
+  <script>
+  (function() {
+    document.addEventListener('click', function(e) {
+      var btn = e.target.closest('.code-copy-btn');
+      if (!btn) return;
+      var block = btn.closest('.code-block');
+      if (!block) return;
+      var code = block.querySelector('pre code');
+      if (!code) return;
+      if (!navigator.clipboard) return;
+      navigator.clipboard.writeText(code.textContent || '').then(function() {
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(function() { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+      }).catch(function() {
+        btn.textContent = 'Failed';
+        setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+      });
+    });
+  })();
+  </script>`
     : '';
 
   const pluginNavEntries = getPluginNavEntries();

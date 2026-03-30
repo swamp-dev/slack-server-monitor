@@ -377,7 +377,7 @@ export function getBaseStyles(): string {
     box-shadow: 0 0 8px rgba(255, 121, 198, 0.3);
   }
 
-  /* Code */
+  /* Inline code */
   code {
     font-family: 'SF Mono', 'Fira Code', 'Monaco', 'Inconsolata', monospace;
     background: var(--code-bg);
@@ -386,6 +386,60 @@ export function getBaseStyles(): string {
     font-size: 0.875em;
   }
 
+  /* Code block wrapper */
+  .code-block {
+    margin: 12px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid var(--border);
+    min-height: 32px;
+  }
+
+  .code-lang {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    font-family: 'SF Mono', monospace;
+    text-transform: lowercase;
+  }
+
+  .code-copy-btn {
+    font-size: 0.6875rem;
+    font-family: inherit;
+    color: var(--text-muted);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+  }
+
+  .code-copy-btn:hover {
+    color: var(--text);
+    border-color: var(--border);
+  }
+
+  .code-copy-btn.copied {
+    color: var(--green);
+  }
+
+  .code-block pre {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  /* Standalone pre (without .code-block wrapper, e.g. tool call output) */
   pre {
     background: var(--code-bg);
     border-radius: 8px;
@@ -400,6 +454,17 @@ export function getBaseStyles(): string {
     padding: 0;
     font-size: 0.875rem;
     line-height: 1.5;
+  }
+
+  /* Diff highlighting */
+  .language-diff .hljs-addition {
+    color: var(--green);
+    background: rgba(80, 250, 123, 0.1);
+  }
+
+  .language-diff .hljs-deletion {
+    color: var(--red);
+    background: rgba(255, 85, 85, 0.1);
   }
 
   /* Content typography */

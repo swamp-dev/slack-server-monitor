@@ -53,6 +53,18 @@ const renderer: Partial<Renderer> = {
   html({ text }: Tokens.HTML) {
     return escapeHtml(text);
   },
+  // Code blocks with language label and copy button
+  code({ text, lang }: Tokens.Code) {
+    const language = lang ? escapeHtml(lang.split(/\s/)[0] ?? '') : '';
+    const langClass = language ? ` class="language-${language}"` : '';
+    const langLabel = language
+      ? `<span class="code-lang">${language}</span>`
+      : '';
+    return `<div class="code-block">`
+      + `<div class="code-block-header">${langLabel}<button class="code-copy-btn" type="button" title="Copy code">Copy</button></div>`
+      + `<pre><code${langClass}>${escapeHtml(text)}</code></pre>`
+      + `</div>`;
+  },
 };
 
 // Configure marked with security-focused defaults

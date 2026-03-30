@@ -76,6 +76,65 @@ describe('web templates', () => {
       expect(html).toContain('console.log(&quot;hello&quot;);');
     });
 
+    it('should wrap code blocks with language label and copy button', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: '```typescript\nconst x = 1;\n```' },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, [], metadata);
+
+      expect(html).toContain('class="code-block"');
+      expect(html).toContain('class="code-block-header"');
+      expect(html).toContain('class="code-lang"');
+      expect(html).toContain('>typescript<');
+      expect(html).toContain('class="code-copy-btn"');
+      expect(html).toContain('>Copy<');
+    });
+
+    it('should render code blocks without language label when no lang specified', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: '```\nplain text\n```' },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, [], metadata);
+
+      expect(html).toContain('class="code-block"');
+      expect(html).toContain('class="code-copy-btn"');
+      // No language label
+      expect(html).not.toContain('class="code-lang"');
+    });
+
+    it('should not affect inline code with code-block wrapper', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: 'Use `docker ps` to list containers.' },
+      ];
+      const metadata = {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const html = renderConversation(messages, [], metadata);
+
+      expect(html).toContain('<code>docker ps</code>');
+      // Inline code should not generate a code-block div in the message content
+      const messageContent = html.split('message-content')[1] ?? '';
+      expect(messageContent).not.toContain('class="code-block"');
+    });
+
     it('should format inline code', () => {
       const messages: ConversationMessage[] = [
         { role: 'assistant', content: 'Run `docker ps` to see containers.' },
