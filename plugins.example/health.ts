@@ -29,6 +29,7 @@ import type { ToolDefinition } from '../src/services/tools/types.js';
 import type { PluginDatabase } from '../src/services/plugin-database.js';
 import { header, section, divider, context, buildChannelResponse } from '../src/formatters/blocks.js';
 import { logger } from '../src/utils/logger.js';
+import { registerHealthWebRoutes, getHealthWidgets, setSSE } from './health/web.js';
 
 // =============================================================================
 // Module-level state
@@ -1494,12 +1495,21 @@ const healthPlugin: Plugin = {
     { command: '/health vax <name>', description: 'Show vaccination history', group: 'Health - Vaccinations' },
   ],
 
+  webNavEntry: { label: 'Health', icon: 'heart' },
+
   registerCommands: registerHealthCommand,
+  registerWebRoutes: registerHealthWebRoutes,
+
+  getWidgets(): import('../src/plugins/types.js').DashboardWidget[] {
+    if (!pluginDb) return [];
+    return getHealthWidgets();
+  },
 
   tools: [familyHealthSummaryTool, logDoseTool, queryHealthTool],
 
   init: async (ctx: PluginContext) => {
     pluginDb = ctx.db;
+    setSSE(ctx.sse);
 
     // Enable foreign keys for cascade deletes
     ctx.db.exec('PRAGMA foreign_keys = ON');
