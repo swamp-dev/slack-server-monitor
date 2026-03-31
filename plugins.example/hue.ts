@@ -41,6 +41,7 @@ import { sceneTools } from './hue/tools-scenes.js';
 import { queryTools } from './hue/tools-query.js';
 import { stopAll } from './hue/effects-registry.js';
 import { initSceneCache } from './hue/scene-cache.js';
+import { registerHueWebRoutes, getHueWidgets, startSSEPolling, stopSSEPolling } from './hue/web.js';
 
 // =============================================================================
 // Claude AI Tools
@@ -226,13 +227,21 @@ const huePlugin: Plugin = {
     });
   },
 
+  webNavEntry: { label: 'Hue', icon: 'lightbulb' },
+
+  registerWebRoutes: registerHueWebRoutes,
+
+  getWidgets: getHueWidgets,
+
   tools: [...tools, ...effectTools, ...controlTools, ...sceneTools, ...queryTools],
 
   init: async (ctx) => {
     initSceneCache(ctx.db);
+    startSSEPolling(ctx);
   },
 
   destroy: async () => {
+    stopSSEPolling();
     stopAll();
   },
 };
