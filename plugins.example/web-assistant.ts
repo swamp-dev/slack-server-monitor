@@ -252,7 +252,7 @@ const fetchPageTool: ToolDefinition = {
 // =============================================================================
 
 const webAssistant: Plugin = {
-  name: 'web-assistant',
+  name: 'web_assistant',
   version: '1.0.0',
   description: 'Web search and page fetching for general-purpose assistance',
 
