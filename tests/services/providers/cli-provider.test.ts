@@ -1,14 +1,67 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CliProvider } from '../../../src/services/providers/cli-provider.js';
+import type { CliProviderConfig, UserConfig, ConversationMessage } from '../../../src/services/providers/types.js';
+
+// Mock child_process.spawn for callCli tests
+const mockStdin = { write: vi.fn(), end: vi.fn() };
+const mockStdout = { on: vi.fn() };
+const mockStderr = { on: vi.fn() };
+const mockProc = {
+  stdin: mockStdin,
+  stdout: mockStdout,
+  stderr: mockStderr,
+  on: vi.fn(),
+};
+
+vi.mock('child_process', () => ({
+  spawn: vi.fn(() => mockProc),
+}));
+
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    writeFileSync: vi.fn(),
+    unlinkSync: vi.fn(),
+  };
+});
+
+vi.mock('../../../src/config/prompts.js', () => ({
+  buildSystemPrompt: vi.fn(() => 'System prompt'),
+}));
+
+// Mock executeTool to control tool results in the ask() loop
+vi.mock('../../../src/services/tools/index.js', () => ({
+  getToolSpecs: vi.fn(() => [
+    { name: 'test_tool', description: 'Test', input_schema: { type: 'object', properties: {} } },
+  ]),
+  executeTool: vi.fn(async (id: string) => ({
+    toolUseId: id,
+    content: 'tool output',
+    isError: false,
+  })),
+}));
 
 describe('CliProvider', () => {
-  const config = {
+  const config: CliProviderConfig = {
     cliPath: 'claude',
     model: 'sonnet',
     maxTokens: 2048,
     maxToolCalls: 10,
     maxIterations: 20,
     cliTimeoutMs: 300000,
+    contextWindowTokens: 200000,
+    contextTruncationThreshold: 0.85,
+    contextWarningThreshold: 0.7,
+  };
+
+  const defaultUserConfig: UserConfig = {
+    disabledTools: [],
+    toolConfig: {
+      allowedDirs: ['/tmp'],
+      maxFileSizeKb: 100,
+      maxLogLines: 50,
+    },
   };
 
   describe('constructor', () => {
@@ -19,10 +72,8 @@ describe('CliProvider', () => {
   });
 
   describe('parseResponse', () => {
-    // Access private method for testing by creating an instance and using type assertion
     function parseResponse(response: string) {
       const provider = new CliProvider(config);
-      // Use bind trick to access private method
       const parse = (provider as unknown as { parseResponse: (r: string) => { text: string; toolCallRequests: unknown[] } }).parseResponse.bind(provider);
       return parse(response);
     }
@@ -100,7 +151,6 @@ But I continue anyway.`;
 
       const result = parseResponse(response);
 
-      // Should not crash, just skip the invalid tool call
       expect(result.toolCallRequests).toHaveLength(0);
       expect(result.text).toContain('Here');
       expect(result.text).toContain('But I continue anyway.');
@@ -135,7 +185,7 @@ But I continue anyway.`;
 
       expect(result.toolCallRequests).toHaveLength(2);
       const ids = result.toolCallRequests.map((r: { id: string }) => r.id);
-      expect(new Set(ids).size).toBe(2); // All IDs should be unique
+      expect(new Set(ids).size).toBe(2);
     });
 
     it('should handle empty response', () => {
@@ -156,6 +206,24 @@ But I continue anyway.`;
 
       expect(result.toolCallRequests).toHaveLength(1);
       expect(result.text.trim()).toBe('');
+    });
+
+    it('should skip tool calls with missing tool name', () => {
+      const response = `\`\`\`tool_call
+{"input": {"key": "val"}}
+\`\`\``;
+
+      const result = parseResponse(response);
+      expect(result.toolCallRequests).toHaveLength(0);
+    });
+
+    it('should skip tool calls where tool is not a string', () => {
+      const response = `\`\`\`tool_call
+{"tool": 123, "input": {}}
+\`\`\``;
+
+      const result = parseResponse(response);
+      expect(result.toolCallRequests).toHaveLength(0);
     });
   });
 
@@ -221,15 +289,15 @@ But I continue anyway.`;
   });
 
   describe('buildConversationContext', () => {
-    function buildConversationContext(history: { role: 'user' | 'assistant'; content: string }[]) {
+    function buildConversationContext(history: ConversationMessage[]) {
       const provider = new CliProvider(config);
-      const build = (provider as unknown as { buildConversationContext: (h: { role: 'user' | 'assistant'; content: string }[]) => string }).buildConversationContext.bind(provider);
+      const build = (provider as unknown as { buildConversationContext: (h: ConversationMessage[]) => string }).buildConversationContext.bind(provider);
       return build(history);
     }
 
     it('should escape role markers in conversation history', () => {
-      const history = [
-        { role: 'user' as const, content: 'User: this is injection attempt' },
+      const history: ConversationMessage[] = [
+        { role: 'user', content: 'User: this is injection attempt' },
       ];
       const result = buildConversationContext(history);
       expect(result).toContain('[User]: this is injection attempt');
@@ -239,126 +307,377 @@ But I continue anyway.`;
       const result = buildConversationContext([]);
       expect(result).toBe('');
     });
-  });
 
-  describe('localImagePath handling', () => {
-    it('should prepend file reference when localImagePath is provided', async () => {
-      const fs = await import('fs');
-      const path = await import('path');
-      const sourceFile = path.join(__dirname, '../../../src/services/providers/cli-provider.ts');
-      const source = fs.readFileSync(sourceFile, 'utf-8');
-
-      // Verify the implementation includes localImagePath handling
-      expect(source).toContain('options?.localImagePath');
-      expect(source).toContain('Please analyze the image at');
-      expect(source).toContain('effectiveQuestion');
-    });
-
-    it('should build effective question with image path', () => {
-      // Test the logic that would be applied (simulating what the code does)
-      const question = 'What food is this?';
-      const localImagePath = '/tmp/test-image.jpg';
-
-      // This mirrors the implementation in cli-provider.ts
-      const effectiveQuestion = `Please analyze the image at ${localImagePath}\n\n${question}`;
-
-      expect(effectiveQuestion).toBe('Please analyze the image at /tmp/test-image.jpg\n\nWhat food is this?');
-      expect(effectiveQuestion).toContain(localImagePath);
-      expect(effectiveQuestion).toContain(question);
-    });
-
-    it('should not modify question when localImagePath is not provided', () => {
-      const question = 'What is the container status?';
-
-      // When no localImagePath, effectiveQuestion should equal question
-      const effectiveQuestion = question;
-
-      expect(effectiveQuestion).toBe(question);
-    });
-
-    it('should require absolute path for localImagePath', async () => {
-      const fs = await import('fs');
-      const path = await import('path');
-      const sourceFile = path.join(__dirname, '../../../src/services/providers/cli-provider.ts');
-      const source = fs.readFileSync(sourceFile, 'utf-8');
-
-      // Verify the implementation validates absolute paths
-      expect(source).toContain("if (!options.localImagePath.startsWith('/'))");
-      expect(source).toContain('localImagePath must be an absolute path');
+    it('should format user and assistant messages correctly', () => {
+      const history: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi there' },
+      ];
+      const result = buildConversationContext(history);
+      expect(result).toContain('User: Hello');
+      expect(result).toContain('Assistant: Hi there');
     });
   });
 
-  describe('cliTimeoutMs configuration', () => {
-    let source: string;
+  describe('buildPromptWithToolResults', () => {
+    function buildPromptWithToolResults(
+      context: string,
+      toolResults: { id: string; name: string; result: string; isError: boolean }[]
+    ) {
+      const provider = new CliProvider(config);
+      const build = (provider as unknown as {
+        buildPromptWithToolResults: (c: string, r: { id: string; name: string; result: string; isError: boolean }[]) => string
+      }).buildPromptWithToolResults.bind(provider);
+      return build(context, toolResults);
+    }
 
-    beforeAll(async () => {
-      const fs = await import('fs');
-      const path = await import('path');
-      const sourceFile = path.join(__dirname, '../../../src/services/providers/cli-provider.ts');
-      source = fs.readFileSync(sourceFile, 'utf-8');
+    it('should return context as-is when no tool results', () => {
+      const result = buildPromptWithToolResults('some context', []);
+      expect(result).toBe('some context');
     });
 
-    it('should use config.cliTimeoutMs instead of hardcoded timeout', () => {
-      // The hardcoded 120000 should no longer be present
-      expect(source).not.toContain('timeout: 120000');
-      // Instead it should reference the config value
-      expect(source).toContain('this.config.cliTimeoutMs');
+    it('should append tool results section', () => {
+      const result = buildPromptWithToolResults('context', [
+        { id: 'tool-1', name: 'get_status', result: 'running', isError: false },
+      ]);
+      expect(result).toContain('## Tool Results');
+      expect(result).toContain('get_status (tool-1)');
+      expect(result).toContain('running');
+      expect(result).toContain('continue your analysis');
     });
 
-    it('should produce a helpful error message for exit code 143 (SIGTERM)', () => {
-      // Exit code 143 means the process was killed (likely by timeout)
-      expect(source).toContain('CLAUDE_CLI_TIMEOUT_MS');
-      expect(source).toContain('143');
+    it('should mark error results with Error label', () => {
+      const result = buildPromptWithToolResults('context', [
+        { id: 'tool-2', name: 'bad_tool', result: 'Something failed', isError: true },
+      ]);
+      expect(result).toContain('**Error:**');
+      expect(result).toContain('Something failed');
+    });
+
+    it('should include multiple tool results', () => {
+      const result = buildPromptWithToolResults('context', [
+        { id: 't1', name: 'tool_a', result: 'result a', isError: false },
+        { id: 't2', name: 'tool_b', result: 'result b', isError: true },
+      ]);
+      expect(result).toContain('tool_a (t1)');
+      expect(result).toContain('tool_b (t2)');
+      expect(result).toContain('result a');
+      expect(result).toContain('result b');
+    });
+  });
+
+  describe('ask() method', () => {
+    let provider: CliProvider;
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      provider = new CliProvider(config);
+
+      // Reset mockProc handlers
+      mockProc.on.mockReset();
+      mockStdout.on.mockReset();
+      mockStderr.on.mockReset();
+      mockStdin.write.mockReset();
+      mockStdin.end.mockReset();
+    });
+
+    function setupCliResponse(response: string) {
+      // Simulate spawn behavior: stdout data event, then close with code 0
+      mockStdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') {
+          cb(Buffer.from(response));
+        }
+      });
+      mockStderr.on.mockImplementation(() => { /* noop */ });
+      mockProc.on.mockImplementation((event: string, cb: (code: number) => void) => {
+        if (event === 'close') {
+          // Use setTimeout to allow stdin.write/end to be called first
+          setTimeout(() => cb(0), 0);
+        }
+      });
+    }
+
+    it('should return response for simple question (no tool calls)', async () => {
+      setupCliResponse('The server is running fine.');
+
+      const result = await provider.ask('How is the server?', [], defaultUserConfig);
+
+      expect(result.response).toBe('The server is running fine.');
+      expect(result.toolCalls).toHaveLength(0);
+      expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+      expect(result.contextStatus).toBeDefined();
+    });
+
+    it('should include contextStatus in response', async () => {
+      setupCliResponse('All good.');
+
+      const result = await provider.ask('status?', [], defaultUserConfig);
+
+      expect(result.contextStatus).toBeDefined();
+      expect(result.contextStatus?.wasTruncated).toBe(false);
+      expect(result.contextStatus?.removedCount).toBe(0);
+      expect(typeof result.contextStatus?.percentUsed).toBe('number');
+    });
+
+    it('should fire onProgress callbacks', async () => {
+      setupCliResponse('Final answer.');
+      const progressEvents: unknown[] = [];
+
+      await provider.ask('question', [], defaultUserConfig, {
+        onProgress: (event) => progressEvents.push(event),
+      });
+
+      expect(progressEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'text', text: 'Final answer.' }),
+          expect.objectContaining({ type: 'done' }),
+        ])
+      );
+    });
+
+    it('should warn about base64 images without crashing', async () => {
+      setupCliResponse('I see your image.');
+
+      const result = await provider.ask('describe this', [], defaultUserConfig, {
+        images: [{ data: 'base64data', mediaType: 'image/png' }],
+      });
+
+      expect(result.response).toBe('I see your image.');
+    });
+
+    it('should prepend image path to question when localImagePath provided', async () => {
+      setupCliResponse('It is a cat.');
+
+      await provider.ask('what is this?', [], defaultUserConfig, {
+        localImagePath: '/tmp/image.jpg',
+      });
+
+      // Verify stdin.write was called with a prompt that includes the image path
+      expect(mockStdin.write).toHaveBeenCalled();
+      const writtenPrompt = mockStdin.write.mock.calls[0]?.[0] as string;
+      expect(writtenPrompt).toContain('/tmp/image.jpg');
+      expect(writtenPrompt).toContain('what is this?');
+    });
+
+    it('should reject relative localImagePath', async () => {
+      await expect(
+        provider.ask('what?', [], defaultUserConfig, {
+          localImagePath: 'relative/path.jpg',
+        })
+      ).rejects.toThrow('localImagePath must be an absolute path');
+    });
+
+    it('should return fallback response on empty CLI output', async () => {
+      setupCliResponse('');
+
+      const result = await provider.ask('hello', [], defaultUserConfig);
+
+      expect(result.response).toContain('unable to generate a response');
+    });
+
+    it('should handle tool call loop', async () => {
+      const { executeTool } = await import('../../../src/services/tools/index.js');
+      vi.mocked(executeTool).mockResolvedValue({
+        toolUseId: 'test-id',
+        content: 'container is running',
+        isError: false,
+      });
+
+      let callCount = 0;
+      // First call returns tool call, second call returns final answer
+      mockStdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') {
+          callCount++;
+          if (callCount === 1) {
+            cb(Buffer.from('Let me check.\n\n```tool_call\n{"tool": "test_tool", "input": {}}\n```'));
+          } else {
+            cb(Buffer.from('The container is running.'));
+          }
+        }
+      });
+      mockStderr.on.mockImplementation(() => { /* noop */ });
+      mockProc.on.mockImplementation((event: string, cb: (code: number) => void) => {
+        if (event === 'close') {
+          setTimeout(() => cb(0), 0);
+        }
+      });
+
+      const result = await provider.ask('check containers', [], defaultUserConfig);
+
+      expect(result.response).toBe('The container is running.');
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls[0]?.name).toBe('test_tool');
+    });
+
+    it('should enforce tool call limit', async () => {
+      const limitConfig = { ...config, maxToolCalls: 1 };
+      const limitProvider = new CliProvider(limitConfig);
+
+      const { executeTool } = await import('../../../src/services/tools/index.js');
+      vi.mocked(executeTool).mockResolvedValue({
+        toolUseId: 'test-id',
+        content: 'result',
+        isError: false,
+      });
+
+      // Return 2 tool calls in a single response (exceeding limit of 1)
+      mockStdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') {
+          cb(Buffer.from(`Analysis:
+\`\`\`tool_call
+{"tool": "tool1", "input": {}}
+\`\`\`
+\`\`\`tool_call
+{"tool": "tool2", "input": {}}
+\`\`\``));
+        }
+      });
+      mockStderr.on.mockImplementation(() => { /* noop */ });
+      mockProc.on.mockImplementation((event: string, cb: (code: number) => void) => {
+        if (event === 'close') {
+          setTimeout(() => cb(0), 0);
+        }
+      });
+
+      const result = await limitProvider.ask('do many things', [], defaultUserConfig);
+
+      expect(result.response).toContain('maximum number of tool calls');
+      expect(result.response).toContain('Analysis');
+    });
+
+    it('should enforce max iterations', async () => {
+      const iterConfig = { ...config, maxIterations: 1 };
+      const iterProvider = new CliProvider(iterConfig);
+
+      const { executeTool } = await import('../../../src/services/tools/index.js');
+      vi.mocked(executeTool).mockResolvedValue({
+        toolUseId: 'test-id',
+        content: 'result',
+        isError: false,
+      });
+
+      // Always return a tool call so the loop never exits naturally
+      mockStdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') {
+          cb(Buffer.from('```tool_call\n{"tool": "test_tool", "input": {}}\n```'));
+        }
+      });
+      mockStderr.on.mockImplementation(() => { /* noop */ });
+      mockProc.on.mockImplementation((event: string, cb: (code: number) => void) => {
+        if (event === 'close') {
+          setTimeout(() => cb(0), 0);
+        }
+      });
+
+      const result = await iterProvider.ask('infinite loop', [], defaultUserConfig);
+
+      expect(result.response).toContain('maximum iterations reached');
     });
   });
 
-  describe('callCli implementation requirements', () => {
-    // NOTE: Behavioral mocking of spawn() is complex in vitest due to module sealing.
-    // These tests verify critical implementation requirements via source inspection.
-    // See git commit for full bug analysis: CLI hangs without stdin.end().
-
-    let source: string;
-
-    beforeAll(async () => {
-      const fs = await import('fs');
-      const path = await import('path');
-      const sourceFile = path.join(__dirname, '../../../src/services/providers/cli-provider.ts');
-      source = fs.readFileSync(sourceFile, 'utf-8');
+  describe('callCli', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockProc.on.mockReset();
+      mockStdout.on.mockReset();
+      mockStderr.on.mockReset();
+      mockStdin.write.mockReset();
+      mockStdin.end.mockReset();
     });
 
-    it('must write prompt to stdin instead of passing as -p argument', () => {
-      // E2BIG fix: prompt is written to stdin to avoid ARG_MAX limit
-      // The -p flag should NOT be in the args array
-      expect(source).toContain('proc.stdin.write(prompt)');
-      expect(source).not.toMatch(/args\s*=\s*\[[\s\S]*?'-p',\s*prompt/);
+    function callCli(prompt: string, systemPrompt: string) {
+      const provider = new CliProvider(config);
+      const call = (provider as unknown as { callCli: (p: string, sp: string) => Promise<string> }).callCli.bind(provider);
+      return call(prompt, systemPrompt);
+    }
+
+    it('should resolve with stdout on exit code 0', async () => {
+      mockStdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') cb(Buffer.from('Hello '));
+      });
+      mockStderr.on.mockImplementation(() => { /* noop */ });
+      mockProc.on.mockImplementation((event: string, cb: (code: number) => void) => {
+        if (event === 'close') setTimeout(() => cb(0), 0);
+      });
+
+      const result = await callCli('test prompt', 'system prompt');
+      expect(result).toBe('Hello');
+      expect(mockStdin.write).toHaveBeenCalledWith('test prompt');
+      expect(mockStdin.end).toHaveBeenCalled();
     });
 
-    it('must write system prompt to temp file instead of passing as arg', () => {
-      // E2BIG fix: system prompt written to temp file to avoid ARG_MAX limit
-      expect(source).toContain('writeFileSync');
-      expect(source).toContain('--system-prompt-file');
-      // Should NOT pass system prompt string as arg
-      expect(source).not.toMatch(/'--system-prompt',\s*systemPrompt/);
+    it('should reject with timeout error on exit code 143', async () => {
+      mockStdout.on.mockImplementation(() => { /* noop */ });
+      mockStderr.on.mockImplementation(() => { /* noop */ });
+      mockProc.on.mockImplementation((event: string, cb: (code: number) => void) => {
+        if (event === 'close') setTimeout(() => cb(143), 0);
+      });
+
+      await expect(callCli('prompt', 'system')).rejects.toThrow('Claude took too long');
     });
 
-    it('must clean up temp file after CLI completes', () => {
-      // Temp file cleanup must happen in both success and error paths
-      expect(source).toContain('unlinkSync');
+    it('should reject with stderr on non-zero exit code', async () => {
+      mockStdout.on.mockImplementation(() => { /* noop */ });
+      mockStderr.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') cb(Buffer.from('authentication failed'));
+      });
+      mockProc.on.mockImplementation((event: string, cb: (code: number) => void) => {
+        if (event === 'close') setTimeout(() => cb(1), 0);
+      });
+
+      await expect(callCli('prompt', 'system')).rejects.toThrow('exited with code 1');
     });
 
-    it('must end stdin after writing prompt to signal EOF', () => {
-      // CRITICAL: stdin.end() must be called after write to signal EOF
-      const writeIndex = source.indexOf('proc.stdin.write(prompt)');
-      const endIndex = source.indexOf('proc.stdin.end()');
-      const onDataIndex = source.indexOf("proc.stdout.on('data'");
+    it('should reject on spawn error', async () => {
+      mockStdout.on.mockImplementation(() => { /* noop */ });
+      mockStderr.on.mockImplementation(() => { /* noop */ });
+      mockProc.on.mockImplementation((event: string, cb: (err: Error) => void) => {
+        if (event === 'error') setTimeout(() => cb(new Error('ENOENT')), 0);
+      });
 
-      expect(writeIndex).toBeGreaterThan(0);
-      expect(endIndex).toBeGreaterThan(writeIndex);
-      expect(onDataIndex).toBeGreaterThan(endIndex);
+      await expect(callCli('prompt', 'system')).rejects.toThrow('Failed to spawn Claude CLI');
     });
 
-    it('must have timeout configured as safety net', () => {
-      expect(source).toMatch(/timeout:\s*this\.config\.cliTimeoutMs/);
+    it('should clean up temp file on success', async () => {
+      const { unlinkSync } = await import('fs');
+
+      mockStdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') cb(Buffer.from('ok'));
+      });
+      mockStderr.on.mockImplementation(() => { /* noop */ });
+      mockProc.on.mockImplementation((event: string, cb: (code: number) => void) => {
+        if (event === 'close') setTimeout(() => cb(0), 0);
+      });
+
+      await callCli('prompt', 'system');
+      expect(unlinkSync).toHaveBeenCalled();
+    });
+
+    it('should clean up temp file on error', async () => {
+      const { unlinkSync } = await import('fs');
+
+      mockStdout.on.mockImplementation(() => { /* noop */ });
+      mockStderr.on.mockImplementation(() => { /* noop */ });
+      mockProc.on.mockImplementation((event: string, cb: (err: Error) => void) => {
+        if (event === 'error') setTimeout(() => cb(new Error('boom')), 0);
+      });
+
+      await callCli('prompt', 'system').catch(() => { /* expected */ });
+      expect(unlinkSync).toHaveBeenCalled();
     });
   });
+
+  describe('cleanupTmpFile', () => {
+    it('should not throw when file does not exist', async () => {
+      const provider = new CliProvider(config);
+      const cleanup = (provider as unknown as { cleanupTmpFile: (p: string) => void }).cleanupTmpFile.bind(provider);
+
+      const fs = await import('fs');
+      vi.mocked(fs.unlinkSync).mockImplementation(() => { throw new Error('ENOENT'); });
+
+      // Should not throw
+      expect(() => cleanup('/tmp/nonexistent')).not.toThrow();
+    });
+  });
+
 });
