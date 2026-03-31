@@ -188,8 +188,11 @@ export class CliProvider implements ClaudeProvider {
 
       if (toolCallRequests.length === 0) {
         // No tool calls - this is the final response
+        const finalText = text || 'I apologize, but I was unable to generate a response.';
+        options?.onProgress?.({ type: 'text', text: finalText });
+        options?.onProgress?.({ type: 'done' });
         return {
-          response: text || 'I apologize, but I was unable to generate a response.',
+          response: finalText,
           toolCalls,
           usage: {
             inputTokens: 0, // CLI doesn't expose token usage
@@ -203,8 +206,11 @@ export class CliProvider implements ClaudeProvider {
       toolCallCount += toolCallRequests.length;
       if (toolCallCount > this.config.maxToolCalls) {
         logger.warn('Tool call limit reached', { limit: this.config.maxToolCalls });
+        const limitText = `I reached the maximum number of tool calls (${String(this.config.maxToolCalls)}) while investigating. Here's what I found so far:\n\n${text}`;
+        options?.onProgress?.({ type: 'text', text: limitText });
+        options?.onProgress?.({ type: 'done' });
         return {
-          response: `I reached the maximum number of tool calls (${String(this.config.maxToolCalls)}) while investigating. Here's what I found so far:\n\n${text}`,
+          response: limitText,
           toolCalls,
           usage: { inputTokens: 0, outputTokens: 0 },
           contextStatus: contextStatusInfo,
@@ -214,6 +220,8 @@ export class CliProvider implements ClaudeProvider {
       // Execute tool calls
       toolResults = [];
       for (const toolRequest of toolCallRequests) {
+        options?.onProgress?.({ type: 'tool_call_start', toolName: toolRequest.name, input: toolRequest.input });
+
         const startTime = Date.now();
         const result = await executeTool(
           toolRequest.id,
@@ -222,6 +230,14 @@ export class CliProvider implements ClaudeProvider {
           userConfig.toolConfig
         );
         const durationMs = Date.now() - startTime;
+
+        options?.onProgress?.({
+          type: 'tool_call_end',
+          toolName: toolRequest.name,
+          output: result.content.slice(0, 500),
+          durationMs,
+          isError: result.isError ?? false,
+        });
 
         toolCalls.push({
           name: toolRequest.name,

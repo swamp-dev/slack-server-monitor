@@ -146,7 +146,7 @@ function renderContinueForm(): string {
 }
 
 /**
- * Render the continue form JavaScript
+ * Render the continue form JavaScript with SSE streaming support
  */
 function renderContinueScript(): string {
   return `
@@ -167,6 +167,10 @@ function renderContinueScript(): string {
         });
       }
 
+      function escapeHtml(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      }
+
       form.addEventListener('submit', function(e) {
         e.preventDefault();
         var message = input.value.trim();
@@ -174,13 +178,21 @@ function renderContinueScript(): string {
 
         submitBtn.disabled = true;
         spinner.style.display = 'block';
+        spinner.textContent = 'Connecting to Claude...';
         errorDiv.style.display = 'none';
+        input.value = '';
 
-        var skeleton = document.createElement('div');
-        skeleton.className = 'message assistant skeleton-message';
-        skeleton.innerHTML = '<div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div>';
+        // Add user message to the conversation
         var mainEl = document.querySelector('.container main') || document.querySelector('main');
-        if (mainEl) mainEl.appendChild(skeleton);
+        var userMsg = document.createElement('div');
+        userMsg.className = 'message user';
+        userMsg.innerHTML = '<div class="message-header">You</div><div class="message-content">' + escapeHtml(message) + '</div>';
+        if (mainEl) mainEl.insertBefore(userMsg, document.querySelector('.continue-form'));
+
+        // Create streaming area for tool calls and response
+        var streamArea = document.createElement('div');
+        streamArea.id = 'stream-area';
+        if (mainEl) mainEl.insertBefore(streamArea, document.querySelector('.continue-form'));
 
         fetch(window.location.pathname + '/ask', {
           method: 'POST',
@@ -190,14 +202,95 @@ function renderContinueScript(): string {
         })
         .then(function(res) { return res.json().then(function(data) { return { ok: res.ok, data: data }; }); })
         .then(function(result) {
-          if (result.ok) {
-            window.location.reload();
-          } else {
+          if (!result.ok) {
             errorDiv.textContent = result.data.error || 'An error occurred';
             errorDiv.style.display = 'block';
             submitBtn.disabled = false;
             spinner.style.display = 'none';
+            return;
           }
+
+          // Open SSE stream (30s fallback matches heartbeat interval)
+          var fallbackTimer = setTimeout(function() { window.location.reload(); }, 30000);
+          var es;
+          try {
+            es = new EventSource(window.location.pathname + '/stream');
+          } catch(err) {
+            setTimeout(function() { window.location.reload(); }, 3000);
+            return;
+          }
+
+          var gotEvents = false;
+          var toolCardIndex = 0;
+
+          es.addEventListener('tool_call_start', function(e) {
+            gotEvents = true;
+            try {
+              var data = JSON.parse(e.data);
+              spinner.textContent = 'Running ' + data.toolName + '...';
+              var card = document.createElement('div');
+              card.className = 'tool-call-streaming';
+              card.setAttribute('data-tc-index', String(toolCardIndex++));
+              card.innerHTML = '<span class="streaming-spinner"></span> <span class="tool-call-name">' + escapeHtml(data.toolName) + '</span>';
+              streamArea.appendChild(card);
+            } catch(err) {}
+          });
+
+          es.addEventListener('tool_call_end', function(e) {
+            try {
+              var data = JSON.parse(e.data);
+              // Find the last streaming card (most recent in-progress tool)
+              var cards = streamArea.querySelectorAll('.tool-call-streaming');
+              var card = cards.length > 0 ? cards[cards.length - 1] : null;
+              if (card) {
+                var statusClass = data.isError ? 'failure' : 'success';
+                var statusIcon = data.isError ? '✗' : '✓';
+                card.className = 'tool-call-complete';
+                card.innerHTML = '<span class="tool-call-status ' + statusClass + '">' + statusIcon + '</span> '
+                  + '<span class="tool-call-name">' + escapeHtml(data.toolName) + '</span>'
+                  + ' <span class="tool-call-duration">' + data.durationMs + 'ms</span>';
+              }
+            } catch(err) {}
+          });
+
+          es.addEventListener('text', function(e) {
+            gotEvents = true;
+            spinner.textContent = 'Finalizing response...';
+          });
+
+          es.addEventListener('done', function() {
+            clearTimeout(fallbackTimer);
+            es.close();
+            es.onerror = null;
+            window.location.reload();
+          });
+
+          es.addEventListener('error', function(e) {
+            if (e.data) {
+              try {
+                var data = JSON.parse(e.data);
+                errorDiv.textContent = data.message || 'An error occurred';
+                errorDiv.style.display = 'block';
+              } catch(err) {}
+            }
+            clearTimeout(fallbackTimer);
+            es.close();
+            es.onerror = null;
+            submitBtn.disabled = false;
+            spinner.style.display = 'none';
+            if (!gotEvents) {
+              setTimeout(function() { window.location.reload(); }, 3000);
+            }
+          });
+
+          es.onerror = function() {
+            if (!gotEvents) {
+              clearTimeout(fallbackTimer);
+              es.close();
+              es.onerror = null;
+              setTimeout(function() { window.location.reload(); }, 3000);
+            }
+          };
         })
         .catch(function(err) {
           errorDiv.textContent = 'Network error: ' + err.message;
@@ -319,6 +412,55 @@ const conversationDetailStyles = `
   .archive-btn:hover {
     background: rgba(255, 85, 85, 0.15);
     border-color: var(--red);
+  }
+
+  /* Streaming tool call cards */
+  .tool-call-streaming {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    margin: 6px 0;
+    background: var(--card-bg);
+    border: 1px solid var(--yellow);
+    border-radius: 8px;
+    font-size: 0.875rem;
+    animation: pulse-border 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse-border {
+    0%, 100% { border-color: var(--yellow); }
+    50% { border-color: var(--border); }
+  }
+
+  .tool-call-complete {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    margin: 6px 0;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.875rem;
+  }
+
+  .streaming-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--yellow);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  #stream-area {
+    margin: 12px 0;
   }
 `;
 

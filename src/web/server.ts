@@ -18,6 +18,8 @@ import { config, type WebConfig } from '../config/index.js';
 import { getConversationStore, type SessionSummary } from '../services/conversation-store.js';
 import { getSessionStore, closeSessionStore } from '../services/session-store.js';
 import { resolveToken, parseCookies, createLinkToken } from './auth.js';
+import { SSEConnectionManager } from './sse.js';
+import { getEventBus, resetEventBus } from '../services/event-bus.js';
 import { logger } from '../utils/logger.js';
 import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError, renderNotificationPage } from './templates/index.js';
 import { getPluginWidgets } from '../plugins/loader.js';
@@ -33,6 +35,7 @@ const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 let server: Server | null = null;
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+let sseManager: SSEConnectionManager | null = null;
 
 /**
  * Build cookie options string for Set-Cookie header
@@ -125,6 +128,7 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   const claudeConfig = config.claude;
   const dbPath = claudeConfig.dbPath;
   const app = express();
+  sseManager = new SSEConnectionManager();
 
   // Parse request bodies
   app.use(express.urlencoded({ extended: false }));
@@ -546,7 +550,11 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         return;
       }
 
-      // Process the turn (async — we handle the promise)
+      // Send immediate acknowledgment so client can open SSE stream
+      res.json({ success: true });
+
+      // Process the turn async, streaming progress via SSE
+      const streamChannel = `conversation:${threadTs}:${channelId}`;
       processConversationTurn({
         conversationId: conversation.id,
         threadTs,
@@ -554,10 +562,12 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         userId,
         userMessage: message,
         claudeConfig,
+        askOptions: {
+          onProgress: (event) => {
+            sseManager?.broadcast(streamChannel, event.type, event);
+          },
+        },
       })
-        .then(() => {
-          res.json({ success: true });
-        })
         .catch((err: unknown) => {
           const errMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
           logger.error('Web continuation failed', {
@@ -566,7 +576,7 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
             channelId,
             userId,
           });
-          res.status(500).json({ error: errMessage });
+          sseManager?.broadcast(streamChannel, 'error', { type: 'error', message: errMessage });
         });
     } catch (err) {
       const errMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -577,6 +587,29 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       });
       res.status(500).json({ error: errMessage });
     }
+  });
+
+  // ─── SSE: Conversation Stream ────────────────────────────────────────
+  app.get('/c/:threadTs/:channelId/stream', (req: Request, res: Response) => {
+    const threadTs = req.params.threadTs;
+    const channelId = req.params.channelId;
+    if (!threadTs || !channelId || typeof threadTs !== 'string' || typeof channelId !== 'string') {
+      res.status(400).json({ error: 'Invalid parameters' });
+      return;
+    }
+
+    // Verify the authenticated user owns this conversation
+    const userId = res.locals.userId as string | undefined;
+    if (userId) {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const conversation = store.getConversation(threadTs, channelId);
+      if (conversation && conversation.userId !== userId) {
+        res.status(403).json({ error: 'Access denied' });
+        return;
+      }
+    }
+
+    sseManager?.addClient(`conversation:${threadTs}:${channelId}`, res);
   });
 
   // Markdown export endpoint: GET /c/:threadTs/:channelId/export/md?tools=true|false
@@ -787,6 +820,23 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
   });
 
+  // ─── SSE: Notification Stream ─────────────────────────────────────────
+  app.get('/api/notifications/stream', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
+    sseManager?.addClient('notifications', res);
+  });
+
+  // Wire event bus to SSE broadcasts
+  const bus = getEventBus();
+  bus.on('notification:created', (notification) => {
+    sseManager?.broadcast('notifications', 'notification', notification);
+  });
+  bus.on('notification:read', (data) => {
+    sseManager?.broadcast('notifications', 'badge', data);
+  });
+  bus.on('notification:all-read', (data) => {
+    sseManager?.broadcast('notifications', 'badge', data);
+  });
+
   // ─── Plugin Web Routes ────────────────────────────────────────────────
   // Mount all plugin-registered web routes under /p/ with auth
   app.use('/p', sessionAuthMiddleware(webConfig, dbPath), getPluginExpressRouter());
@@ -877,6 +927,12 @@ export async function stopWebServer(): Promise<void> {
     clearInterval(cleanupTimer);
     cleanupTimer = null;
   }
+
+  if (sseManager) {
+    sseManager.shutdown();
+    sseManager = null;
+  }
+  resetEventBus();
 
   closeSessionStore();
   closeNotificationStore();

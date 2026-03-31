@@ -11,6 +11,16 @@ export interface ImageInput {
 }
 
 /**
+ * Progress event emitted during conversation processing
+ */
+export type ProgressEvent =
+  | { type: 'tool_call_start'; toolName: string; input: Record<string, unknown> }
+  | { type: 'tool_call_end'; toolName: string; output: string; durationMs: number; isError: boolean }
+  | { type: 'text'; text: string }
+  | { type: 'done' }
+  | { type: 'error'; message: string };
+
+/**
  * Options for the ask() method
  */
 export interface AskOptions {
@@ -18,6 +28,8 @@ export interface AskOptions {
   images?: ImageInput[];
   /** Path to a local image file for CLI provider to read */
   localImagePath?: string;
+  /** Callback for streaming progress events (tool calls, text chunks) */
+  onProgress?: (event: ProgressEvent) => void;
 }
 
 /**

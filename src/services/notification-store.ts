@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
+import { getEventBus } from './event-bus.js';
 
 /**
  * Notification record
@@ -78,7 +79,7 @@ export class NotificationStore {
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(source, level, title, body ?? null, link ?? null, now);
 
-    return {
+    const notification: Notification = {
       id: Number(result.lastInsertRowid),
       source,
       level,
@@ -88,6 +89,10 @@ export class NotificationStore {
       createdAt: now,
       readAt: null,
     };
+
+    getEventBus().emit('notification:created', notification);
+
+    return notification;
   }
 
   /**
@@ -128,6 +133,10 @@ export class NotificationStore {
       UPDATE notifications SET read_at = ? WHERE id = ? AND read_at IS NULL
     `).run(Date.now(), id);
 
+    if (result.changes > 0) {
+      getEventBus().emit('notification:read', { id, unreadCount: this.countUnread() });
+    }
+
     return result.changes > 0;
   }
 
@@ -139,6 +148,10 @@ export class NotificationStore {
     const result = this.db.prepare(`
       UPDATE notifications SET read_at = ? WHERE read_at IS NULL
     `).run(Date.now());
+
+    if (result.changes > 0) {
+      getEventBus().emit('notification:all-read', { unreadCount: 0 });
+    }
 
     return result.changes;
   }

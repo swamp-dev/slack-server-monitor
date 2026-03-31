@@ -212,6 +212,48 @@ export function wrapInShell(opts: ShellOptions): string {
     }
   })();
   </script>
+  <script>
+  (function() {
+    try {
+      if (typeof EventSource === 'undefined') return;
+      var es = new EventSource('/api/notifications/stream');
+      var badge = document.querySelector('.notif-badge');
+      var bell = document.querySelector('.notif-bell');
+
+      es.addEventListener('notification', function() {
+        if (!badge && bell) {
+          badge = document.createElement('span');
+          badge.className = 'notif-badge';
+          badge.textContent = '1';
+          bell.appendChild(badge);
+        } else if (badge) {
+          var count = parseInt(badge.textContent || '0', 10) + 1;
+          badge.textContent = String(count);
+        }
+      });
+
+      es.addEventListener('badge', function(e) {
+        try {
+          var data = JSON.parse(e.data);
+          var unread = data.unreadCount;
+          if (unread === 0) {
+            if (badge) badge.remove();
+            badge = null;
+          } else {
+            if (!badge && bell) {
+              badge = document.createElement('span');
+              badge.className = 'notif-badge';
+              bell.appendChild(badge);
+            }
+            if (badge) badge.textContent = String(unread);
+          }
+        } catch(err) {}
+      });
+
+      es.onerror = function() {};
+    } catch(e) {}
+  })();
+  </script>
   ${getKeyboardShortcutScript()}
   ${scripts}
   ${getKeyboardHelpOverlay()}

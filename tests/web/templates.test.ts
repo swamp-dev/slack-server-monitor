@@ -1923,7 +1923,7 @@ describe('web templates', () => {
           expect(html).toContain('outline');
         });
 
-        it('continue form shows skeleton state during processing', () => {
+        it('continue form uses SSE streaming during processing', () => {
           const messages: ConversationMessage[] = [
             { role: 'user', content: 'Hello' },
             { role: 'assistant', content: 'Hi!' },
@@ -1935,9 +1935,11 @@ describe('web templates', () => {
             updatedAt: Date.now(),
             canContinue: true,
           });
-          // The continue script should create a skeleton placeholder when submitting
-          expect(html).toContain('skeleton-message');
-          expect(html).toContain('skeleton skeleton-line');
+          // The continue script should open an EventSource for streaming
+          expect(html).toContain('EventSource');
+          expect(html).toContain('stream-area');
+          expect(html).toContain('tool_call_start');
+          expect(html).toContain('tool_call_end');
         });
       });
     });
