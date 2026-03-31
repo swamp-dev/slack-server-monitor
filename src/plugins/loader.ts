@@ -13,6 +13,8 @@ import { createPluginClaude, createDisabledPluginClaude } from '../services/plug
 import { getProvider, type ProviderConfig } from '../services/providers/index.js';
 import { getNotificationStore } from '../services/notification-store.js';
 import { createPluginRouter, clearPluginRoutes } from '../web/plugin-router.js';
+import { getSharedSSEManager } from '../web/sse.js';
+import type { PluginSSE } from './types.js';
 import { logger } from '../utils/logger.js';
 
 import type { Config } from '../config/schema.js';
@@ -264,6 +266,16 @@ export async function registerPlugins(app: App): Promise<void> {
       }
 
       const notifStore = getNotificationStore(config.claude?.dbPath ?? './data/claude.db');
+
+      // Create scoped SSE channel for this plugin.
+      // Always create the wrapper — closures check the shared manager at call time,
+      // so SSE works regardless of startup order (web server vs plugin loader).
+      const sseChannel = `plugin:${plugin.name}`;
+      const pluginSSE: PluginSSE = {
+        broadcast: (event, data) => { getSharedSSEManager()?.broadcast(sseChannel, event, data); },
+        clientCount: () => getSharedSSEManager()?.clientCount(sseChannel) ?? 0,
+      };
+
       const ctx: PluginContext = {
         db: pluginDb,
         name: plugin.name,
@@ -285,6 +297,7 @@ export async function registerPlugins(app: App): Promise<void> {
             });
           }
         },
+        sse: pluginSSE,  // Always present — no-ops silently when web server disabled
       };
 
       // Run init hook with timeout

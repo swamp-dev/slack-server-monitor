@@ -618,6 +618,38 @@ ctx.notify('Backup failed', {
 
 Notifications appear in the nav bar bell icon and the `/notifications` page.
 
+### Plugin SSE (Real-time Push)
+
+Plugins can push real-time events to web clients via Server-Sent Events. Each plugin gets a scoped SSE channel at `/p/{pluginName}/stream`, auto-mounted when the plugin registers web routes.
+
+```typescript
+// In init or command handler:
+ctx.sse?.broadcast('status-changed', { light: 'kitchen', state: 'on' });
+
+// Check connected clients:
+const count = ctx.sse?.clientCount() ?? 0;
+```
+
+**Client-side (in plugin web pages):**
+```javascript
+const es = new EventSource('/p/my-plugin/stream');
+es.addEventListener('status-changed', function(e) {
+  const data = JSON.parse(e.data);
+  // Update UI with real-time data
+});
+```
+
+| Method | Description |
+|--------|-------------|
+| `broadcast(event, data)` | Push an event to all clients viewing this plugin's pages |
+| `clientCount()` | Number of connected SSE clients |
+
+**Notes:**
+- `ctx.sse` is always present — calls are silent no-ops when web server is disabled
+- SSE endpoints are session-authenticated (same auth as plugin web routes)
+- Events are scoped to the plugin's channel — no cross-plugin leakage
+- Event buffering (30s) handles late-connecting clients automatically
+
 ### Dashboard Widgets
 
 Plugins can contribute summary cards to the dashboard home page.

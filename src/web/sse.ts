@@ -195,3 +195,22 @@ export class SSEConnectionManager {
     }
   }
 }
+
+// ─── Shared Instance ──────────────────────────────────────────────────
+
+let sharedManager: SSEConnectionManager | null = null;
+
+/**
+ * Set the shared SSE manager instance (called by web server on start/stop)
+ */
+export function setSharedSSEManager(manager: SSEConnectionManager | null): void {
+  sharedManager = manager;
+}
+
+/**
+ * Get the shared SSE manager instance.
+ * Returns null if the web server is not running.
+ */
+export function getSharedSSEManager(): SSEConnectionManager | null {
+  return sharedManager;
+}

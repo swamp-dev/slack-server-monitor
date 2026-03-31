@@ -7,6 +7,7 @@
 
 import { Router, type Request, type Response } from 'express';
 import type { PluginContext } from '../plugins/types.js';
+import { getSharedSSEManager } from './sse.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -49,6 +50,7 @@ export interface WebNavEntryOptions {
 // Shared Express router for all plugin routes
 let sharedRouter: ReturnType<typeof Router> | null = null;
 const navEntries: PluginNavEntry[] = [];
+const registeredStreamPlugins = new Set<string>();
 
 /**
  * Validate a route path — reject traversal attempts
@@ -85,6 +87,28 @@ export function createPluginRouter(
       label: navEntry.label,
       icon: navEntry.icon,
     });
+  }
+
+  // Auto-mount SSE stream endpoint for this plugin (guard against duplicate registration)
+  if (!registeredStreamPlugins.has(pluginName)) {
+    registeredStreamPlugins.add(pluginName);
+    const streamPath = `/${pluginName}/stream`;
+    router.get(streamPath, (_req: Request, res: Response) => {
+      try {
+        const manager = getSharedSSEManager();
+        if (!manager) {
+          res.status(503).json({ error: 'SSE not available' });
+          return;
+        }
+        manager.addClient(`plugin:${pluginName}`, res);
+      } catch (err) {
+        logger.error('Plugin SSE stream error', { plugin: pluginName, error: err instanceof Error ? err.message : String(err) });
+        if (!res.headersSent) {
+          res.status(500).send('SSE error');
+        }
+      }
+    });
+    logger.debug('Plugin SSE stream registered', { plugin: pluginName, path: streamPath });
   }
 
   /**
@@ -158,4 +182,5 @@ export function getPluginNavEntries(): PluginNavEntry[] {
 export function clearPluginRoutes(): void {
   sharedRouter = null;
   navEntries.length = 0;
+  registeredStreamPlugins.clear();
 }

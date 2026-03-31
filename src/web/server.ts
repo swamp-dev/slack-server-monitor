@@ -18,7 +18,7 @@ import { config, type WebConfig } from '../config/index.js';
 import { getConversationStore, type SessionSummary } from '../services/conversation-store.js';
 import { getSessionStore, closeSessionStore } from '../services/session-store.js';
 import { resolveToken, parseCookies, createLinkToken } from './auth.js';
-import { SSEConnectionManager } from './sse.js';
+import { SSEConnectionManager, setSharedSSEManager } from './sse.js';
 import { getEventBus, resetEventBus } from '../services/event-bus.js';
 import { logger } from '../utils/logger.js';
 import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError, renderNotificationPage } from './templates/index.js';
@@ -129,6 +129,7 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   const dbPath = claudeConfig.dbPath;
   const app = express();
   sseManager = new SSEConnectionManager();
+  setSharedSSEManager(sseManager);
 
   // Parse request bodies
   app.use(express.urlencoded({ extended: false }));
@@ -932,6 +933,7 @@ export async function stopWebServer(): Promise<void> {
     sseManager.shutdown();
     sseManager = null;
   }
+  setSharedSSEManager(null);
   resetEventBus();
 
   closeSessionStore();

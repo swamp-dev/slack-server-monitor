@@ -90,6 +90,17 @@ export interface PluginNotifyOptions {
   link?: string;
 }
 
+/**
+ * Scoped SSE channel for real-time push to web clients.
+ * Events are broadcast to clients connected to /p/{pluginName}/stream.
+ */
+export interface PluginSSE {
+  /** Broadcast an event to all clients viewing this plugin's pages */
+  broadcast(event: string, data: unknown): void;
+  /** Get the number of connected SSE clients */
+  clientCount(): number;
+}
+
 export interface PluginContext {
   /** Scoped database accessor for persistent storage */
   db: PluginDatabase;
@@ -104,6 +115,8 @@ export interface PluginContext {
    * Source is automatically set to the plugin name.
    */
   notify: (title: string, opts?: PluginNotifyOptions) => void;
+  /** SSE channel for real-time push to web clients. Calls are no-ops when web server is disabled. */
+  sse: PluginSSE;
 }
 
 /**
