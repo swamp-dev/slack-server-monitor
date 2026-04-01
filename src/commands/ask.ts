@@ -12,7 +12,9 @@ import { logger } from '../utils/logger.js';
 import { parseSlackError } from '../utils/slack-errors.js';
 import { section, context as contextBlock, error as errorBlock, extractSnippet } from '../formatters/blocks.js';
 import { scrubSensitiveData, truncateText } from '../formatters/scrub.js';
-import { isValidImageUrl, fetchImageAsBase64 } from '../utils/image.js';
+import { isValidImageUrl, fetchImageAsBase64, downloadImageToFile, cleanupTempImage } from '../utils/image.js';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 /**
  * Slack text limit for section blocks (with buffer for safety)
@@ -640,17 +642,19 @@ export function registerThreadHandler(app: App): void {
       return;
     }
 
-    // Ignore message subtypes (edits, deletions, etc.)
-    if ('subtype' in event && event.subtype) {
+    // Ignore message subtypes (edits, deletions, etc.) except file_share
+    if ('subtype' in event && event.subtype && event.subtype !== 'file_share') {
       return;
     }
 
     const threadTs = event.thread_ts;
     const channelId = event.channel;
     const userId = 'user' in event ? event.user : undefined;
-    const text = 'text' in event ? event.text : undefined;
+    const text = 'text' in event ? (event.text ?? '') : '';
+    const files = 'files' in event ? (event.files as { id: string; name: string | null; mimetype: string; size: number; url_private_download?: string }[]) : undefined;
 
-    if (!userId || !text) {
+    // Need either text or files
+    if (!userId || (!text && (!files || files.length === 0))) {
       return;
     }
 
@@ -660,6 +664,7 @@ export function registerThreadHandler(app: App): void {
       return;
     }
 
+    let tempImagePath: string | undefined;
     try {
       // Initialize conversation store (can fail on DB issues)
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
@@ -691,13 +696,42 @@ export function registerThreadHandler(app: App): void {
         text: 'Analyzing...',
       });
 
+      // Process image files from Slack uploads
+      let askOptions: AskOptions | undefined;
+      const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']);
+
+      if (files && files.length > 0) {
+        const imageFile = files.find((f) => IMAGE_MIME_TYPES.has(f.mimetype));
+        if (imageFile?.url_private_download) {
+          try {
+            const mimeToExt: Record<string, string> = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' };
+            const ext = mimeToExt[imageFile.mimetype] ?? 'bin';
+            tempImagePath = join(tmpdir(), `ssm-${imageFile.id}.${ext}`);
+            const botToken = config.slack.botToken;
+            await downloadImageToFile(imageFile.url_private_download, tempImagePath, botToken);
+            askOptions = { localImagePath: tempImagePath };
+            logger.debug('Downloaded Slack file for analysis', { fileId: imageFile.id, path: tempImagePath });
+          } catch (imgError) {
+            logger.warn('Failed to download Slack file', { error: imgError, fileId: imageFile.id });
+            // Notify user but continue with text-only processing
+            await client.chat.postMessage({
+              channel: channelId,
+              thread_ts: threadTs,
+              text: `_Could not process image: ${imgError instanceof Error ? imgError.message : 'download failed'}. Continuing with text only._`,
+            }).catch(() => { /* best effort */ });
+          }
+        }
+      }
+
+      const userMessage = text || 'Please analyze this image.';
+
       // Use getOrCreateConversation to add message consistently
       // This adds the user message to the conversation
       const updatedConversation = store.getOrCreateConversation(
         threadTs,
         channelId,
         userId,
-        text
+        userMessage
       );
 
       // Process the conversation turn
@@ -706,8 +740,9 @@ export function registerThreadHandler(app: App): void {
         threadTs,
         channelId,
         userId,
-        userMessage: text,
+        userMessage,
         claudeConfig,
+        askOptions,
       });
 
       // Track token usage (for diagnostics)
@@ -806,6 +841,10 @@ export function registerThreadHandler(app: App): void {
           channelId,
           threadTs,
         });
+      }
+    } finally {
+      if (tempImagePath) {
+        await cleanupTempImage(tempImagePath);
       }
     }
   });

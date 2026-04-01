@@ -40,6 +40,8 @@ vi.mock('../../src/utils/logger.js', () => ({
 vi.mock('../../src/utils/image.js', () => ({
   isValidImageUrl: vi.fn().mockReturnValue(true),
   fetchImageAsBase64: vi.fn().mockResolvedValue({ data: 'base64data', mediaType: 'image/png' }),
+  downloadImageToFile: vi.fn().mockResolvedValue('image/png'),
+  cleanupTempImage: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../../src/utils/slack-errors.js', () => ({
@@ -67,6 +69,9 @@ const mockConfig: Record<string, unknown> = {
     dbPath: ':memory:',
     conversationTtlHours: 24,
     contextDir: undefined,
+  },
+  slack: {
+    botToken: 'xoxb-test-token',
   },
   web: undefined,
   authorization: {
@@ -1309,6 +1314,89 @@ describe('registerAskCommand handler', () => {
           ]),
         })
       );
+    });
+
+    it('should process image file uploads in thread replies', async () => {
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      await handler({
+        event: createThreadEvent({
+          text: 'What is in this image?',
+          files: [{
+            id: 'F123',
+            name: 'screenshot.png',
+            mimetype: 'image/png',
+            filetype: 'png',
+            size: 500000,
+            url_private_download: 'https://files.slack.com/files-pri/T123/screenshot.png',
+          }],
+        }),
+        client,
+      });
+
+      // Should process the message with askOptions containing localImagePath
+      expect(mockProcessConversationTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userMessage: 'What is in this image?',
+          askOptions: expect.objectContaining({
+            localImagePath: expect.stringContaining('.png'),
+          }),
+        })
+      );
+    });
+
+    it('should allow file_share subtype for thread replies with files', async () => {
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      await handler({
+        event: createThreadEvent({
+          subtype: 'file_share',
+          text: 'check this',
+          files: [{
+            id: 'F456',
+            name: 'photo.jpg',
+            mimetype: 'image/jpeg',
+            filetype: 'jpg',
+            size: 100000,
+            url_private_download: 'https://files.slack.com/files-pri/T123/photo.jpg',
+          }],
+        }),
+        client,
+      });
+
+      expect(mockProcessConversationTurn).toHaveBeenCalled();
+    });
+
+    it('should ignore non-image files in thread replies', async () => {
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      await handler({
+        event: createThreadEvent({
+          text: 'check this file',
+          files: [{
+            id: 'F789',
+            name: 'document.pdf',
+            mimetype: 'application/pdf',
+            filetype: 'pdf',
+            size: 100000,
+            url_private_download: 'https://files.slack.com/files-pri/T123/document.pdf',
+          }],
+        }),
+        client,
+      });
+
+      // Should still process the text, just without image
+      expect(mockProcessConversationTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userMessage: 'check this file',
+        })
+      );
+      // askOptions should not have localImagePath
+      const callArgs = mockProcessConversationTurn.mock.calls[0][0];
+      expect(callArgs.askOptions).toBeUndefined();
     });
 
     it('should include context warning blocks when truncated in thread reply', async () => {
