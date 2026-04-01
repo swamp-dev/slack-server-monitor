@@ -785,7 +785,7 @@ Invalid tools cause the entire plugin to be rejected.
 3. **Don't store secrets** - Use environment variables
 4. **Log appropriately** - Use `logger` from `../src/utils/logger.js`
 5. **Handle errors gracefully** - Don't leak stack traces
-6. **Test your plugin** - Write tests in `tests/plugins/`
+6. **Test your plugin** - Colocate tests alongside your plugin as `my-plugin.test.ts` (in `plugins.local/` or `plugins.example/`). They run with `npm test` and are excluded from plugin loading.
 
 ### Example Plugins
 
@@ -848,7 +848,9 @@ The plugin loader uses [jiti](https://github.com/unjs/jiti) to dynamically impor
 
 ## Testing Conventions
 
-- Tests in `tests/` directory, mirroring `src/` structure
+- Core tests in `tests/` directory, mirroring `src/` structure
+- Plugin tests colocated alongside their plugins (`plugins.example/**/*.test.ts`, `plugins.local/**/*.test.ts`)
+- Plugin infrastructure tests (loader, types, plugin-app) remain in `tests/plugins/`
 - Use Vitest with `describe/it/expect`
 - Security tests are critical - see `tests/utils/shell.test.ts`
 - **100% of tests must pass** - no skipped, pending, or failing tests allowed

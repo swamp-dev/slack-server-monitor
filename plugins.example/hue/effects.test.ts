@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock the client module
-vi.mock('../../../plugins.example/hue/client.js', () => ({
+vi.mock('./client.js', () => ({
   getLight: vi.fn().mockResolvedValue({
     id: 'light-1',
     on: { on: true },
@@ -20,8 +20,8 @@ vi.mock('../../../plugins.example/hue/client.js', () => ({
   controlGroupedLight: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { controlLight, controlGroupedLight } from '../../../plugins.example/hue/client.js';
-import { _reset, listRunning, stop } from '../../../plugins.example/hue/effects-registry.js';
+import { controlLight, controlGroupedLight } from './client.js';
+import { _reset, listRunning, stop } from './effects-registry.js';
 import {
   abortableSleep,
   runFlash,
@@ -30,8 +30,8 @@ import {
   runStrobe,
   runAlert,
   runFade,
-} from '../../../plugins.example/hue/effects.js';
-import type { ResolvedTarget } from '../../../plugins.example/hue/types.js';
+} from './effects.js';
+import type { ResolvedTarget } from './types.js';
 
 const mockControlLight = vi.mocked(controlLight);
 const mockControlGroupedLight = vi.mocked(controlGroupedLight);

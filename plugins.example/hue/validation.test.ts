@@ -14,7 +14,7 @@ import {
   CustomSequenceSchema,
   CreateSceneSchema,
   GetLightStateSchema,
-} from '../../../plugins.example/hue/validation.js';
+} from './validation.js';
 
 describe('hue validation', () => {
   describe('validate helper', () => {

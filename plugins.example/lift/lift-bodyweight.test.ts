@@ -94,7 +94,7 @@ describe('bodyweight tracking', () => {
   let formatBodyweightTrend: FormatBodyweightTrend;
 
   beforeAll(async () => {
-    const mod = await import('../../plugins.example/lift.js');
+    const mod = await import('../lift.js');
     logBodyweight = mod.logBodyweight;
     getLatestBodyweight = mod.getLatestBodyweight;
     getBodyweightHistory = mod.getBodyweightHistory;

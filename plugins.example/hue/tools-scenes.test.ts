@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 
-vi.mock('../../../plugins.example/hue/client.js', () => ({
+vi.mock('./client.js', () => ({
   getLights: vi.fn().mockResolvedValue([
     { id: 'light-1', metadata: { name: 'Desk', archetype: 'table_shade' }, on: { on: true }, dimming: { brightness: 80 }, color: { xy: { x: 0.3, y: 0.3 } }, owner: { rid: 'device-1', rtype: 'device' } },
   ]),
@@ -28,10 +28,10 @@ vi.mock('../../../plugins.example/hue/client.js', () => ({
   getGroupedLight: vi.fn().mockResolvedValue({ id: 'gl-1', on: { on: true }, dimming: { brightness: 50 }, owner: { rid: 'room-1', rtype: 'room' } }),
 }));
 
-import { createScene, updateScene, deleteScene } from '../../../plugins.example/hue/client.js';
-import { sceneTools } from '../../../plugins.example/hue/tools-scenes.js';
-import { initSceneCache, saveScene } from '../../../plugins.example/hue/scene-cache.js';
-import { _reset } from '../../../plugins.example/hue/effects-registry.js';
+import { createScene, updateScene, deleteScene } from './client.js';
+import { sceneTools } from './tools-scenes.js';
+import { initSceneCache, saveScene } from './scene-cache.js';
+import { _reset } from './effects-registry.js';
 
 const mockCreateScene = vi.mocked(createScene);
 const mockUpdateScene = vi.mocked(updateScene);

@@ -13,11 +13,11 @@ import {
   decodeHtmlEntities,
   parseDdgResults,
   formatSearchResults,
-} from '../../plugins.example/web-assistant.js';
+} from './web-assistant.js';
 
 // Import the plugin to access tools
-import webAssistant from '../../plugins.example/web-assistant.js';
-import type { ToolConfig } from '../../src/services/tools/types.js';
+import webAssistant from './web-assistant.js';
+import type { ToolConfig } from '../src/services/tools/types.js';
 
 // =============================================================================
 // Test Setup

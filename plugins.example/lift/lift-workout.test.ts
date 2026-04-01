@@ -24,7 +24,7 @@ import {
   formatPersonalRecords,
   type WorkoutSet,
   type PersonalRecord,
-} from '../../plugins.example/lift.js';
+} from '../lift.js';
 
 // =============================================================================
 // Step 1: Argument Parsing

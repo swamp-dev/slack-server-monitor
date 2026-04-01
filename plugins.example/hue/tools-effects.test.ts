@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('../../../plugins.example/hue/client.js', () => ({
+vi.mock('./client.js', () => ({
   getLights: vi.fn().mockResolvedValue([
     { id: 'light-1', metadata: { name: 'Desk', archetype: 'table_shade' }, on: { on: true }, dimming: { brightness: 50 }, owner: { rid: 'device-1', rtype: 'device' } },
   ]),
@@ -16,8 +16,8 @@ vi.mock('../../../plugins.example/hue/client.js', () => ({
   controlGroupedLight: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { effectTools } from '../../../plugins.example/hue/tools-effects.js';
-import { _reset, listRunning } from '../../../plugins.example/hue/effects-registry.js';
+import { effectTools } from './tools-effects.js';
+import { _reset, listRunning } from './effects-registry.js';
 
 const dummyConfig = { allowedDirs: [], maxFileSizeKb: 100, maxLogLines: 50 };
 

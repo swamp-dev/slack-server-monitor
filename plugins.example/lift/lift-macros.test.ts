@@ -13,7 +13,7 @@ import {
   getStartOfDayInTimezone,
   dateToStartOfDayInTimezone,
   type MacroTotals,
-} from '../../plugins.example/lift.js';
+} from '../lift.js';
 
 // =============================================================================
 // Local helper for formatting (not exported from plugin)

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../../../plugins.example/hue/client.js', () => ({
+vi.mock('./client.js', () => ({
   getLights: vi.fn().mockResolvedValue([
     { id: 'light-1', metadata: { name: 'Desk', archetype: 'table_shade' }, on: { on: true }, dimming: { brightness: 80 }, owner: { rid: 'device-1', rtype: 'device' } },
     { id: 'light-2', metadata: { name: 'Lamp', archetype: 'floor_shade' }, on: { on: false }, owner: { rid: 'device-2', rtype: 'device' } },
@@ -20,9 +20,9 @@ vi.mock('../../../plugins.example/hue/client.js', () => ({
   controlGroupedLight: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { controlLight, controlGroupedLight, activateScene } from '../../../plugins.example/hue/client.js';
-import { parseArgs, lightStatusLine, handleHueCommand } from '../../../plugins.example/hue/commands.js';
-import type { HueLight } from '../../../plugins.example/hue/types.js';
+import { controlLight, controlGroupedLight, activateScene } from './client.js';
+import { parseArgs, lightStatusLine, handleHueCommand } from './commands.js';
+import type { HueLight } from './types.js';
 
 const mockControlLight = vi.mocked(controlLight);
 const mockControlGroupedLight = vi.mocked(controlGroupedLight);

@@ -23,7 +23,7 @@ import {
   getStartOfDay,
   parseTimezoneOffsetMs,
   type Frequency,
-} from '../../plugins.example/health.js';
+} from '../health.js';
 
 // =============================================================================
 // Test Database Setup

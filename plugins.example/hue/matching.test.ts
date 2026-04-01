@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { findByName, listNames } from '../../../plugins.example/hue/matching.js';
+import { findByName, listNames } from './matching.js';
 
 // Mock the client module for findTarget/controlTarget tests
-vi.mock('../../../plugins.example/hue/client.js', () => ({
+vi.mock('./client.js', () => ({
   getLights: vi.fn(),
   getRooms: vi.fn(),
   getGroupedLights: vi.fn(),
@@ -10,8 +10,8 @@ vi.mock('../../../plugins.example/hue/client.js', () => ({
   controlGroupedLight: vi.fn(),
 }));
 
-import { getLights, getRooms, getGroupedLights, controlLight, controlGroupedLight } from '../../../plugins.example/hue/client.js';
-import { findTarget, controlTarget } from '../../../plugins.example/hue/matching.js';
+import { getLights, getRooms, getGroupedLights, controlLight, controlGroupedLight } from './client.js';
+import { findTarget, controlTarget } from './matching.js';
 
 const mockGetLights = vi.mocked(getLights);
 const mockGetRooms = vi.mocked(getRooms);

@@ -14,8 +14,8 @@ import {
   GYM_PLATES,
   HOME_PLATES,
   calculatePlateConfig,
-} from '../../plugins.example/lift.js';
-import type { PlateConfig } from '../../plugins.example/lift.js';
+} from '../lift.js';
+import type { PlateConfig } from '../lift.js';
 
 /**
  * Calculate warmup sets for a target weight

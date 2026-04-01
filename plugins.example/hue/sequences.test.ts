@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('../../../plugins.example/hue/client.js', () => ({
+vi.mock('./client.js', () => ({
   getLights: vi.fn().mockResolvedValue([
     { id: 'light-1', metadata: { name: 'Desk', archetype: 'table_shade' }, on: { on: true }, dimming: { brightness: 50 }, owner: { rid: 'device-1', rtype: 'device' } },
   ]),
@@ -19,10 +19,10 @@ vi.mock('../../../plugins.example/hue/client.js', () => ({
   }),
 }));
 
-import { controlLight, activateScene } from '../../../plugins.example/hue/client.js';
-import { _reset, listRunning, stop } from '../../../plugins.example/hue/effects-registry.js';
-import { executeStep, runSequence, executeBatch } from '../../../plugins.example/hue/sequences.js';
-import type { SequenceStep } from '../../../plugins.example/hue/sequences.js';
+import { controlLight, activateScene } from './client.js';
+import { _reset, listRunning, stop } from './effects-registry.js';
+import { executeStep, runSequence, executeBatch } from './sequences.js';
+import type { SequenceStep } from './sequences.js';
 
 const mockControlLight = vi.mocked(controlLight);
 const mockActivateScene = vi.mocked(activateScene);

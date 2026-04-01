@@ -8,8 +8,8 @@ import {
   listScenes,
   deleteScene,
   exportScene,
-} from '../../../plugins.example/hue/scene-cache.js';
-import type { SequenceStep } from '../../../plugins.example/hue/sequences.js';
+} from './scene-cache.js';
+import type { SequenceStep } from './sequences.js';
 
 function createTestDb() {
   const raw = new Database(':memory:');

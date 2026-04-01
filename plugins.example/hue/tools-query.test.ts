@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../../../plugins.example/hue/client.js', () => ({
+vi.mock('./client.js', () => ({
   getLights: vi.fn().mockResolvedValue([
     { id: 'light-1', metadata: { name: 'Desk', archetype: 'table_shade' }, on: { on: true }, dimming: { brightness: 80 }, color: { xy: { x: 0.3, y: 0.3 } }, color_temperature: { mirek: 250 }, owner: { rid: 'device-1', rtype: 'device' } },
   ]),
@@ -42,7 +42,7 @@ vi.mock('../../../plugins.example/hue/client.js', () => ({
   controlGroupedLight: vi.fn(),
 }));
 
-import { queryTools } from '../../../plugins.example/hue/tools-query.js';
+import { queryTools } from './tools-query.js';
 
 const dummyConfig = { allowedDirs: [], maxFileSizeKb: 100, maxLogLines: 50 };
 

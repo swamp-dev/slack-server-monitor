@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
-import type { WeightUnit } from '../../plugins.example/lift.js';
+import type { WeightUnit } from '../lift.js';
 
 // =============================================================================
 // Unit Conversion Functions
@@ -17,7 +17,7 @@ describe('unit conversions', () => {
   let KG_TO_LBS: number;
 
   beforeAll(async () => {
-    const mod = await import('../../plugins.example/lift.js');
+    const mod = await import('../lift.js');
     lbsToKg = mod.lbsToKg;
     kgToLbs = mod.kgToLbs;
     LBS_TO_KG = mod.LBS_TO_KG;
@@ -137,7 +137,7 @@ describe('user unit preferences', () => {
   let setUserUnit: (userId: string, unit: WeightUnit, db: PluginDatabase) => void;
 
   beforeAll(async () => {
-    const mod = await import('../../plugins.example/lift.js');
+    const mod = await import('../lift.js');
     getUserUnit = mod.getUserUnit;
     setUserUnit = mod.setUserUnit;
   });
@@ -199,7 +199,7 @@ describe('formatWeight', () => {
   let formatWeight: (value: number, unit: WeightUnit) => string;
 
   beforeAll(async () => {
-    const mod = await import('../../plugins.example/lift.js');
+    const mod = await import('../lift.js');
     formatWeight = mod.formatWeight;
   });
 
@@ -226,7 +226,7 @@ describe('calculator commands with unit preferences', () => {
   let kgToLbs: (kg: number) => number;
 
   beforeAll(async () => {
-    const mod = await import('../../plugins.example/lift.js');
+    const mod = await import('../lift.js');
     lbsToKg = mod.lbsToKg;
     kgToLbs = mod.kgToLbs;
   });
@@ -287,7 +287,7 @@ describe('Claude tool unit parameter', () => {
   let warmupExecute: (input: Record<string, unknown>) => Promise<string>;
 
   beforeAll(async () => {
-    const mod = await import('../../plugins.example/lift.js');
+    const mod = await import('../lift.js');
     const plugin = mod.default;
     const tools = plugin.tools ?? [];
     const plTool = tools.find((t) => t.spec.name === 'calculate_powerlifting_score');

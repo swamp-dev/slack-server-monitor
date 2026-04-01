@@ -139,6 +139,18 @@ describe('plugin loader', () => {
       expect(plugins).toEqual([]);
     });
 
+    it('should ignore test files (.test.ts and .test.js)', async () => {
+      await mkdir(TEST_PLUGINS_DIR);
+      await writeFile(join(TEST_PLUGINS_DIR, 'my-plugin.ts'), 'export default {}');
+      await writeFile(join(TEST_PLUGINS_DIR, 'my-plugin.test.ts'), 'test("works", () => {})');
+      await writeFile(join(TEST_PLUGINS_DIR, 'helper.test.js'), 'test("works", () => {})');
+
+      const plugins = await discoverPlugins();
+      expect(plugins).toHaveLength(1);
+      expect(plugins[0]).toContain('my-plugin.ts');
+      expect(plugins[0]).not.toContain('.test.');
+    });
+
     it('should ignore directories', async () => {
       await mkdir(TEST_PLUGINS_DIR);
       await mkdir(join(TEST_PLUGINS_DIR, 'subdir'));

@@ -7,8 +7,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { PluginClaude, PluginClaudeResult } from '../../src/plugins/types.js';
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
-import type { PendingEstimate, MacroEstimateResult } from '../../plugins.example/lift.js';
-import { parseMacroArgs } from '../../plugins.example/lift.js';
+import type { PendingEstimate, MacroEstimateResult } from '../lift.js';
+import { parseMacroArgs } from '../lift.js';
 
 // Mock the logger
 vi.mock('../../src/utils/logger.js', () => ({

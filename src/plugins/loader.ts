@@ -114,7 +114,7 @@ export async function discoverPlugins(): Promise<string[]> {
   try {
     const entries = await readdir(PLUGINS_DIR, { withFileTypes: true });
     const pluginFiles = entries
-      .filter((entry) => entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.js')))
+      .filter((entry) => entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.js')) && !entry.name.endsWith('.test.ts') && !entry.name.endsWith('.test.js'))
       .map((entry) => join(PLUGINS_DIR, entry.name));
 
     logger.debug('Discovered plugin files', { count: pluginFiles.length, files: pluginFiles });

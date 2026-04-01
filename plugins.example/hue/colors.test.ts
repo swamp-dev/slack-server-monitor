@@ -5,7 +5,7 @@ import {
   parseHex,
   hexToXY,
   resolveColor,
-} from '../../../plugins.example/hue/colors.js';
+} from './colors.js';
 
 describe('hue colors', () => {
   describe('COLORS map', () => {

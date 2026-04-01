@@ -8,7 +8,7 @@ import {
   stop,
   stopAll,
   _reset,
-} from '../../../plugins.example/hue/effects-registry.js';
+} from './effects-registry.js';
 
 describe('effects registry', () => {
   beforeEach(() => {
