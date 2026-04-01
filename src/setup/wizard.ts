@@ -112,9 +112,9 @@ async function validateConfig(
         ? {
             provider: (vars.CLAUDE_PROVIDER ?? 'cli') as 'cli',
             cliPath: vars.CLAUDE_CLI_PATH ?? 'claude',
-            cliModel: vars.CLAUDE_CLI_MODEL ?? 'sonnet',
+            cliModel: vars.CLAUDE_CLI_MODEL ?? 'opus',
             maxTokens: parseIntWithDefault(vars.CLAUDE_MAX_TOKENS, 2048),
-            maxToolCalls: parseIntWithDefault(vars.CLAUDE_MAX_TOOL_CALLS, 40),
+            maxToolCalls: parseIntWithDefault(vars.CLAUDE_MAX_TOOL_CALLS, 100),
             maxIterations: parseIntWithDefault(vars.CLAUDE_MAX_ITERATIONS, 50),
             rateLimitMax: parseIntWithDefault(vars.CLAUDE_RATE_LIMIT_MAX, 5),
             rateLimitWindowSeconds: parseIntWithDefault(

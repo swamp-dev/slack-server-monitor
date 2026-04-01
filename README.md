@@ -213,12 +213,12 @@ sudo systemctl start slack-monitor
 |----------|----------|---------|-------------|
 | `CLAUDE_ENABLED` | No | false | Set to "true" to enable Claude AI features |
 | `CLAUDE_CLI_PATH` | No | claude | Path to Claude CLI executable |
-| `CLAUDE_CLI_MODEL` | No | sonnet | Model alias for CLI (sonnet/opus/haiku) |
+| `CLAUDE_CLI_MODEL` | No | opus | Model alias for CLI (sonnet/opus/haiku) |
 | `CLAUDE_ALLOWED_DIRS` | No | - | Directories Claude can read files from |
 | `CLAUDE_CONTEXT_DIR` | No | - | Infrastructure context directory |
 | `CLAUDE_CONTEXT_OPTIONS` | No | - | Comma-separated alias:path pairs for context switching |
 | `CLAUDE_MAX_TOKENS` | No | 2048 | Max tokens per response |
-| `CLAUDE_MAX_TOOL_CALLS` | No | 40 | Max tool calls per turn |
+| `CLAUDE_MAX_TOOL_CALLS` | No | 100 | Max tool calls per turn |
 | `CLAUDE_MAX_ITERATIONS` | No | 50 | Max agentic loop iterations |
 | `CLAUDE_RATE_LIMIT_MAX` | No | 5 | Claude requests per user per window |
 | `CLAUDE_CONVERSATION_TTL_HOURS` | No | 24 | Conversation history retention |
@@ -314,7 +314,7 @@ Set `CLAUDE_CONTEXT_DIR` to provide Claude with infrastructure documentation:
 - **Path validation** - File reading restricted to `CLAUDE_ALLOWED_DIRS` (symlink-safe)
 - **System path blocking** - Context directory cannot be under `/etc`, `/var`, etc.
 - **Output scrubbing** - All tool outputs scrubbed for secrets
-- **Tool call limits** - Prevents infinite loops (max 40 per turn)
+- **Tool call limits** - Prevents infinite loops (max 100 per turn)
 
 ## Troubleshooting
 

@@ -250,10 +250,10 @@ CLAUDE_ALLOWED_DIRS=/root/ansible,/opt/stacks,/etc/docker
 | `CLAUDE_ENABLED` | false | Set to "true" to enable Claude AI features |
 | `CLAUDE_PROVIDER` | cli | Provider: cli (legacy values auto/sdk accepted for compat) |
 | `CLAUDE_CLI_PATH` | claude | Path to Claude CLI executable |
-| `CLAUDE_CLI_MODEL` | sonnet | Model alias for CLI (sonnet/opus/haiku) |
+| `CLAUDE_CLI_MODEL` | opus | Model alias for CLI (sonnet/opus/haiku) |
 | `CLAUDE_ALLOWED_DIRS` | - | Comma-separated paths Claude can read files from |
 | `CLAUDE_MAX_TOKENS` | 2048 | Max tokens per response |
-| `CLAUDE_MAX_TOOL_CALLS` | 40 | Max tool calls per turn (prevents loops) |
+| `CLAUDE_MAX_TOOL_CALLS` | 100 | Max tool calls per turn (prevents loops) |
 | `CLAUDE_MAX_ITERATIONS` | 50 | Max agentic loop iterations (defense in depth) |
 | `CLAUDE_RATE_LIMIT_MAX` | 5 | Requests per window per user |
 | `CLAUDE_RATE_LIMIT_WINDOW_SECONDS` | 60 | Claude rate limit window in seconds |
@@ -906,5 +906,5 @@ docker run -d \
 6. **File reading is restricted** - only paths in `CLAUDE_ALLOWED_DIRS` (symlink-safe)
 7. **Tool outputs are scrubbed** - but scrubbing isn't perfect
 8. **Conversations stored in SQLite** - auto-cleaned after `CLAUDE_CONVERSATION_TTL_HOURS`
-9. **Tool call limits** - prevents infinite loops (default: max 40 tools per turn, max 50 iterations)
+9. **Tool call limits** - prevents infinite loops (default: max 100 tools per turn, max 50 iterations)
 10. **Tool call analytics** - duration (ms) and success/failure tracked per tool call for diagnostics

@@ -160,13 +160,13 @@ export const ConfigSchema = z.object({
     /** Path to Claude CLI executable (validated to prevent command injection) */
     cliPath: SafeCliPathSchema.default('claude'),
     /** Model alias for CLI backend (e.g., 'sonnet', 'opus', 'haiku') */
-    cliModel: SafeModelNameSchema.default('sonnet'),
+    cliModel: SafeModelNameSchema.default('opus'),
     /** Model ID for SDK provider (e.g., 'claude-sonnet-4-20250514') */
     sdkModel: SafeModelNameSchema.default('claude-sonnet-4-20250514'),
     /** Maximum tokens for response */
     maxTokens: z.number().int().positive().default(2048),
     /** Maximum tool calls per turn to prevent runaway loops */
-    maxToolCalls: z.number().int().positive().default(40),
+    maxToolCalls: z.number().int().positive().default(100),
     /** Maximum agentic loop iterations (defense in depth) */
     maxIterations: z.number().int().positive().default(50),
     /** Rate limit: max requests per window */
