@@ -106,6 +106,7 @@ src/
 | `/ssl <domain>` | Check specific domain SSL certificate |
 | `/backups` | Local and S3 backup status |
 | `/pm2` | PM2 process list with status and resource usage |
+| `/stats` | Usage statistics and system health summary |
 | `/ask <question>` | Ask Claude AI about your server (requires Claude CLI) |
 | `/context` | View/switch Claude context directory for this channel |
 | `/sessions` | List recent Claude AI sessions (last 24h) |

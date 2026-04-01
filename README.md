@@ -83,10 +83,16 @@ In your Slack App settings, go to Slash Commands and add:
 - `/ssl` - SSL certificate status (optional)
 - `/backups` - Backup status (optional)
 - `/pm2` - PM2 process status (optional)
+- `/stats` - Usage statistics and system health (optional)
 - `/ask` - Ask Claude AI (optional, requires API key or CLI)
 - `/context` - Switch Claude context directory (optional)
 - `/sessions` - Claude AI session history (optional)
 - `/weblogin` - Get a login link for the web UI (optional, requires WEB_ENABLED=true)
+
+**If using plugins** (files in `plugins.local/`), also register their commands:
+- `/lift` - Powerlifting calculator and tracker (lift plugin)
+- `/hue` - Philips Hue light control (hue plugin)
+- `/health` - Family health tracker (health plugin)
 
 ### 3. Configure Environment
 
