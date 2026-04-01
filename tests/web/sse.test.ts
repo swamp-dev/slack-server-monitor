@@ -162,6 +162,63 @@ describe('SSEConnectionManager', () => {
     });
   });
 
+  describe('terminal event buffer clearing', () => {
+    it('should clear buffer when done event is broadcast', () => {
+      manager.broadcast('ch1', 'tool_call_start', { toolName: 'test' });
+      manager.broadcast('ch1', 'tool_call_end', { toolName: 'test', durationMs: 100 });
+
+      // Buffer should have 2 events
+      const lateClient1 = createMockResponse();
+      manager.addClient('ch1', lateClient1 as never);
+      // :ok + 2 replayed events = 3 writes
+      expect(lateClient1._written).toHaveLength(3);
+      lateClient1._simulateClose();
+
+      // Broadcast done — should clear buffer
+      manager.broadcast('ch1', 'done', { type: 'done' });
+
+      // New client after done should get no replay
+      const lateClient2 = createMockResponse();
+      manager.addClient('ch1', lateClient2 as never);
+      // Only :ok, no replayed events
+      expect(lateClient2._written).toHaveLength(1);
+      expect(lateClient2._written[0]).toBe(':ok\n\n');
+    });
+
+    it('should clear buffer when error event is broadcast', () => {
+      manager.broadcast('ch1', 'text', { text: 'partial response' });
+
+      // Broadcast error — should clear buffer
+      manager.broadcast('ch1', 'error', { type: 'error', message: 'failed' });
+
+      // New client should get no replay
+      const lateClient = createMockResponse();
+      manager.addClient('ch1', lateClient as never);
+      expect(lateClient._written).toHaveLength(1);
+      expect(lateClient._written[0]).toBe(':ok\n\n');
+    });
+
+    it('should not buffer done or error events', () => {
+      // Broadcast done to a channel with no clients
+      manager.broadcast('ch1', 'done', { type: 'done' });
+
+      // A new client should not see the done event replayed
+      const client = createMockResponse();
+      manager.addClient('ch1', client as never);
+      expect(client._written).toHaveLength(1);
+      expect(client._written[0]).toBe(':ok\n\n');
+    });
+
+    it('should still deliver done event to connected clients', () => {
+      const res = createMockResponse();
+      manager.addClient('ch1', res as never);
+
+      manager.broadcast('ch1', 'done', { type: 'done' });
+
+      expect(res._written).toContain('event: done\ndata: {"type":"done"}\n\n');
+    });
+  });
+
   describe('heartbeat', () => {
     it('should send heartbeat comments to all clients', () => {
       vi.useFakeTimers();

@@ -106,15 +106,21 @@ export class SSEConnectionManager {
   broadcast(channel: string, event: string, data: unknown): void {
     const serialized = JSON.stringify(data);
 
-    // Buffer for late-connecting clients (handles SSE race condition)
-    let buffer = this.eventBuffer.get(channel);
-    if (!buffer) {
-      buffer = [];
-      this.eventBuffer.set(channel, buffer);
-    }
-    buffer.push({ event, data: serialized, timestamp: Date.now() });
-    if (buffer.length > EVENT_BUFFER_MAX) {
-      buffer.shift();
+    // Terminal events: clear buffer so late-connecting clients
+    // reload cleanly instead of replaying a completed conversation
+    if (event === 'done' || event === 'error') {
+      this.eventBuffer.delete(channel);
+    } else {
+      // Buffer for late-connecting clients (handles SSE race condition)
+      let buffer = this.eventBuffer.get(channel);
+      if (!buffer) {
+        buffer = [];
+        this.eventBuffer.set(channel, buffer);
+      }
+      buffer.push({ event, data: serialized, timestamp: Date.now() });
+      if (buffer.length > EVENT_BUFFER_MAX) {
+        buffer.shift();
+      }
     }
 
     const channelClients = this.clients.get(channel);

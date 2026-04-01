@@ -449,7 +449,7 @@ describe('fetch_page tool', () => {
 
 describe('web-assistant plugin structure', () => {
   it('should have correct metadata', () => {
-    expect(webAssistant.name).toBe('web-assistant');
+    expect(webAssistant.name).toBe('web_assistant');
     expect(webAssistant.version).toBe('1.0.0');
     expect(webAssistant.description).toBeDefined();
   });

@@ -555,6 +555,9 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       res.json({ success: true });
 
       // Process the turn async, streaming progress via SSE
+      // NOTE: Don't forward 'done' from onProgress — the CLI provider emits it
+      // before processConversationTurn stores the response to SQLite. We emit
+      // 'done' in .then() after the DB write so clients reload to a saved response.
       const streamChannel = `conversation:${threadTs}:${channelId}`;
       processConversationTurn({
         conversationId: conversation.id,
@@ -565,10 +568,15 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         claudeConfig,
         askOptions: {
           onProgress: (event) => {
-            sseManager?.broadcast(streamChannel, event.type, event);
+            if (event.type !== 'done') {
+              sseManager?.broadcast(streamChannel, event.type, event);
+            }
           },
         },
       })
+        .then(() => {
+          sseManager?.broadcast(streamChannel, 'done', { type: 'done' });
+        })
         .catch((err: unknown) => {
           const errMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
           logger.error('Web continuation failed', {
@@ -599,15 +607,23 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       return;
     }
 
-    // Verify the authenticated user owns this conversation
+    // Fail-closed: require authentication for SSE streams
     const userId = res.locals.userId as string | undefined;
-    if (userId) {
-      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
-      const conversation = store.getConversation(threadTs, channelId);
-      if (conversation && conversation.userId !== userId) {
-        res.status(403).json({ error: 'Access denied' });
-        return;
-      }
+    if (!userId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    // Verify conversation exists and the authenticated user owns it
+    const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+    const conversation = store.getConversation(threadTs, channelId);
+    if (!conversation) {
+      res.status(404).json({ error: 'Conversation not found' });
+      return;
+    }
+    if (conversation.userId !== userId) {
+      res.status(403).json({ error: 'Access denied' });
+      return;
     }
 
     sseManager?.addClient(`conversation:${threadTs}:${channelId}`, res);
