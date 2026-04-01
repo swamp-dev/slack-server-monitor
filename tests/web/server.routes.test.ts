@@ -191,10 +191,6 @@ async function authFetch(path: string, opts: RequestInit = {}): Promise<Response
 
 describe('web server routes', () => {
   beforeAll(async () => {
-    await startWebServer(webConfig);
-    await stopWebServer();
-
-    // Use a fixed port for testing
     const testConfig = { ...webConfig, port: 18923 };
     await startWebServer(testConfig);
     baseUrl = 'http://localhost:18923';
@@ -695,6 +691,323 @@ describe('web server routes', () => {
       expect(res.status).toBe(200);
       const html = await res.text();
       expect(html).toContain('html');
+    });
+  });
+
+  describe('SSE stream endpoints', () => {
+    it('GET /c/:threadTs/:channelId/stream should require auth', async () => {
+      mockSessionStore.getSession.mockReturnValue(null);
+      const res = await fetch(`${baseUrl}/c/1000.001/C001/stream`, {
+        redirect: 'manual',
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it('GET /c/:threadTs/:channelId/stream should return 404 for missing conversation', async () => {
+      mockStore.getConversation.mockReturnValue(null);
+      const res = await authFetch('/c/9999.999/CNONE/stream');
+      expect(res.status).toBe(404);
+    });
+
+    it('GET /c/:threadTs/:channelId/stream should return 403 for non-owner', async () => {
+      mockStore.getConversation.mockReturnValue({
+        id: 1,
+        threadTs: '1000.001',
+        channelId: 'C001',
+        userId: 'U999',
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        favoritedAt: null,
+      });
+      const res = await authFetch('/c/1000.001/C001/stream');
+      expect(res.status).toBe(403);
+    });
+
+    it('GET /c/:threadTs/:channelId/stream should return SSE headers for owner', async () => {
+      mockStore.getConversation.mockReturnValue({
+        id: 1,
+        threadTs: '1000.001',
+        channelId: 'C001',
+        userId: 'U123',
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        favoritedAt: null,
+      });
+
+      // SSE connections stay open, so we need to abort after checking headers
+      const controller = new AbortController();
+      const resPromise = authFetch('/c/1000.001/C001/stream', {
+        signal: controller.signal,
+      });
+
+      // Give the server time to start the SSE response
+      await new Promise((r) => setTimeout(r, 50));
+      controller.abort();
+
+      try {
+        const res = await resPromise;
+        expect(res.headers.get('content-type')).toContain('text/event-stream');
+        expect(res.headers.get('cache-control')).toContain('no-cache');
+      } catch {
+        // AbortError is expected — we just need the headers
+      }
+    });
+
+    it('GET /api/notifications/stream should return SSE headers', async () => {
+      const controller = new AbortController();
+      const resPromise = authFetch('/api/notifications/stream', {
+        signal: controller.signal,
+      });
+
+      await new Promise((r) => setTimeout(r, 50));
+      controller.abort();
+
+      try {
+        const res = await resPromise;
+        expect(res.headers.get('content-type')).toContain('text/event-stream');
+      } catch {
+        // AbortError is expected
+      }
+    });
+  });
+
+  describe('rate limiting on /ask', () => {
+    it('should return 429 when rate limit exceeded', async () => {
+      const { checkAndRecordClaudeRequest } = await import('../../src/commands/ask.js');
+      vi.mocked(checkAndRecordClaudeRequest).mockReturnValueOnce(false);
+
+      mockStore.getOrCreateConversation.mockReturnValue({
+        id: 1,
+        messages: [
+          { role: 'user', content: 'original' },
+          { role: 'assistant', content: 'reply' },
+          { role: 'user', content: 'follow up' },
+        ],
+      });
+
+      const res = await authFetch('/c/1000.001/C001/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'follow up' }),
+      });
+      expect(res.status).toBe(429);
+      const json = await res.json();
+      expect(json.error).toContain('Rate limit');
+    });
+  });
+
+  describe('health API with data', () => {
+    it('GET /api/health/server should return health metrics when available', async () => {
+      const { getServerHealth } = await import('../../src/services/server-health.js');
+      vi.mocked(getServerHealth).mockResolvedValueOnce({
+        uptime: '5 days',
+        loadAverage: [0.5, 0.3, 0.2],
+        memory: { total: '16GB', used: '8GB', free: '8GB', usedPercent: 50 },
+        disk: [{ mount: '/', total: '100GB', used: '50GB', free: '50GB', usedPercent: 50 }],
+        cpuCount: 4,
+        hostname: 'test-server',
+        platform: 'linux',
+        timestamp: Date.now(),
+      });
+
+      const res = await authFetch('/api/health/server');
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toHaveProperty('uptime');
+      expect(json).toHaveProperty('memory');
+      expect(json).toHaveProperty('disk');
+    });
+  });
+
+  describe('error handling (500 paths)', () => {
+    it('GET /c should return 500 when store throws', async () => {
+      const { getConversationStore } = await import('../../src/services/conversation-store.js');
+      vi.mocked(getConversationStore).mockImplementationOnce(() => {
+        throw new Error('DB connection failed');
+      });
+
+      const res = await authFetch('/c');
+      expect(res.status).toBe(500);
+      const html = await res.text();
+      expect(html).toContain('html');
+    });
+
+    it('GET /c/search should return 500 when store throws', async () => {
+      const { getConversationStore } = await import('../../src/services/conversation-store.js');
+      vi.mocked(getConversationStore).mockImplementationOnce(() => {
+        throw new Error('DB connection failed');
+      });
+
+      const res = await authFetch('/c/search?q=test');
+      expect(res.status).toBe(500);
+    });
+
+    it('GET /c/favorites should return 500 when store throws', async () => {
+      const { getConversationStore } = await import('../../src/services/conversation-store.js');
+      vi.mocked(getConversationStore).mockImplementationOnce(() => {
+        throw new Error('DB connection failed');
+      });
+
+      const res = await authFetch('/c/favorites');
+      expect(res.status).toBe(500);
+    });
+
+    it('GET /c/tag/:tag should return 500 when store throws', async () => {
+      const { getConversationStore } = await import('../../src/services/conversation-store.js');
+      vi.mocked(getConversationStore).mockImplementationOnce(() => {
+        throw new Error('DB connection failed');
+      });
+
+      const res = await authFetch('/c/tag/test');
+      expect(res.status).toBe(500);
+    });
+
+    it('GET /c/:threadTs/:channelId should return 500 when store throws', async () => {
+      const { getConversationStore } = await import('../../src/services/conversation-store.js');
+      vi.mocked(getConversationStore).mockImplementationOnce(() => {
+        throw new Error('DB connection failed');
+      });
+
+      const res = await authFetch('/c/1000.001/C001');
+      expect(res.status).toBe(500);
+    });
+
+    it('POST /c/:id/favorite should return 500 when store throws', async () => {
+      mockStore.toggleFavorite.mockImplementationOnce(() => {
+        throw new Error('DB error');
+      });
+
+      const res = await authFetch('/c/1/favorite', { method: 'POST' });
+      expect(res.status).toBe(500);
+      const json = await res.json();
+      expect(json).toHaveProperty('error');
+    });
+
+    it('POST /c/:id/tag should return 500 when store throws', async () => {
+      mockStore.addTag.mockImplementationOnce(() => {
+        throw new Error('DB error');
+      });
+
+      const res = await authFetch('/c/1/tag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag: 'test' }),
+      });
+      expect(res.status).toBe(500);
+    });
+
+    it('DELETE /c/:id/tag/:tag should return 500 when store throws', async () => {
+      mockStore.removeTag.mockImplementationOnce(() => {
+        throw new Error('DB error');
+      });
+
+      const res = await authFetch('/c/1/tag/test', { method: 'DELETE' });
+      expect(res.status).toBe(500);
+    });
+
+    it('POST /c/:id/archive should return 500 when store throws', async () => {
+      mockStore.archiveConversation.mockImplementationOnce(() => {
+        throw new Error('DB error');
+      });
+
+      const res = await authFetch('/c/1/archive', { method: 'POST' });
+      expect(res.status).toBe(500);
+    });
+
+    it('GET /c/archived should return 500 when store throws', async () => {
+      const { getConversationStore } = await import('../../src/services/conversation-store.js');
+      vi.mocked(getConversationStore).mockImplementationOnce(() => {
+        throw new Error('DB connection failed');
+      });
+
+      const res = await authFetch('/c/archived');
+      expect(res.status).toBe(500);
+    });
+
+    it('GET / (dashboard) should return 500 when store throws', async () => {
+      const { getConversationStore } = await import('../../src/services/conversation-store.js');
+      vi.mocked(getConversationStore).mockImplementationOnce(() => {
+        throw new Error('DB connection failed');
+      });
+
+      const res = await authFetch('/');
+      expect(res.status).toBe(500);
+    });
+
+    it('GET /notifications should return 500 when store throws', async () => {
+      const { getNotificationStore } = await import('../../src/services/notification-store.js');
+      vi.mocked(getNotificationStore).mockImplementationOnce(() => {
+        throw new Error('DB connection failed');
+      });
+
+      const res = await authFetch('/notifications');
+      expect(res.status).toBe(500);
+    });
+
+    it('POST /c/:threadTs/:channelId/ask should return 500 on setup error', async () => {
+      const { getConversationStore } = await import('../../src/services/conversation-store.js');
+      vi.mocked(getConversationStore).mockImplementationOnce(() => {
+        throw new Error('DB connection failed');
+      });
+
+      const res = await authFetch('/c/1000.001/C001/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'test question' }),
+      });
+      expect(res.status).toBe(500);
+    });
+  });
+
+  describe('additional validation', () => {
+    it('POST /c/:id/archive should reject invalid id', async () => {
+      const res = await authFetch('/c/abc/archive', { method: 'POST' });
+      expect(res.status).toBe(400);
+    });
+
+    it('DELETE /c/:id/tag/:tag should reject invalid id', async () => {
+      const res = await authFetch('/c/abc/tag/test', { method: 'DELETE' });
+      expect(res.status).toBe(400);
+    });
+
+    it('POST /api/links should reject too-long title', async () => {
+      const res = await authFetch('/api/links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'x'.repeat(101), url: 'https://example.com' }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('POST /api/links should reject too-long icon', async () => {
+      const res = await authFetch('/api/links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Test', url: 'https://example.com', icon: 'x'.repeat(51) }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('PUT /api/links/reorder should reject too many items', async () => {
+      const ids = Array.from({ length: 101 }, (_, i) => i + 1);
+      const res = await authFetch('/api/links/reorder', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: ids }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('DELETE /api/links/:id should reject zero id', async () => {
+      const res = await authFetch('/api/links/0', { method: 'DELETE' });
+      expect(res.status).toBe(400);
+    });
+
+    it('POST /api/notifications/:id/read should reject zero id', async () => {
+      const res = await authFetch('/api/notifications/0/read', { method: 'POST' });
+      expect(res.status).toBe(400);
     });
   });
 

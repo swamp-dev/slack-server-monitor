@@ -11,6 +11,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:smoke": "vitest run tests/smoke/",
+    "test:e2e": "playwright test",
+    "deploy:check": "bash scripts/deploy-check.sh",
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",
     "typecheck": "tsc --noEmit",
@@ -44,6 +47,7 @@
   "devDependencies": {
     "@clack/prompts": "^1.1.0",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.59.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
