@@ -80,9 +80,9 @@ describe('createGithubIssueTool', () => {
     expect(mockCall[1]).toContain('owner/repo');
     expect(mockCall[1]).toContain('--title');
     expect(mockCall[1]).toContain('Bug: something broke');
-    // Body should be passed via stdin (--body-stdin flag), not --body
-    expect(mockCall[1]).toContain('--body-stdin');
-    expect(mockCall[1]).not.toContain('--body');
+    // Body should be passed via stdin (--body-file - flag), not --body-stdin
+    expect(mockCall[1]).toEqual(expect.arrayContaining(['--body-file', '-']));
+    expect(mockCall[1]).not.toContain('--body-stdin');
     expect(mockCall[2].stdin).toBe('## Summary\nSomething is broken.');
   });
 

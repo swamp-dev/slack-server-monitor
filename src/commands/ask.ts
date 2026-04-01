@@ -11,7 +11,7 @@ import { buildFooter } from './build-footer.js';
 import { logger } from '../utils/logger.js';
 import { parseSlackError } from '../utils/slack-errors.js';
 import { section, context as contextBlock, error as errorBlock, extractSnippet } from '../formatters/blocks.js';
-import { scrubSensitiveData } from '../formatters/scrub.js';
+import { scrubSensitiveData, truncateText } from '../formatters/scrub.js';
 import { isValidImageUrl, fetchImageAsBase64 } from '../utils/image.js';
 
 /**
@@ -185,6 +185,7 @@ export async function registerAskCommand(app: App): Promise<void> {
     // Parse image URL from question if present
     const imageParsed = parseImageFromQuestion(rawQuestion);
     const question = imageParsed ? imageParsed.cleanQuestion : rawQuestion;
+    const displayQuestion = truncateText(question, SLACK_TEXT_LIMIT - 20);
     const imageUrl = imageParsed?.imageUrl;
 
     // Validate question still exists after extracting image
@@ -221,7 +222,7 @@ export async function registerAskCommand(app: App): Promise<void> {
         channel: channelId,
         text: `Thinking about: "${question.slice(0, 50)}${question.length > 50 ? '...' : ''}"`,
         blocks: [
-          section(`*Question:* ${question}`),
+          section(`*Question:* ${displayQuestion}`),
           contextBlock('_Analyzing... This may take a moment._'),
         ],
       });
@@ -297,7 +298,7 @@ export async function registerAskCommand(app: App): Promise<void> {
           ts: threadTs,
           text: `Response: ${result.response.slice(0, 100)}...`,
           blocks: [
-            section(`*Q:* ${question}`),
+            section(`*Q:* ${displayQuestion}`),
             section(snippet),
             section(`<${webUrl}|View full response> _(${result.response.length.toLocaleString()} chars)_`),
             contextBlock(buildFooter({
@@ -328,7 +329,7 @@ export async function registerAskCommand(app: App): Promise<void> {
           ts: threadTs,
           text: result.response.slice(0, 100),
           blocks: [
-            section(`*Q:* ${question}`),
+            section(`*Q:* ${displayQuestion}`),
             section(result.response),
             contextBlock(buildFooter({
               toolCalls: result.toolCalls.length,
@@ -376,7 +377,7 @@ export async function registerAskCommand(app: App): Promise<void> {
             ts: threadTs,
             text: `Error: ${displayMessage}`,
             blocks: [
-              section(`*Q:* ${question}`),
+              section(`*Q:* ${displayQuestion}`),
               errorBlock(`Failed to get response: ${displayMessage}`),
             ],
           });
@@ -484,6 +485,7 @@ async function handleContinue(
 
     // Determine the question to ask
     const question = followUpQuestion?.trim() || 'Please continue where we left off. What else can you tell me?'; // eslint-disable-line @typescript-eslint/prefer-nullish-coalescing -- empty string should fall through
+    const displayQuestion = truncateText(question, SLACK_TEXT_LIMIT - 20);
 
     // Post initial message in a new thread
     const initialMessage = await client.chat.postMessage({
@@ -491,7 +493,7 @@ async function handleContinue(
       text: `Continuing conversation from ${originalThreadTs}...`,
       blocks: [
         section(`*Continuing conversation* from \`${originalThreadTs}\``),
-        section(`*Q:* ${question}`),
+        section(`*Q:* ${displayQuestion}`),
         contextBlock(`_Analyzing with ${String(originalConversation.messages.length)} messages of context..._`),
       ],
     });
@@ -537,7 +539,7 @@ async function handleContinue(
         text: `Response: ${result.response.slice(0, 100)}...`,
         blocks: [
           section(`*Continued from* \`${originalThreadTs}\``),
-          section(`*Q:* ${question}`),
+          section(`*Q:* ${displayQuestion}`),
           section(snippet),
           section(`<${webUrl}|View full response> _(${result.response.length.toLocaleString()} chars)_`),
           contextBlock(buildFooter({
@@ -560,7 +562,7 @@ async function handleContinue(
         text: result.response.slice(0, 100),
         blocks: [
           section(`*Continued from* \`${originalThreadTs}\``),
-          section(`*Q:* ${question}`),
+          section(`*Q:* ${displayQuestion}`),
           section(result.response),
           contextBlock(buildFooter({
             toolCalls: result.toolCalls.length,

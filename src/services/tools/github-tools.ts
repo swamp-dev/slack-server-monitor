@@ -101,7 +101,7 @@ Requires gh CLI to be installed and authenticated.`,
       // Build gh issue create args
       // Body is passed via stdin to avoid shell metacharacter issues
       // (issue bodies commonly contain backticks, $variables, pipes, etc.)
-      const args: string[] = ['issue', 'create', '--repo', repo, '--title', title, '--body-stdin'];
+      const args: string[] = ['issue', 'create', '--repo', repo, '--title', title, '--body-file', '-'];
 
       // Add configured default labels + any extra labels
       const defaultLabels = config.githubDefaultLabels ?? [];

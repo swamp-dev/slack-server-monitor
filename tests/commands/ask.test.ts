@@ -53,6 +53,10 @@ vi.mock('../../src/utils/slack-errors.js', () => ({
 
 vi.mock('../../src/formatters/scrub.js', () => ({
   scrubSensitiveData: vi.fn((s: string) => s),
+  truncateText: vi.fn((s: string, max: number) => {
+    if (s.length <= max) return s;
+    return s.slice(0, max) + '\n... [truncated]';
+  }),
 }));
 
 // Mock config - we'll override per test via mockConfig
@@ -515,6 +519,30 @@ describe('registerAskCommand handler', () => {
             }),
           }),
         ]),
+      })
+    );
+  });
+
+  it('should truncate long questions in section blocks but pass full question to Claude', async () => {
+    const longQuestion = 'A'.repeat(6000);
+    const mock = createMockCommand({ text: longQuestion });
+    await askHandler(mock);
+
+    // Should post initial message with truncated question in blocks
+    const postCall = mock.client.chat.postMessage.mock.calls[0][0];
+    const questionBlock = postCall.blocks.find(
+      (b: Record<string, unknown>) => b.type === 'section' &&
+        (b.text as Record<string, string>)?.text?.includes('Question:')
+    );
+    expect(questionBlock).toBeDefined();
+    const blockText = (questionBlock.text as Record<string, string>).text;
+    expect(blockText.length).toBeLessThan(3000);
+    expect(blockText).toContain('[truncated]');
+
+    // But the full question should be passed to Claude
+    expect(mockProcessConversationTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userMessage: longQuestion,
       })
     );
   });
