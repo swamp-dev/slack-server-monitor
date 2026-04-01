@@ -69,6 +69,7 @@ export function wrapInShell(opts: ShellOptions): string {
   const navHtml = showNav ? `
   <nav class="nav-bar">
     <a href="/" class="nav-brand">${icon('robot', 22)} Server Monitor</a>
+    <a href="/c" class="nav-link">${icon('message-circle', 14)} Conversations</a>
     ${pluginNavHtml ? `<div class="nav-plugins">${pluginNavHtml}</div>` : ''}
     <button class="nav-hamburger" id="nav-hamburger" type="button" aria-label="Menu">${icon('chevron-down', 20)}</button>
     <div class="nav-actions" id="nav-actions">
@@ -144,10 +145,12 @@ export function wrapInShell(opts: ShellOptions): string {
     var btn = document.getElementById('nav-hamburger');
     var actions = document.getElementById('nav-actions');
     var plugins = document.querySelector('.nav-plugins');
+    var navLinks = document.querySelectorAll('.nav-link');
     if (!btn || !actions) return;
     btn.addEventListener('click', function() {
       actions.classList.toggle('open');
       if (plugins) plugins.classList.toggle('open');
+      navLinks.forEach(function(link) { link.classList.toggle('open'); });
     });
   })();
   // Notification bell dropdown

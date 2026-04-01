@@ -54,6 +54,23 @@ export function getBaseStyles(): string {
   }
   .nav-brand:hover { text-decoration: none; opacity: 0.85; }
   .nav-brand svg { color: var(--accent); }
+  .nav-link {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.8125rem;
+    padding: 6px 14px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 16px;
+    transition: color 0.15s, background 0.15s;
+  }
+  .nav-link:hover {
+    color: var(--fg);
+    background: var(--surface);
+    text-decoration: none;
+  }
   .nav-plugins {
     display: flex;
     align-items: center;
@@ -305,6 +322,8 @@ export function getBaseStyles(): string {
   }
   @media (max-width: 640px) {
     .nav-hamburger { display: flex; }
+    .nav-link { display: none; margin-left: 0; }
+    .nav-link.open { display: flex; position: absolute; top: 100%; left: 0; background: var(--nav-bg); border: 1px solid var(--border); border-radius: 0 0 8px 8px; padding: 12px; z-index: 50; }
     .nav-plugins { display: none; }
     .nav-plugins.open { display: flex; flex-direction: column; position: absolute; top: 100%; left: 0; background: var(--nav-bg); border: 1px solid var(--border); border-radius: 0 0 8px 8px; padding: 12px; gap: 8px; z-index: 50; }
     .nav-actions { display: none; }
@@ -945,6 +964,16 @@ export function getBaseStyles(): string {
     .message-content { padding: 12px; }
     pre { padding: 12px; font-size: 0.8125rem; }
     .toast-container { bottom: 12px; right: 12px; left: 12px; }
+  }
+  @media (max-width: 414px) {
+    .container { padding: 8px; }
+    .nav-bar { padding: 8px 12px; }
+    .nav-brand { font-size: 0.85rem; gap: 6px; }
+    .message-content { padding: 10px; font-size: 0.85rem; }
+    .message-header { padding: 8px 12px; font-size: 0.75rem; }
+    pre { font-size: 0.75rem; }
+    .session-card { padding: 12px; }
+    .session-card h3 { font-size: 0.85rem; }
   }
   `;
 }

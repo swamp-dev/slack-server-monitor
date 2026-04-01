@@ -1503,6 +1503,12 @@ describe('web templates', () => {
         const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
         expect(html).toContain('/logout');
       });
+
+      it('includes conversations link in nav bar', () => {
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+        expect(html).toContain('href="/c"');
+        expect(html).toContain('Conversations');
+      });
     });
 
     describe('login page', () => {
@@ -2109,6 +2115,13 @@ describe('web templates', () => {
 
       // Recent sessions should show relative time
       expect(html).toMatch(/\d+[mh] ago|just now/);
+    });
+
+    it('includes mobile-optimized styles for small screens', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+
+      // Should have a breakpoint for small phones (414px or below)
+      expect(html).toMatch(/@media\s*\(max-width:\s*414px\)/);
     });
   });
 });

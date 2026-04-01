@@ -394,6 +394,43 @@ const dashboardStyles = `
       max-width: 200px;
     }
   }
+  @media (max-width: 414px) {
+    .dashboard-card {
+      padding: 14px;
+    }
+    .stat-card {
+      padding: 12px;
+    }
+    .stat-card .stat-value {
+      font-size: 1.25rem;
+    }
+    .health-grid {
+      grid-template-columns: 1fr;
+    }
+    .health-metric {
+      padding: 10px;
+    }
+    .widget-grid {
+      grid-template-columns: 1fr;
+    }
+    .recent-item {
+      padding: 10px;
+    }
+    .recent-item .recent-title {
+      max-width: 160px;
+      font-size: 0.8rem;
+    }
+    .quick-actions a {
+      padding: 10px;
+      font-size: 0.8rem;
+    }
+    .links-grid {
+      grid-template-columns: 1fr;
+    }
+    .empty-welcome h2 {
+      font-size: 1.2rem;
+    }
+  }
 `;
 
 /**
