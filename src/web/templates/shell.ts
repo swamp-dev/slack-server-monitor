@@ -143,9 +143,11 @@ export function wrapInShell(opts: ShellOptions): string {
   (function() {
     var btn = document.getElementById('nav-hamburger');
     var actions = document.getElementById('nav-actions');
+    var plugins = document.querySelector('.nav-plugins');
     if (!btn || !actions) return;
     btn.addEventListener('click', function() {
       actions.classList.toggle('open');
+      if (plugins) plugins.classList.toggle('open');
     });
   })();
   // Notification bell dropdown

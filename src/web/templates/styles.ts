@@ -57,14 +57,14 @@ export function getBaseStyles(): string {
   .nav-plugins {
     display: flex;
     align-items: center;
-    gap: 4px;
-    margin-left: 16px;
+    gap: 2px;
+    margin-left: 20px;
   }
   .nav-plugin-link {
     color: var(--text-muted);
     text-decoration: none;
-    font-size: 0.8rem;
-    padding: 4px 10px;
+    font-size: 0.8125rem;
+    padding: 6px 14px;
     border-radius: 6px;
     display: flex;
     align-items: center;
@@ -305,6 +305,8 @@ export function getBaseStyles(): string {
   }
   @media (max-width: 640px) {
     .nav-hamburger { display: flex; }
+    .nav-plugins { display: none; }
+    .nav-plugins.open { display: flex; flex-direction: column; position: absolute; top: 100%; left: 0; background: var(--nav-bg); border: 1px solid var(--border); border-radius: 0 0 8px 8px; padding: 12px; gap: 8px; z-index: 50; }
     .nav-actions { display: none; }
     .nav-actions.open { display: flex; flex-direction: column; position: absolute; top: 100%; right: 0; background: var(--nav-bg); border: 1px solid var(--border); border-radius: 0 0 8px 8px; padding: 12px; gap: 8px; }
   }
