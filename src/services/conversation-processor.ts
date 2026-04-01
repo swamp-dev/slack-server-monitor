@@ -166,6 +166,15 @@ export async function processConversationTurn(
     );
   }
 
+  // Persist context window status for display in web UI
+  if (result.contextStatus) {
+    store.updateContextStatus(conversationId, {
+      percentUsed: result.contextStatus.percentUsed,
+      wasTruncated: result.contextStatus.wasTruncated,
+      removedCount: result.contextStatus.removedCount,
+    });
+  }
+
   return {
     response: result.response,
     toolCalls: result.toolCalls,

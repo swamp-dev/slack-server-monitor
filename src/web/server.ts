@@ -424,6 +424,45 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
   });
 
+  // Fork conversation: POST /c/:id/fork
+  app.post('/c/:id/fork', (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
+      const body = req.body as Record<string, unknown>;
+      const messageIndex = typeof body.messageIndex === 'number' ? body.messageIndex : -1;
+
+      if (isNaN(id)) {
+        res.status(400).json({ error: 'Invalid conversation ID' });
+        return;
+      }
+      if (!Number.isInteger(messageIndex) || messageIndex < 0) {
+        res.status(400).json({ error: 'messageIndex is required and must be a non-negative integer' });
+        return;
+      }
+
+      // Ownership check: only the conversation owner can fork
+      const userId = res.locals.userId as string;
+      const parent = store.getConversationById(id);
+      if (!parent) {
+        res.status(404).json({ error: 'Conversation not found' });
+        return;
+      }
+      if (parent.userId !== userId) {
+        res.status(403).json({ error: 'Access denied' });
+        return;
+      }
+
+      const branch = store.branchConversation(id, messageIndex, userId);
+      res.json({ threadTs: branch.threadTs, channelId: branch.channelId, id: branch.id });
+    } catch (err) {
+      logger.error('Error forking conversation', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).json({ error: 'Failed to fork conversation' });
+    }
+  });
+
   // Archived session list endpoint: GET /c/archived
   app.get('/c/archived', (req: Request, res: Response) => {
     try {
@@ -476,6 +515,9 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         isFavorited: conversation.favoritedAt != null,
         tags,
         userId: conversation.userId,
+        contextStatus: conversation.contextStatus,
+        parentConversationId: conversation.parentConversationId,
+        branchPointIndex: conversation.branchPointIndex,
       });
 
       res.type('html').send(html);

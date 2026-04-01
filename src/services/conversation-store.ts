@@ -29,6 +29,15 @@ export interface ConversationMessage {
 }
 
 /**
+ * Context window status stored per conversation
+ */
+export interface StoredContextStatus {
+  percentUsed: number;
+  wasTruncated: boolean;
+  removedCount: number;
+}
+
+/**
  * Stored conversation record
  */
 export interface Conversation {
@@ -41,6 +50,9 @@ export interface Conversation {
   updatedAt: number;
   archivedAt: number | null;
   favoritedAt: number | null;
+  contextStatus: StoredContextStatus | null;
+  parentConversationId: number | null;
+  branchPointIndex: number | null;
 }
 
 /**
@@ -210,6 +222,19 @@ export class ConversationStore {
       this.db.exec('ALTER TABLE conversations ADD COLUMN favorited_at INTEGER');
     }
 
+    // Migrate: add context_status column for context window tracking
+    if (!convColumnNames.has('context_status')) {
+      this.db.exec('ALTER TABLE conversations ADD COLUMN context_status TEXT');
+    }
+
+    // Migrate: add parent_conversation_id and branch_point_index for conversation branching
+    if (!convColumnNames.has('parent_conversation_id')) {
+      this.db.exec('ALTER TABLE conversations ADD COLUMN parent_conversation_id INTEGER REFERENCES conversations(id)');
+    }
+    if (!convColumnNames.has('branch_point_index')) {
+      this.db.exec('ALTER TABLE conversations ADD COLUMN branch_point_index INTEGER');
+    }
+
     // Migrate: create FTS5 virtual table for full-text search
     const ftsExists = this.db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='conversations_fts'")
@@ -238,6 +263,47 @@ export class ConversationStore {
   }
 
   /**
+   * Parse a database row into a Conversation object
+   */
+  private rowToConversation(row: {
+    id: number;
+    thread_ts: string;
+    channel_id: string;
+    user_id: string;
+    messages: string;
+    created_at: number;
+    updated_at: number;
+    archived_at: number | null;
+    favorited_at: number | null;
+    context_status?: string | null;
+    parent_conversation_id?: number | null;
+    branch_point_index?: number | null;
+  }): Conversation {
+    let contextStatus: StoredContextStatus | null = null;
+    if (row.context_status) {
+      try {
+        contextStatus = JSON.parse(row.context_status) as StoredContextStatus;
+      } catch {
+        contextStatus = null;
+      }
+    }
+    return {
+      id: row.id,
+      threadTs: row.thread_ts,
+      channelId: row.channel_id,
+      userId: row.user_id,
+      messages: JSON.parse(row.messages) as ConversationMessage[],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      archivedAt: row.archived_at,
+      favoritedAt: row.favorited_at,
+      contextStatus,
+      parentConversationId: row.parent_conversation_id ?? null,
+      branchPointIndex: row.branch_point_index ?? null,
+    };
+  }
+
+  /**
    * Extract plain text from messages JSON for FTS indexing
    */
   private extractTextFromMessages(messagesJson: string): string {
@@ -255,33 +321,13 @@ export class ConversationStore {
   getConversation(threadTs: string, channelId: string): Conversation | null {
     const row = this.db
       .prepare('SELECT * FROM conversations WHERE thread_ts = ? AND channel_id = ?')
-      .get(threadTs, channelId) as {
-        id: number;
-        thread_ts: string;
-        channel_id: string;
-        user_id: string;
-        messages: string;
-        created_at: number;
-        updated_at: number;
-        archived_at: number | null;
-        favorited_at: number | null;
-      } | undefined;
+      .get(threadTs, channelId) as Record<string, unknown> | undefined;
 
     if (!row) {
       return null;
     }
 
-    return {
-      id: row.id,
-      threadTs: row.thread_ts,
-      channelId: row.channel_id,
-      userId: row.user_id,
-      messages: JSON.parse(row.messages) as ConversationMessage[],
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      archivedAt: row.archived_at,
-      favoritedAt: row.favorited_at,
-    };
+    return this.rowToConversation(row as Parameters<typeof this.rowToConversation>[0]);
   }
 
   /**
@@ -319,6 +365,9 @@ export class ConversationStore {
       updatedAt: now,
       archivedAt: null,
       favoritedAt: null,
+      contextStatus: null,
+      parentConversationId: null,
+      branchPointIndex: null,
     };
   }
 
@@ -380,33 +429,13 @@ export class ConversationStore {
   getConversationByThreadTs(threadTs: string): Conversation | null {
     const row = this.db
       .prepare('SELECT * FROM conversations WHERE thread_ts = ? ORDER BY updated_at DESC LIMIT 1')
-      .get(threadTs) as {
-        id: number;
-        thread_ts: string;
-        channel_id: string;
-        user_id: string;
-        messages: string;
-        created_at: number;
-        updated_at: number;
-        archived_at: number | null;
-        favorited_at: number | null;
-      } | undefined;
+      .get(threadTs) as Record<string, unknown> | undefined;
 
     if (!row) {
       return null;
     }
 
-    return {
-      id: row.id,
-      threadTs: row.thread_ts,
-      channelId: row.channel_id,
-      userId: row.user_id,
-      messages: JSON.parse(row.messages) as ConversationMessage[],
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      archivedAt: row.archived_at,
-      favoritedAt: row.favorited_at,
-    };
+    return this.rowToConversation(row as Parameters<typeof this.rowToConversation>[0]);
   }
 
   /**
@@ -415,33 +444,88 @@ export class ConversationStore {
   getConversationById(id: number): Conversation | null {
     const row = this.db
       .prepare('SELECT * FROM conversations WHERE id = ?')
-      .get(id) as {
-        id: number;
-        thread_ts: string;
-        channel_id: string;
-        user_id: string;
-        messages: string;
-        created_at: number;
-        updated_at: number;
-        archived_at: number | null;
-        favorited_at: number | null;
-      } | undefined;
+      .get(id) as Record<string, unknown> | undefined;
 
     if (!row) {
       return null;
     }
 
+    return this.rowToConversation(row as Parameters<typeof this.rowToConversation>[0]);
+  }
+
+  /**
+   * Update the context window status for a conversation
+   */
+  updateContextStatus(conversationId: number, status: StoredContextStatus): void {
+    this.db
+      .prepare('UPDATE conversations SET context_status = ? WHERE id = ?')
+      .run(JSON.stringify(status), conversationId);
+  }
+
+  /**
+   * Branch a conversation: create a new conversation with messages up to branchPointIndex
+   */
+  branchConversation(
+    parentId: number,
+    branchPointIndex: number,
+    userId: string
+  ): Conversation {
+    const parent = this.getConversationById(parentId);
+    if (!parent) {
+      throw new Error(`Parent conversation ${String(parentId)} not found`);
+    }
+    if (branchPointIndex < 0 || branchPointIndex >= parent.messages.length) {
+      throw new Error(`Branch point index ${String(branchPointIndex)} out of range (0-${String(parent.messages.length - 1)})`);
+    }
+
+    // Copy messages up to and including the branch point
+    const branchedMessages = parent.messages.slice(0, branchPointIndex + 1);
+    const now = Date.now();
+    const branchTs = `branch-${String(now)}-${Math.random().toString(36).slice(2, 8)}`;
+    const messagesJson = JSON.stringify(branchedMessages);
+
+    const { id } = this.db.transaction(() => {
+      const result = this.db
+        .prepare(`
+          INSERT INTO conversations (thread_ts, channel_id, user_id, messages, created_at, updated_at, parent_conversation_id, branch_point_index)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(branchTs, parent.channelId, userId, messagesJson, now, now, parentId, branchPointIndex);
+
+      const insertedId = result.lastInsertRowid as number;
+
+      // Update FTS index
+      const text = this.extractTextFromMessages(messagesJson);
+      this.db.prepare('INSERT INTO conversations_fts(rowid, messages_text) VALUES (?, ?)').run(insertedId, text);
+
+      return { id: insertedId };
+    })();
+
     return {
-      id: row.id,
-      threadTs: row.thread_ts,
-      channelId: row.channel_id,
-      userId: row.user_id,
-      messages: JSON.parse(row.messages) as ConversationMessage[],
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      archivedAt: row.archived_at,
-      favoritedAt: row.favorited_at,
+      id,
+      threadTs: branchTs,
+      channelId: parent.channelId,
+      userId,
+      messages: branchedMessages,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      favoritedAt: null,
+      contextStatus: null,
+      parentConversationId: parentId,
+      branchPointIndex: branchPointIndex,
     };
+  }
+
+  /**
+   * List branches of a conversation
+   */
+  listBranches(parentId: number): Conversation[] {
+    const rows = this.db
+      .prepare('SELECT * FROM conversations WHERE parent_conversation_id = ? ORDER BY created_at DESC')
+      .all(parentId) as Record<string, unknown>[];
+
+    return rows.map((row) => this.rowToConversation(row as Parameters<typeof this.rowToConversation>[0]));
   }
 
   /**

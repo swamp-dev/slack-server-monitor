@@ -1052,4 +1052,119 @@ describe('ConversationStore', () => {
       expect(shortTtlStore.getConversation('2222.0002', 'C123ABC')).not.toBeNull();
     });
   });
+
+  describe('context status', () => {
+    it('should store and retrieve context status', () => {
+      const conv = store.createConversation('ctx-001', 'C001', 'U001', [
+        { role: 'user', content: 'hello' },
+      ]);
+      expect(conv.contextStatus).toBeNull();
+
+      store.updateContextStatus(conv.id, {
+        percentUsed: 0.45,
+        wasTruncated: false,
+        removedCount: 0,
+      });
+
+      const updated = store.getConversationById(conv.id);
+      expect(updated?.contextStatus).toEqual({
+        percentUsed: 0.45,
+        wasTruncated: false,
+        removedCount: 0,
+      });
+    });
+
+    it('should store truncation status', () => {
+      const conv = store.createConversation('ctx-002', 'C001', 'U001', [
+        { role: 'user', content: 'hello' },
+      ]);
+
+      store.updateContextStatus(conv.id, {
+        percentUsed: 0.92,
+        wasTruncated: true,
+        removedCount: 12,
+      });
+
+      const updated = store.getConversationById(conv.id);
+      expect(updated?.contextStatus?.wasTruncated).toBe(true);
+      expect(updated?.contextStatus?.removedCount).toBe(12);
+    });
+
+    it('should return null contextStatus for conversations without it', () => {
+      const conv = store.createConversation('ctx-003', 'C001', 'U001', []);
+      expect(conv.contextStatus).toBeNull();
+
+      const fetched = store.getConversationById(conv.id);
+      expect(fetched?.contextStatus).toBeNull();
+    });
+  });
+
+  describe('conversation branching', () => {
+    it('should branch a conversation at a given message index', () => {
+      const parent = store.createConversation('branch-001', 'C001', 'U001', [
+        { role: 'user', content: 'What containers are running?' },
+        { role: 'assistant', content: 'nginx, wordpress, n8n' },
+        { role: 'user', content: 'Show me nginx logs' },
+        { role: 'assistant', content: 'Here are the logs...' },
+      ]);
+
+      // Branch after the first assistant reply (index 1)
+      const branch = store.branchConversation(parent.id, 1, 'U001');
+
+      expect(branch.parentConversationId).toBe(parent.id);
+      expect(branch.branchPointIndex).toBe(1);
+      expect(branch.messages).toHaveLength(2);
+      expect(branch.messages[0]?.content).toBe('What containers are running?');
+      expect(branch.messages[1]?.content).toBe('nginx, wordpress, n8n');
+      expect(branch.threadTs).toMatch(/^branch-/);
+      expect(branch.channelId).toBe('C001');
+    });
+
+    it('should list branches of a parent conversation', () => {
+      const parent = store.createConversation('branch-002', 'C001', 'U001', [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi' },
+        { role: 'user', content: 'question' },
+        { role: 'assistant', content: 'answer' },
+      ]);
+
+      store.branchConversation(parent.id, 1, 'U001');
+      store.branchConversation(parent.id, 3, 'U001');
+
+      const branches = store.listBranches(parent.id);
+      expect(branches).toHaveLength(2);
+    });
+
+    it('should throw for invalid branch point index', () => {
+      const parent = store.createConversation('branch-003', 'C001', 'U001', [
+        { role: 'user', content: 'hello' },
+      ]);
+
+      expect(() => store.branchConversation(parent.id, -1, 'U001')).toThrow('out of range');
+      expect(() => store.branchConversation(parent.id, 5, 'U001')).toThrow('out of range');
+    });
+
+    it('should throw for non-existent parent', () => {
+      expect(() => store.branchConversation(99999, 0, 'U001')).toThrow('not found');
+    });
+
+    it('should preserve new fields through getConversation', () => {
+      const parent = store.createConversation('branch-004', 'C001', 'U001', [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi' },
+      ]);
+
+      const branch = store.branchConversation(parent.id, 1, 'U001');
+      const fetched = store.getConversationById(branch.id);
+
+      expect(fetched?.parentConversationId).toBe(parent.id);
+      expect(fetched?.branchPointIndex).toBe(1);
+    });
+
+    it('parent should have null branch fields', () => {
+      const parent = store.createConversation('branch-005', 'C001', 'U001', []);
+      expect(parent.parentConversationId).toBeNull();
+      expect(parent.branchPointIndex).toBeNull();
+    });
+  });
 });

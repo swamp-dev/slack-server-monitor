@@ -2,10 +2,42 @@
  * Conversation detail page template
  */
 
-import type { ConversationMessage, ToolCallLog } from '../../services/conversation-store.js';
+import type { ConversationMessage, ToolCallLog, StoredContextStatus } from '../../services/conversation-store.js';
 import { escapeHtml, formatMarkdown, formatTimestamp } from './utils.js';
 import { icon } from './icons.js';
 import { wrapInShell } from './shell.js';
+
+// ─── Context Status ───────────────────────────────────────────────────
+
+/**
+ * Render context window usage bar
+ */
+function renderContextStatus(status: StoredContextStatus | null): string {
+  if (!status) return '';
+
+  const pct = Math.round(status.percentUsed * 100);
+  const pctStr = String(pct);
+  let barColor = 'var(--green)';
+  let label = `${pctStr}% context used`;
+
+  if (status.wasTruncated) {
+    barColor = 'var(--red)';
+    label = `${pctStr}% used — ${String(status.removedCount)} messages truncated`;
+  } else if (pct >= 70) {
+    barColor = 'var(--orange)';
+    label = `${pctStr}% used — approaching limit`;
+  }
+
+  const widthPct = String(Math.min(pct, 100));
+  return `
+    <div class="context-status" title="${escapeHtml(label)}">
+      <div class="context-bar">
+        <div class="context-bar-fill" style="width: ${widthPct}%; background: ${barColor};"></div>
+      </div>
+      <span class="context-label">${icon('brain', 12)} ${escapeHtml(label)}</span>
+    </div>
+  `;
+}
 
 // ─── Conversation Detail ───────────────────────────────────────────────
 
@@ -28,23 +60,28 @@ function avatarColor(userId: string): string {
 /**
  * Render a single message
  */
-function renderMessage(message: ConversationMessage, userId?: string): string {
+function renderMessage(message: ConversationMessage, index: number, opts?: { userId?: string; canFork?: boolean; isLast?: boolean }): string {
   const roleClass = message.role;
   const roleLabel = message.role === 'user' ? 'You' : 'Claude';
   const content = formatMarkdown(message.content);
 
   let avatarContent: string;
   if (message.role === 'user') {
-    const initial = userId ? userId.charAt(0).toUpperCase() : roleLabel.charAt(0);
-    const color = userId ? avatarColor(userId) : 'var(--cyan)';
+    const initial = opts?.userId ? opts.userId.charAt(0).toUpperCase() : roleLabel.charAt(0);
+    const color = opts?.userId ? avatarColor(opts.userId) : 'var(--cyan)';
     avatarContent = `<span class="avatar" style="background: ${color}; color: var(--bg);">${escapeHtml(initial)}</span>`;
   } else {
     avatarContent = `<span class="avatar avatar-glow">${icon('robot', 16)}</span>`;
   }
 
+  // Fork button: shown on assistant messages except the last one (forking from last is just continuing)
+  const forkBtn = opts?.canFork && message.role === 'assistant' && !opts.isLast
+    ? `<button class="fork-btn" data-index="${String(index)}" title="Fork conversation from here">${icon('git-branch', 14)} Fork</button>`
+    : '';
+
   return `
-    <div class="message ${roleClass}">
-      <div class="message-header">${avatarContent}${roleLabel}</div>
+    <div class="message ${roleClass}" data-index="${String(index)}">
+      <div class="message-header">${avatarContent}${roleLabel}${forkBtn}</div>
       <div class="message-content">${content}</div>
     </div>
   `;
@@ -462,6 +499,54 @@ const conversationDetailStyles = `
   #stream-area {
     margin: 12px 0;
   }
+
+  /* Context window status bar */
+  .context-status {
+    margin-top: 6px;
+  }
+  .context-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 2px;
+  }
+  .context-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s;
+  }
+  .context-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* Fork button */
+  .fork-btn {
+    margin-left: auto;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.2s, color 0.2s, border-color 0.2s;
+  }
+  .message:hover .fork-btn {
+    opacity: 1;
+  }
+  .fork-btn:hover {
+    color: var(--purple);
+    border-color: var(--purple);
+  }
 `;
 
 /**
@@ -480,10 +565,13 @@ export function renderConversation(
     isFavorited?: boolean;
     tags?: string[];
     userId?: string;
+    contextStatus?: StoredContextStatus | null;
+    parentConversationId?: number | null;
+    branchPointIndex?: number | null;
   }
 ): string {
   const messagesHtml = messages.length > 0
-    ? messages.map((m) => renderMessage(m, metadata.userId)).join('\n')
+    ? messages.map((m, i) => renderMessage(m, i, { userId: metadata.userId, canFork: metadata.canContinue, isLast: i === messages.length - 1 })).join('\n')
     : '<div class="empty">No messages in this conversation.</div>';
 
   const toolCallsHtml = renderToolCalls(toolCalls);
@@ -519,7 +607,9 @@ export function renderConversation(
         </div>
         <div class="meta" style="color: var(--text-muted); font-size: 0.8125rem; margin-top: 2px;">
           ${icon('clock', 14)} ${formatTimestamp(metadata.createdAt)} &mdash; ${formatTimestamp(metadata.updatedAt)}
+          ${metadata.parentConversationId != null ? ` &middot; ${icon('git-branch', 12)} <a href="/c" style="color: var(--purple);">Forked conversation</a>` : ''}
         </div>
+        ${renderContextStatus(metadata.contextStatus ?? null)}
         <div class="detail-tags" id="detail-tags">${tagPills}</div>
         ${tagInputHtml}
       </div>
@@ -613,6 +703,30 @@ export function renderConversation(
     }
 
     // Archive button
+    // Fork button handlers
+    document.querySelectorAll('.fork-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var idx = parseInt(btn.getAttribute('data-index') || '-1', 10);
+        if (idx < 0 || !convId) return;
+        if (!confirm('Fork conversation from this point?')) return;
+        fetch('/c/' + convId + '/fork', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageIndex: idx }),
+          credentials: 'same-origin'
+        })
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            if (data.threadTs && data.channelId) {
+              showToast('Conversation forked');
+              setTimeout(function() { window.location.href = '/c/' + data.threadTs + '/' + data.channelId; }, 500);
+            } else if (data.error) {
+              showToast('Fork failed: ' + data.error);
+            }
+          });
+      });
+    });
+
     var archiveBtn = document.getElementById('archive-btn');
     if (archiveBtn) {
       archiveBtn.addEventListener('click', function() {
