@@ -832,6 +832,21 @@ export class ConversationStore {
   }
 
   /**
+   * Count unique users who have created conversations within a time window
+   */
+  countUniqueUsers(hours = 24): number {
+    const cutoff = Date.now() - hours * 60 * 60 * 1000;
+    const row = this.db
+      .prepare(`
+        SELECT COUNT(DISTINCT user_id) as count
+        FROM conversations
+        WHERE updated_at > ? AND archived_at IS NULL
+      `)
+      .get(cutoff) as { count: number };
+    return row.count;
+  }
+
+  /**
    * Get tool calls for a conversation
    *
    * @param conversationId - Conversation ID

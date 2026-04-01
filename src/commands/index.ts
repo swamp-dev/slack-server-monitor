@@ -11,6 +11,7 @@ import { registerSslCommand } from './ssl.js';
 import { registerBackupsCommand } from './backups.js';
 import { registerPm2Command } from './pm2.js';
 import { registerWebLoginCommand } from './weblogin.js';
+import { registerStatsCommand } from './stats.js';
 import { registerHelpCommand } from './help.js';
 import { registerPlugins } from '../plugins/index.js';
 import { refreshToolMap } from '../services/tools/index.js';
@@ -42,6 +43,9 @@ export async function registerCommands(app: App): Promise<void> {
   registerThreadHandler(app);
   registerContextCommand(app);
   registerSessionsCommand(app);
+
+  // Stats and analytics
+  registerStatsCommand(app);
 
   // Web UI commands
   registerWebLoginCommand(app);

@@ -39,7 +39,8 @@ export function registerHelpCommand(app: App): void {
       section(
         '*System*\n' +
         '`/resources` - CPU, memory, swap overview\n' +
-        '`/disk` - Disk usage per mount point'
+        '`/disk` - Disk usage per mount point\n' +
+        '`/stats` - Usage statistics and system health'
       ),
       divider(),
 

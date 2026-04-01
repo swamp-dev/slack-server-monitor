@@ -455,6 +455,17 @@ describe('ConversationStore', () => {
       expect(stats.topTools[1]?.avgDurationMs).toBe(500);
     });
 
+    it('countUniqueUsers returns distinct user count within time window', () => {
+      // Create conversations for different users
+      store.getOrCreateConversation('thread-u1', 'C001', 'USER_A', 'hello');
+      store.getOrCreateConversation('thread-u2', 'C001', 'USER_B', 'hello');
+      store.getOrCreateConversation('thread-u3', 'C001', 'USER_A', 'again'); // same user
+      store.getOrCreateConversation('thread-u4', 'C001', 'USER_C', 'hello');
+
+      const count = store.countUniqueUsers(24);
+      expect(count).toBe(3); // USER_A, USER_B, USER_C
+    });
+
     it('should migrate old database without duration_ms and success columns', () => {
       // Create a database with old schema (no duration_ms or success columns)
       const oldDbPath = path.join(os.tmpdir(), `test-migration-${Date.now()}.db`);
