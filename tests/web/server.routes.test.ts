@@ -83,6 +83,21 @@ const mockStore = {
     totalToolCalls: 0, avgToolDurationMs: null, toolFailureRate: 0, topTools: [],
   })),
   getOrCreateConversation: vi.fn(),
+  getConversationById: vi.fn(() => null),
+  branchConversation: vi.fn(() => ({
+    id: 99,
+    threadTs: 'branch-123-abc',
+    channelId: 'C001',
+    userId: 'U123',
+    messages: [{ role: 'user', content: 'Hello' }],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    archivedAt: null,
+    favoritedAt: null,
+    contextStatus: null,
+    parentConversationId: 1,
+    branchPointIndex: 1,
+  })),
   getDatabase: vi.fn(() => ({
     prepare: vi.fn(() => ({ all: vi.fn(() => []) })),
   })),
@@ -1008,6 +1023,190 @@ describe('web server routes', () => {
     it('POST /api/notifications/:id/read should reject zero id', async () => {
       const res = await authFetch('/api/notifications/0/read', { method: 'POST' });
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe('GET /api/search', () => {
+    it('should return recent conversations when no query', async () => {
+      const res = await authFetch('/api/search');
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toHaveProperty('results');
+      expect(Array.isArray(json.results)).toBe(true);
+    });
+
+    it('should return search results for valid query', async () => {
+      mockStore.searchConversations.mockReturnValueOnce(mockSessionSummaries);
+      const res = await authFetch('/api/search?q=hello');
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.results).toHaveLength(1);
+      expect(json.results[0]).toHaveProperty('title');
+      expect(json.results[0]).toHaveProperty('url');
+    });
+
+    it('should limit results to max 10', async () => {
+      const res = await authFetch('/api/search?limit=50');
+      expect(res.status).toBe(200);
+      // Verify the store was called with limit clamped to 10
+      expect(mockStore.listRecentSessions).toHaveBeenCalledWith(10, 0, expect.anything());
+    });
+
+    it('should require authentication', async () => {
+      mockSessionStore.getSession.mockReturnValue(null);
+      const res = await fetch(`${baseUrl}/api/search`, { redirect: 'manual' });
+      expect(res.status).toBe(401);
+    });
+
+    it('should return 500 when store throws', async () => {
+      const { getConversationStore } = await import('../../src/services/conversation-store.js');
+      vi.mocked(getConversationStore).mockImplementationOnce(() => {
+        throw new Error('DB connection failed');
+      });
+      const res = await authFetch('/api/search?q=test');
+      expect(res.status).toBe(500);
+    });
+
+    it('should return empty results for no matches', async () => {
+      mockStore.searchConversations.mockReturnValueOnce([]);
+      const res = await authFetch('/api/search?q=nonexistent');
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.results).toHaveLength(0);
+    });
+  });
+
+  describe('POST /c/:id/fork', () => {
+    it('should fork conversation at valid message index', async () => {
+      mockStore.getConversationById.mockReturnValueOnce({
+        id: 1,
+        threadTs: '1000.001',
+        channelId: 'C001',
+        userId: 'U123',
+        messages: [
+          { role: 'user', content: 'Hello' },
+          { role: 'assistant', content: 'Hi' },
+        ],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        archivedAt: null,
+        favoritedAt: null,
+        contextStatus: null,
+        parentConversationId: null,
+        branchPointIndex: null,
+      });
+
+      const res = await authFetch('/c/1/fork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageIndex: 1 }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toHaveProperty('threadTs');
+      expect(json).toHaveProperty('channelId');
+      expect(json).toHaveProperty('id');
+    });
+
+    it('should return 400 for invalid conversation ID', async () => {
+      const res = await authFetch('/c/abc/fork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageIndex: 0 }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('should return 400 for negative messageIndex', async () => {
+      const res = await authFetch('/c/1/fork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageIndex: -1 }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('should return 400 for non-integer messageIndex', async () => {
+      const res = await authFetch('/c/1/fork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageIndex: 1.7 }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('should return 404 when conversation not found', async () => {
+      mockStore.getConversationById.mockReturnValueOnce(null);
+      const res = await authFetch('/c/999/fork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageIndex: 0 }),
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it('should return 403 when user does not own conversation', async () => {
+      mockStore.getConversationById.mockReturnValueOnce({
+        id: 1,
+        threadTs: '1000.001',
+        channelId: 'C001',
+        userId: 'U999',
+        messages: [{ role: 'user', content: 'Hello' }],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        archivedAt: null,
+        favoritedAt: null,
+        contextStatus: null,
+        parentConversationId: null,
+        branchPointIndex: null,
+      });
+      const res = await authFetch('/c/1/fork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageIndex: 0 }),
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('should return 500 on database error', async () => {
+      mockStore.getConversationById.mockImplementationOnce(() => {
+        throw new Error('DB error');
+      });
+      const res = await authFetch('/c/1/fork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageIndex: 0 }),
+      });
+      expect(res.status).toBe(500);
+    });
+  });
+
+  describe('POST /c/:threadTs/:channelId/ask ownership', () => {
+    it('should return 403 when user tries to continue another users conversation', async () => {
+      mockStore.getConversation.mockReturnValueOnce({
+        id: 1,
+        threadTs: '1000.001',
+        channelId: 'C001',
+        userId: 'U999',
+        messages: [
+          { role: 'user', content: 'original' },
+          { role: 'assistant', content: 'reply' },
+        ],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        archivedAt: null,
+        favoritedAt: null,
+        contextStatus: null,
+        parentConversationId: null,
+        branchPointIndex: null,
+      });
+
+      const res = await authFetch('/c/1000.001/C001/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'hijack attempt' }),
+      });
+      expect(res.status).toBe(403);
     });
   });
 

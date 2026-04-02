@@ -681,6 +681,31 @@ describe('ConversationStore', () => {
 
       expect(results).toHaveLength(1);
     });
+
+    it('should filter search results by userId when provided', () => {
+      store.createConversation('filter-001', 'C001', 'U001', [
+        { role: 'user', content: 'docker container status' },
+      ]);
+      store.createConversation('filter-002', 'C001', 'U002', [
+        { role: 'user', content: 'docker restart nginx' },
+      ]);
+
+      const filtered = store.searchConversations('docker', 20, 0, 'U001');
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0]?.userId).toBe('U001');
+    });
+
+    it('should return all results when filterUserId is undefined', () => {
+      store.createConversation('all-001', 'C001', 'U001', [
+        { role: 'user', content: 'kubernetes pod list' },
+      ]);
+      store.createConversation('all-002', 'C001', 'U002', [
+        { role: 'user', content: 'kubernetes deployment status' },
+      ]);
+
+      const all = store.searchConversations('kubernetes', 20, 0);
+      expect(all).toHaveLength(2);
+    });
   });
 
   describe('tagging', () => {

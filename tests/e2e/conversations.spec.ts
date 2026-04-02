@@ -13,7 +13,7 @@ test.describe('conversation list', () => {
   test('lists conversations', async ({ page }) => {
     await page.goto('/c');
     await expect(page.locator('h1')).toContainText('Conversations');
-    await expect(page.locator('.session-card')).toHaveCount(2);
+    await expect(page.locator('.session-card')).toHaveCount(3);
   });
 
   test('clicking a conversation opens the detail view', async ({ page }) => {
@@ -80,6 +80,31 @@ test.describe('conversation detail', () => {
   test('returns 404 for non-existent conversation', async ({ page }) => {
     const response = await page.goto('/c/9999.999/CNONE');
     expect(response?.status()).toBe(404);
+  });
+});
+
+test.describe('conversation forking', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/login');
+    await page.fill('input[name="token"]', AUTH_TOKEN);
+    await page.click('button[type="submit"]');
+    await page.waitForURL('/');
+  });
+
+  test('fork button hidden on last assistant message (2-message conversation)', async ({ page }) => {
+    await page.goto('/c/1000.001/C001');
+    // Conversation has 2 messages: user + assistant. The assistant message is last, so no fork button.
+    const forkButtons = page.locator('.fork-btn');
+    await expect(forkButtons).toHaveCount(0);
+  });
+
+  test('fork button visible on intermediate assistant message (4-message conversation)', async ({ page }) => {
+    // Conversation 3 has 4 messages: user, assistant, user, assistant
+    // The first assistant message (index 1) is NOT last, so it gets a fork button
+    // The second assistant message (index 3) IS last, so no fork button
+    await page.goto('/c/3000.003/C001');
+    const forkButtons = page.locator('.fork-btn');
+    await expect(forkButtons).toHaveCount(1);
   });
 });
 

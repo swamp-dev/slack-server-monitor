@@ -65,6 +65,23 @@ const conversations = [
     archivedAt: null as number | null,
     tags: ['disk', 'monitoring'] as string[],
   },
+  {
+    id: 3,
+    threadTs: '3000.003',
+    channelId: 'C001',
+    userId: 'admin',
+    messages: [
+      { role: 'user' as const, content: 'Check nginx logs' },
+      { role: 'assistant' as const, content: 'Here are the recent nginx logs showing 200 OK responses.' },
+      { role: 'user' as const, content: 'Any errors?' },
+      { role: 'assistant' as const, content: 'No errors found in the last 24 hours.' },
+    ],
+    createdAt: Date.now() - 1800000,
+    updatedAt: Date.now() - 1700000,
+    favoritedAt: null as number | null,
+    archivedAt: null as number | null,
+    tags: ['nginx'] as string[],
+  },
 ];
 
 const notifications = [
@@ -222,12 +239,16 @@ export async function startE2EServer(): Promise<void> {
       <nav><a href="/">Dashboard</a> <a href="/c">Conversations</a></nav>
       <h1>Conversation</h1>
       <div class="messages">
-        ${conv.messages.map((m) => `
-          <div class="message ${m.role}" data-role="${m.role}">
-            <strong>${m.role === 'user' ? 'You' : 'Claude'}</strong>
+        ${conv.messages.map((m, i) => {
+          const isLast = i === conv.messages.length - 1;
+          const forkBtn = m.role === 'assistant' && !isLast
+            ? `<button class="fork-btn" data-index="${i}" data-conv-id="${conv.id}">Fork</button>`
+            : '';
+          return `<div class="message ${m.role}" data-role="${m.role}" data-index="${i}">
+            <strong>${m.role === 'user' ? 'You' : 'Claude'}</strong>${forkBtn}
             <p>${esc(m.content)}</p>
-          </div>
-        `).join('')}
+          </div>`;
+        }).join('')}
       </div>
       <a href="/c/${conv.threadTs}/${conv.channelId}/export/md" class="export-btn">Export Markdown</a>
       <button class="favorite-btn" data-id="${conv.id}">${conv.favoritedAt ? '★' : '☆'}</button>
@@ -276,7 +297,48 @@ export async function startE2EServer(): Promise<void> {
     res.json({ isFavorited: conv.favoritedAt !== null });
   });
 
-  // Search
+  // Fork conversation
+  app.post('/c/:id/fork', (req, res) => {
+    const id = Number(req.params.id);
+    const messageIndex = typeof req.body.messageIndex === 'number' ? req.body.messageIndex : -1;
+    const conv = conversations.find((c) => c.id === id);
+    if (!conv) { res.status(404).json({ error: 'Not found' }); return; }
+    if (!Number.isInteger(messageIndex) || messageIndex < 0) { res.status(400).json({ error: 'Invalid messageIndex' }); return; }
+    const branchTs = `branch-${Date.now()}`;
+    const branch = {
+      id: conversations.length + 10,
+      threadTs: branchTs,
+      channelId: conv.channelId,
+      userId: 'admin',
+      messages: conv.messages.slice(0, messageIndex + 1),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      favoritedAt: null,
+      archivedAt: null,
+      tags: [] as string[],
+    };
+    conversations.push(branch);
+    res.json({ threadTs: branch.threadTs, channelId: branch.channelId, id: branch.id });
+  });
+
+  // Search API (for command palette)
+  app.get('/api/search', sessionAuth, (req, res) => {
+    const q = (req.query.q as string || '').toLowerCase();
+    const limit = Math.min(Number(req.query.limit) || 5, 10);
+    const filtered = q
+      ? conversations.filter((c) => c.messages.some((m) => m.content.toLowerCase().includes(q)))
+      : conversations;
+    res.json({
+      results: filtered.slice(0, limit).map((c) => ({
+        id: c.id,
+        title: c.messages[0]?.content.slice(0, 50) ?? 'Untitled',
+        url: `/c/${esc(c.threadTs)}/${esc(c.channelId)}`,
+        time: c.updatedAt,
+      })),
+    });
+  });
+
+  // Search page
   app.get('/c/search', (req, res) => {
     const q = (req.query.q as string || '').toLowerCase();
     if (!q) { res.redirect('/c'); return; }
@@ -393,6 +455,85 @@ export async function startE2EServer(): Promise<void> {
             localStorage.setItem('theme', next);
           });
         }
+      </script>
+      <div id="cmd-palette" class="cmd-palette" style="display:none" role="dialog" aria-label="Command palette" aria-modal="true">
+        <div class="cmd-palette-backdrop"></div>
+        <div class="cmd-palette-panel">
+          <div class="cmd-palette-input-wrap">
+            <input type="text" id="cmd-palette-input" class="cmd-palette-input" placeholder="Search or type a command...">
+          </div>
+          <div id="cmd-palette-results" class="cmd-palette-results"></div>
+        </div>
+      </div>
+      <script>
+        (function() {
+          function escJs(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+          var palette = document.getElementById('cmd-palette');
+          var input = document.getElementById('cmd-palette-input');
+          var results = document.getElementById('cmd-palette-results');
+          if (!palette || !input || !results) return;
+          var searchSeq = 0;
+
+          function open() { palette.style.display = ''; input.value = ''; input.focus(); renderDefault(); }
+          function close() { palette.style.display = 'none'; }
+
+          function renderDefault() {
+            var seq = ++searchSeq;
+            var html = '<div class="cmd-palette-group">Navigate</div>'
+              + '<a href="/" class="cmd-palette-item"><span class="cmd-item-title">Dashboard</span></a>'
+              + '<a href="/c" class="cmd-palette-item"><span class="cmd-item-title">Conversations</span></a>'
+              + '<a href="/c/new" class="cmd-palette-item"><span class="cmd-item-title">New Conversation</span></a>';
+            fetch('/api/search?limit=3', { credentials: 'same-origin' })
+              .then(function(r) { return r.json(); })
+              .then(function(data) {
+                if (seq !== searchSeq) return;
+                if (data.results && data.results.length > 0) {
+                  html += '<div class="cmd-palette-group">Recent</div>';
+                  data.results.forEach(function(r) {
+                    html += '<a href="' + escJs(r.url) + '" class="cmd-palette-item"><span class="cmd-item-title">' + escJs(r.title || 'Untitled') + '</span></a>';
+                  });
+                }
+                results.innerHTML = html;
+              })
+              .catch(function() { results.innerHTML = html; });
+          }
+
+          document.addEventListener('keydown', function(e) {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+              e.preventDefault();
+              palette.style.display === 'none' ? open() : close();
+            }
+          });
+          palette.querySelector('.cmd-palette-backdrop').addEventListener('click', close);
+          input.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') { e.preventDefault(); close(); }
+            if (e.key === 'Enter') {
+              var first = results.querySelector('.cmd-palette-item');
+              if (first) first.click();
+              close();
+            }
+          });
+          input.addEventListener('input', function() {
+            var q = input.value.trim();
+            if (!q) { renderDefault(); return; }
+            var seq2 = ++searchSeq;
+            fetch('/api/search?q=' + encodeURIComponent(q) + '&limit=5', { credentials: 'same-origin' })
+              .then(function(r) { return r.json(); })
+              .then(function(data) {
+                if (seq2 !== searchSeq) return;
+                var h = '';
+                if (data.results && data.results.length > 0) {
+                  h += '<div class="cmd-palette-group">Results</div>';
+                  data.results.forEach(function(r) {
+                    h += '<a href="' + escJs(r.url) + '" class="cmd-palette-item"><span class="cmd-item-title">' + escJs(r.title || 'Untitled') + '</span></a>';
+                  });
+                } else {
+                  h = '<div class="cmd-palette-empty">No results</div>';
+                }
+                results.innerHTML = h;
+              });
+          });
+        })();
       </script>
     </body></html>`);
   });

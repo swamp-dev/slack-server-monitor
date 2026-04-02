@@ -2159,4 +2159,154 @@ describe('web templates', () => {
       expect(html).toMatch(/@media\s*\(max-width:\s*414px\)/);
     });
   });
+
+  describe('context status rendering', () => {
+    const baseMessages: ConversationMessage[] = [
+      { role: 'user', content: 'Hello' },
+      { role: 'assistant', content: 'Hi' },
+    ];
+    const baseMeta = {
+      threadTs: '1000.001',
+      channelId: 'C001',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    it('should not render context usage info when null', () => {
+      const html = renderConversation(baseMessages, [], { ...baseMeta, contextStatus: null });
+      // No usage percentage or truncation text should appear
+      expect(html).not.toContain('% context used');
+      expect(html).not.toContain('messages truncated');
+      expect(html).not.toContain('approaching limit');
+    });
+
+    it('should render green bar for <70% usage', () => {
+      const html = renderConversation(baseMessages, [], {
+        ...baseMeta,
+        contextStatus: { percentUsed: 0.45, wasTruncated: false, removedCount: 0 },
+      });
+      expect(html).toContain('context-status');
+      expect(html).toContain('45% context used');
+      expect(html).toContain('var(--green)');
+    });
+
+    it('should render orange bar for >=70% usage', () => {
+      const html = renderConversation(baseMessages, [], {
+        ...baseMeta,
+        contextStatus: { percentUsed: 0.78, wasTruncated: false, removedCount: 0 },
+      });
+      expect(html).toContain('78% used');
+      expect(html).toContain('approaching limit');
+      expect(html).toContain('var(--orange)');
+    });
+
+    it('should render red bar with truncation count', () => {
+      const html = renderConversation(baseMessages, [], {
+        ...baseMeta,
+        contextStatus: { percentUsed: 0.92, wasTruncated: true, removedCount: 5 },
+      });
+      expect(html).toContain('92% used');
+      expect(html).toContain('5 messages truncated');
+      expect(html).toContain('var(--red)');
+    });
+  });
+
+  describe('session list date sections', () => {
+    const basePagination: PaginationInfo = { page: 1, pageSize: 20, totalItems: 3, totalPages: 1 };
+    const now = Date.now();
+
+    function makeSummary(updatedAt: number, id: number): SessionSummary {
+      return {
+        id,
+        threadTs: `ts-${String(id)}`,
+        channelId: 'C001',
+        userId: 'U001',
+        messageCount: 2,
+        toolCallCount: 0,
+        createdAt: updatedAt,
+        updatedAt,
+        archivedAt: null,
+        isActive: false,
+        isFavorited: false,
+        firstMessage: `Message ${String(id)}`,
+      };
+    }
+
+    it('should render Today header for current-day conversations', () => {
+      const sessions = [makeSummary(now - 60000, 1)];
+      const html = renderSessionList(sessions, basePagination);
+      expect(html).toContain('Today');
+    });
+
+    it('should render Yesterday header', () => {
+      // Use midnight of today minus 1 hour to ensure we're in "yesterday"
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const yesterday = today.getTime() - 60 * 60 * 1000; // 1 hour before midnight = yesterday
+      const sessions = [makeSummary(yesterday, 2)];
+      const html = renderSessionList(sessions, basePagination);
+      expect(html).toContain('Yesterday');
+    });
+
+    it('should render This Week header for 3-day-old conversations', () => {
+      const threeDaysAgo = now - 3 * 24 * 60 * 60 * 1000;
+      const sessions = [makeSummary(threeDaysAgo, 3)];
+      const html = renderSessionList(sessions, basePagination);
+      expect(html).toContain('This Week');
+    });
+
+    it('should render Older header for >7-day conversations', () => {
+      const tenDaysAgo = now - 10 * 24 * 60 * 60 * 1000;
+      const sessions = [makeSummary(tenDaysAgo, 4)];
+      const html = renderSessionList(sessions, basePagination);
+      expect(html).toContain('Older');
+    });
+  });
+
+  describe('dashboard health badge', () => {
+    const baseStats: SessionStats = {
+      totalSessions: 5, activeSessions: 1, totalMessages: 20,
+      totalToolCalls: 10, avgToolDurationMs: 200, toolFailureRate: 0, topTools: [],
+    };
+    const okHealth = {
+      uptime: '5 days',
+      loadAverage: [0.5, 0.3, 0.2] as [number, number, number],
+      memory: { total: 16000, used: 8000, free: 8000, percentUsed: 50 },
+      cpu: { cores: 4 },
+      disks: [{ mountPoint: '/', size: '100GB', used: '50GB', free: '50GB', percentUsed: 50 }],
+    };
+
+    it('should render "All systems healthy" when all metrics OK', () => {
+      const html = renderDashboard(baseStats, [], [], 0, [], 'U01', [], 0, [], okHealth as never);
+      expect(html).toContain('All systems healthy');
+      expect(html).toContain('all-ok');
+    });
+
+    it('should render "Needs attention" when warnings present', () => {
+      const warnHealth = { ...okHealth, memory: { ...okHealth.memory, percentUsed: 75 } };
+      const html = renderDashboard(baseStats, [], [], 0, [], 'U01', [], 0, [], warnHealth as never);
+      expect(html).toContain('Needs attention');
+      expect(html).toContain('has-warn');
+    });
+
+    it('should render "Issues detected" when critical metrics', () => {
+      const dangerHealth = { ...okHealth, memory: { ...okHealth.memory, percentUsed: 95 } };
+      const html = renderDashboard(baseStats, [], [], 0, [], 'U01', [], 0, [], dangerHealth as never);
+      expect(html).toContain('Issues detected');
+      expect(html).toContain('has-danger');
+    });
+  });
+
+  describe('dashboard animated counter attributes', () => {
+    it('should include data-count attributes on stat values', () => {
+      const stats: SessionStats = {
+        totalSessions: 42, activeSessions: 2, totalMessages: 150,
+        totalToolCalls: 75, avgToolDurationMs: 300, toolFailureRate: 0, topTools: [],
+      };
+      const html = renderDashboard(stats, [], [], 0, [], 'U01');
+      expect(html).toContain('data-count="42"');
+      expect(html).toContain('data-count="150"');
+      expect(html).toContain('data-count="75"');
+    });
+  });
 });
