@@ -165,5 +165,49 @@ describe('notification templates', () => {
       expect(html).toContain('system');
       expect(html).toContain('backup');
     });
+
+    it('should include swipe-to-dismiss touch event handlers', () => {
+      const html = renderNotificationPage(sampleNotifications, 3);
+      expect(html).toContain('touchstart');
+      expect(html).toContain('touchmove');
+      expect(html).toContain('touchend');
+      expect(html).toContain('dismissed');
+    });
+  });
+
+  describe('notification grouping', () => {
+    it('should group consecutive notifications from same source in dropdown', () => {
+      const grouped: Notification[] = [
+        { id: 1, source: 'backup', level: 'info', title: 'Backup started', body: null, link: null, createdAt: Date.now() - 10000, readAt: null },
+        { id: 2, source: 'backup', level: 'info', title: 'Backup completed', body: null, link: null, createdAt: Date.now() - 20000, readAt: null },
+        { id: 3, source: 'backup', level: 'info', title: 'Backup verified', body: null, link: null, createdAt: Date.now() - 30000, readAt: null },
+        { id: 4, source: 'system', level: 'warn', title: 'High CPU', body: null, link: null, createdAt: Date.now() - 40000, readAt: null },
+      ];
+      const html = renderNotificationDropdown(grouped);
+      // Should show group count for 3 backup notifications
+      expect(html).toContain('(3)');
+      // Should show the latest notification title
+      expect(html).toContain('Backup started');
+      // System notification should not have a count
+      expect(html).toContain('High CPU');
+    });
+
+    it('should not group notifications from different sources', () => {
+      const mixed: Notification[] = [
+        { id: 1, source: 'backup', level: 'info', title: 'Backup done', body: null, link: null, createdAt: Date.now() - 10000, readAt: null },
+        { id: 2, source: 'system', level: 'info', title: 'Update available', body: null, link: null, createdAt: Date.now() - 20000, readAt: null },
+      ];
+      const html = renderNotificationDropdown(mixed);
+      expect(html).not.toContain('notif-group-count');
+    });
+  });
+
+  describe('notification preferences', () => {
+    it('should render preference toggles in dropdown', () => {
+      const html = renderNotificationDropdown(sampleNotifications);
+      expect(html).toContain('notif-prefs');
+      expect(html).toContain('notif-pref-sound');
+      expect(html).toContain('notif-pref-push');
+    });
   });
 });

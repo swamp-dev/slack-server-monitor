@@ -192,7 +192,13 @@ export function wrapInShell(opts: ShellOptions): string {
               ? '<div class="notif-dropdown-header"><span>Notifications</span><button class="notif-mark-all" id="notif-mark-all" type="button">Mark all read</button></div>'
               : '';
             var empty = data.notifications.length === 0 ? '<div class="notif-dropdown-empty">No notifications</div>' : '';
-            dropdown.innerHTML = header + empty + items + '<div class="notif-dropdown-footer"><a href="/notifications">View all</a></div>';
+            var soundChecked = localStorage.getItem('ssm-notif-sound') === 'true' ? ' checked' : '';
+            var pushChecked = localStorage.getItem('ssm-notif-push') === 'true' ? ' checked' : '';
+            var prefsHtml = '<div class="notif-prefs">'
+              + '<label class="notif-pref-toggle"><input type="checkbox" id="notif-pref-sound"' + soundChecked + '> Sound</label>'
+              + '<label class="notif-pref-toggle"><input type="checkbox" id="notif-pref-push"' + pushChecked + '> Push</label>'
+              + '</div>';
+            dropdown.innerHTML = header + empty + items + '<div class="notif-dropdown-footer"><a href="/notifications">View all</a></div>' + prefsHtml;
             var markAll = document.getElementById('notif-mark-all');
             if (markAll) {
               markAll.addEventListener('click', function() {
@@ -201,9 +207,26 @@ export function wrapInShell(opts: ShellOptions): string {
                     var badge = document.querySelector('.notif-badge');
                     if (badge) badge.remove();
                     dropdown.classList.remove('open');
+                    updateFavicon(0);
                   });
               });
             }
+            // Preference toggle handlers
+            var soundCb = document.getElementById('notif-pref-sound');
+            var pushCb = document.getElementById('notif-pref-push');
+            if (soundCb) soundCb.addEventListener('change', function() {
+              localStorage.setItem('ssm-notif-sound', soundCb.checked ? 'true' : 'false');
+            });
+            if (pushCb) pushCb.addEventListener('change', function() {
+              if (pushCb.checked && 'Notification' in window && Notification.permission !== 'granted') {
+                Notification.requestPermission().then(function(perm) {
+                  if (perm !== 'granted') { pushCb.checked = false; return; }
+                  localStorage.setItem('ssm-notif-push', 'true');
+                });
+              } else {
+                localStorage.setItem('ssm-notif-push', pushCb.checked ? 'true' : 'false');
+              }
+            });
           });
       }
     });
@@ -236,7 +259,65 @@ export function wrapInShell(opts: ShellOptions): string {
       var badge = document.querySelector('.notif-badge');
       var bell = document.querySelector('.notif-bell');
 
-      es.addEventListener('notification', function() {
+      // ─── Favicon badge ────────────────────────────────────────
+      var baseFavicon = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="#ff79c6" stroke-width="1.5"><rect x="4" y="6" width="12" height="10" rx="2"/><circle cx="7.5" cy="11" r="1.5"/><circle cx="12.5" cy="11" r="1.5"/><path d="M10 2v4M6 6V4M14 6V4"/></svg>');
+      var faviconLink = document.querySelector('link[rel="icon"]');
+
+      function updateFavicon(count) {
+        if (!faviconLink) return;
+        if (count <= 0) {
+          faviconLink.href = baseFavicon;
+          return;
+        }
+        var label = count > 99 ? '99+' : String(count);
+        var fontSize = label.length > 2 ? '7' : '8';
+        var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="#ff79c6" stroke-width="1.5">'
+          + '<rect x="4" y="6" width="12" height="10" rx="2"/><circle cx="7.5" cy="11" r="1.5"/><circle cx="12.5" cy="11" r="1.5"/><path d="M10 2v4M6 6V4M14 6V4"/>'
+          + '<circle cx="15" cy="5" r="5" fill="#ff5555" stroke="none"/>'
+          + '<text x="15" y="5" text-anchor="middle" dominant-baseline="central" fill="#fff" font-family="sans-serif" font-size="' + fontSize + '" font-weight="bold" stroke="none">' + label + '</text>'
+          + '</svg>';
+        faviconLink.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
+      }
+
+      // ─── Notification sound (muted by default) ────────────────
+      var sharedAudioCtx = null;
+      function getAudioCtx() {
+        if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+          sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        return sharedAudioCtx;
+      }
+      function playChime() {
+        try {
+          if (localStorage.getItem('ssm-notif-sound') !== 'true') return;
+          var ctx = getAudioCtx();
+          var osc = ctx.createOscillator();
+          var gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.type = 'sine';
+          osc.frequency.value = 880;
+          gain.gain.value = 0.08;
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.3);
+        } catch(e) {}
+      }
+
+      // ─── Browser push notifications (opt-in) ──────────────────
+      function showPushNotification(data) {
+        try {
+          if (localStorage.getItem('ssm-notif-push') !== 'true') return;
+          if (!('Notification' in window) || Notification.permission !== 'granted') return;
+          var title = (data && data.title) ? data.title : 'New notification';
+          var body = (data && data.body) ? data.body : '';
+          var n = new Notification(title, { body: body, icon: baseFavicon, tag: 'ssm-notif' });
+          n.onclick = function() { window.focus(); n.close(); };
+        } catch(e) {}
+      }
+
+      // ─── SSE event handlers ───────────────────────────────────
+      es.addEventListener('notification', function(e) {
         if (!badge && bell) {
           badge = document.createElement('span');
           badge.className = 'notif-badge';
@@ -246,6 +327,10 @@ export function wrapInShell(opts: ShellOptions): string {
           var count = parseInt(badge.textContent || '0', 10) + 1;
           badge.textContent = String(count);
         }
+        var unread = badge ? parseInt(badge.textContent || '0', 10) : 0;
+        updateFavicon(unread);
+        playChime();
+        try { showPushNotification(JSON.parse(e.data)); } catch(err) { showPushNotification(null); }
       });
 
       es.addEventListener('badge', function(e) {
@@ -263,10 +348,15 @@ export function wrapInShell(opts: ShellOptions): string {
             }
             if (badge) badge.textContent = String(unread);
           }
+          updateFavicon(unread);
         } catch(err) {}
       });
 
       es.onerror = function() {};
+
+      // Initialize favicon from current badge
+      var initialCount = badge ? parseInt(badge.textContent || '0', 10) : 0;
+      if (initialCount > 0) updateFavicon(initialCount);
     } catch(e) {}
   })();
   </script>

@@ -241,11 +241,45 @@ export function getBaseStyles(): string {
     font-size: 0.8rem;
   }
   .notif-dropdown-footer a:hover { text-decoration: underline; }
+  .notif-group-count {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-weight: normal;
+  }
+  .notif-prefs {
+    display: flex;
+    gap: 12px;
+    padding: 6px 14px;
+    border-top: 1px solid var(--border);
+    font-size: 0.75rem;
+  }
+  .notif-pref-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .notif-pref-toggle input { margin: 0; cursor: pointer; }
   .notif-dropdown-empty {
     padding: 24px;
     text-align: center;
     color: var(--text-muted);
     font-size: 0.85rem;
+  }
+
+  /* Swipe-to-dismiss for notification entries */
+  .notif-entry {
+    transition: transform 0.2s ease, opacity 0.2s ease;
+  }
+  .notif-entry.swiping {
+    transition: none;
+  }
+  .notif-entry.dismissed {
+    transform: translateX(-100%);
+    opacity: 0;
+    transition: transform 0.3s ease, opacity 0.3s ease;
   }
 
   /* Plugin component styles */

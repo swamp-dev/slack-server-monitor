@@ -2120,6 +2120,39 @@ describe('web templates', () => {
           expect(html).toContain('::view-transition-group(nav)');
         });
 
+        it('shell includes favicon badge logic', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('updateFavicon');
+          expect(html).toContain('baseFavicon');
+        });
+
+        it('shell includes notification chime (Web Audio)', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('playChime');
+          expect(html).toContain('ssm-notif-sound');
+          expect(html).toContain('AudioContext');
+        });
+
+        it('shell includes push notification support', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('showPushNotification');
+          expect(html).toContain('ssm-notif-push');
+          expect(html).toContain('Notification.permission');
+        });
+
+        it('notification prefs CSS exists in base styles', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('.notif-prefs');
+          expect(html).toContain('.notif-pref-toggle');
+          expect(html).toContain('.notif-group-count');
+        });
+
+        it('swipe-to-dismiss CSS exists in base styles', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('.notif-entry.swiping');
+          expect(html).toContain('.notif-entry.dismissed');
+        });
+
         it('kb-focused class exists in styles for keyboard navigation', () => {
           const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
           expect(html).toContain('.session-card.kb-focused');

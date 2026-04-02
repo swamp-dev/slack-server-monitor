@@ -54,11 +54,28 @@ export function renderNotificationDropdown(notifications: Notification[]): strin
     </div>`;
   }
 
-  const items = notifications.map((n) => {
+  // Group notifications by source for compact display
+  interface NotifGroup {
+    latest: Notification;
+    count: number;
+  }
+  const groups: NotifGroup[] = [];
+  for (const n of notifications) {
+    const last = groups[groups.length - 1];
+    if (last?.latest.source === n.source) {
+      last.count++;
+    } else {
+      groups.push({ latest: n, count: 1 });
+    }
+  }
+
+  const items = groups.map((g) => {
+    const n = g.latest;
     const levelClass = `notif-${n.level}`;
     const readClass = n.readAt ? 'notif-read' : '';
     const time = formatRelativeTime(n.createdAt);
-    const titleHtml = escapeHtml(n.title);
+    const countBadge = g.count > 1 ? ` <span class="notif-group-count">(${String(g.count)})</span>` : '';
+    const titleHtml = escapeHtml(n.title) + countBadge;
     const safeLink = n.link ? sanitizeUrl(n.link) : null;
     const linkStart = safeLink ? `<a href="${escapeHtml(safeLink)}" class="notif-link" data-notif-id="${String(n.id)}">` : '<div class="notif-link">';
     const linkEnd = safeLink ? '</a>' : '</div>';
@@ -79,6 +96,10 @@ export function renderNotificationDropdown(notifications: Notification[]): strin
     ${items}
     <div class="notif-dropdown-footer">
       <a href="/notifications">View all</a>
+    </div>
+    <div class="notif-prefs" id="notif-prefs">
+      <label class="notif-pref-toggle"><input type="checkbox" id="notif-pref-sound"> ${icon('bell', 12)} Sound</label>
+      <label class="notif-pref-toggle"><input type="checkbox" id="notif-pref-push"> ${icon('send', 12)} Push</label>
     </div>
   </div>`;
 }
@@ -312,6 +333,66 @@ export function renderNotificationPage(
       if (count === 0 && badge) badge.remove();
       else if (badge) badge.textContent = count > 99 ? '99+' : String(count);
     }
+
+    // Swipe-to-dismiss on touch devices
+    var swipeThreshold = 60;
+    document.querySelectorAll('.notif-entry').forEach(function(entry) {
+      var startX = 0;
+      var startY = 0;
+      var swiping = false;
+      entry.addEventListener('touchstart', function(e) {
+        var touch = e.touches[0];
+        startX = touch.clientX;
+        startY = touch.clientY;
+        swiping = false;
+      }, { passive: true });
+      entry.addEventListener('touchmove', function(e) {
+        var touch = e.touches[0];
+        var dx = touch.clientX - startX;
+        var dy = touch.clientY - startY;
+        // Only swipe left, and only if horizontal movement dominates
+        if (dx < -10 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          swiping = true;
+          entry.classList.add('swiping');
+          entry.style.transform = 'translateX(' + Math.min(0, dx) + 'px)';
+        }
+      }, { passive: true });
+      function resetSwipe() {
+        swiping = false;
+        entry.classList.remove('swiping');
+        entry.style.transform = '';
+      }
+      entry.addEventListener('touchend', function() {
+        entry.classList.remove('swiping');
+        if (!swiping) { entry.style.transform = ''; return; }
+        var currentX = parseFloat(entry.style.transform.replace('translateX(', '').replace('px)', '')) || 0;
+        if (Math.abs(currentX) > swipeThreshold) {
+          entry.classList.add('dismissed');
+          var id = entry.getAttribute('data-id');
+          if (id) {
+            fetch('/api/notifications/' + id + '/read', { method: 'POST' })
+              .then(function(res) { return res.json(); })
+              .then(function(data) {
+                if (data.success) {
+                  updateBadge(data.unreadCount);
+                  setTimeout(function() { entry.remove(); }, 300);
+                } else {
+                  entry.classList.remove('dismissed');
+                  resetSwipe();
+                }
+              })
+              .catch(function() {
+                entry.classList.remove('dismissed');
+                resetSwipe();
+              });
+          }
+        } else {
+          entry.style.transform = '';
+        }
+        swiping = false;
+      });
+      entry.addEventListener('touchcancel', function() { resetSwipe(); });
+    });
   })();
   </script>`;
 
