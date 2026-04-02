@@ -506,6 +506,12 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
 
       const toolCalls = store.getToolCalls(conversation.id);
       const tags = store.getTags(conversation.id);
+      const branches = store.listBranches(conversation.id).map((b) => ({
+        threadTs: b.threadTs,
+        channelId: b.channelId,
+        createdAt: b.createdAt,
+        branchPointIndex: b.branchPointIndex,
+      }));
       const html = renderConversation(conversation.messages, toolCalls, {
         threadTs: conversation.threadTs,
         channelId: conversation.channelId,
@@ -519,6 +525,7 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         contextStatus: conversation.contextStatus,
         parentConversationId: conversation.parentConversationId,
         branchPointIndex: conversation.branchPointIndex,
+        branches,
       });
 
       res.type('html').send(html);

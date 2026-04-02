@@ -1031,6 +1031,168 @@ describe('web templates', () => {
       expect(html).not.toMatch(/Export Markdown<\/a>/);
       expect(html).not.toMatch(/Copy to Clipboard<\/button>/);
     });
+    it('should render scroll-to-bottom button', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi!' },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      expect(html).toContain('scroll-to-bottom');
+      expect(html).toContain('Scroll to bottom');
+    });
+
+    it('should render copy button on each message', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi!' },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      // Should have copy buttons rendered as actual button elements (2 messages = 2 buttons)
+      const buttonMatches = html.match(/<button class="copy-msg-btn"/g);
+      expect(buttonMatches?.length).toBe(2);
+    });
+
+    it('should collapse long messages with show more button', () => {
+      const longContent = Array(600).fill('word').join(' ');
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: longContent },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      expect(html).toContain('collapsed');
+      expect(html).toContain('show-more-btn');
+      expect(html).toContain('600 words');
+    });
+
+    it('should not collapse short messages', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'This is a normal length response.' },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      // No show-more buttons rendered as elements (class exists in CSS/JS but no button elements)
+      expect(html).not.toMatch(/<button class="show-more-btn"/);
+    });
+
+    it('should render branch badge when branches exist', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi!' },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        conversationId: 1,
+        branches: [
+          { threadTs: '999.999', channelId: 'C123ABC', createdAt: Date.now(), branchPointIndex: 0 },
+        ],
+      });
+
+      expect(html).toContain('branch-toggle');
+      expect(html).toContain('1 branch');
+      expect(html).toContain('branch-list');
+      expect(html).toContain('999.999');
+    });
+
+    it('should not render branch badge when no branches', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi!' },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      // No branch-toggle button rendered as element (id exists in JS but not as button)
+      expect(html).not.toMatch(/<button class="branch-badge" id="branch-toggle"/);
+    });
+
+    it('should show branch point indicator on the forked message', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi!' },
+        { role: 'user', content: 'More' },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        branchPointIndex: 1,
+        branches: [
+          { threadTs: '999.999', channelId: 'C123ABC', createdAt: Date.now(), branchPointIndex: 1 },
+        ],
+      });
+
+      expect(html).toContain('branch-point-indicator');
+      expect(html).toContain('branch point');
+    });
+
+    it('should render message timestamp as title attribute', () => {
+      const ts = Date.now() - 60000;
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello', timestamp: ts },
+        { role: 'assistant', content: 'Hi!' },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      // First message should have title with formatted timestamp (en-US locale)
+      const expectedTs = new Date(ts).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'medium' });
+      expect(html).toContain(`title="${expectedTs}"`);
+    });
+
+    it('should render smooth scroll script for SSE done event', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi!' },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1234567890.123456',
+        channelId: 'C123ABC',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        canContinue: true,
+      });
+
+      // Should have smart scroll behavior (only scroll if near bottom)
+      expect(html).toContain('distFromBottom');
+      // Done event should scroll to new message
+      expect(html).toContain('scrollIntoView');
+    });
   });
 
   describe('renderSessionList', () => {

@@ -76,6 +76,7 @@ const mockStore = {
   listSessionsByTag: vi.fn(() => []),
   countSessionsByTag: vi.fn(() => 0),
   archiveConversation: vi.fn(() => true),
+  listBranches: vi.fn(() => []),
   listArchivedSessions: vi.fn(() => []),
   countArchivedSessions: vi.fn(() => 0),
   getSessionStats: vi.fn(() => ({

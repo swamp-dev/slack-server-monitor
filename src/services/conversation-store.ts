@@ -27,6 +27,7 @@ function truncateUTF8Safe(str: string, maxLength: number): string {
 export interface ConversationMessage {
   role: 'user' | 'assistant';
   content: string;
+  timestamp?: number;
 }
 
 /**
@@ -402,11 +403,11 @@ export class ConversationStore {
 
     if (!conversation) {
       const initialMessages: ConversationMessage[] = userMessage
-        ? [{ role: 'user', content: userMessage }]
+        ? [{ role: 'user', content: userMessage, timestamp: Date.now() }]
         : [];
       conversation = this.createConversation(threadTs, channelId, userId, initialMessages);
     } else if (userMessage) {
-      conversation.messages.push({ role: 'user', content: userMessage });
+      conversation.messages.push({ role: 'user', content: userMessage, timestamp: Date.now() });
       this.updateConversation(conversation.id, conversation.messages);
     }
 
@@ -419,7 +420,7 @@ export class ConversationStore {
   addAssistantMessage(conversationId: number, content: string): void {
     const conversation = this.getConversationById(conversationId);
     if (conversation) {
-      conversation.messages.push({ role: 'assistant', content });
+      conversation.messages.push({ role: 'assistant', content, timestamp: Date.now() });
       this.updateConversation(conversationId, conversation.messages);
     }
   }

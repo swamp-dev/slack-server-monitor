@@ -100,6 +100,30 @@ describe('ConversationStore', () => {
       expect(updated.messages).toHaveLength(2);
     });
 
+    it('should add timestamps to messages in getOrCreateConversation', () => {
+      const before = Date.now();
+      const conversation = store.getOrCreateConversation(
+        'ts-timestamps',
+        'C123ABC',
+        'U456DEF',
+        'Hello'
+      );
+
+      expect(conversation.messages[0]?.timestamp).toBeTypeOf('number');
+      expect(conversation.messages[0]?.timestamp).toBeGreaterThanOrEqual(before);
+
+      // Adding a second message should also have a timestamp
+      const updated = store.getOrCreateConversation(
+        'ts-timestamps',
+        'C123ABC',
+        'U456DEF',
+        'Follow up'
+      );
+
+      expect(updated.messages[1]?.timestamp).toBeTypeOf('number');
+      expect(updated.messages[1]?.timestamp).toBeGreaterThanOrEqual(before);
+    });
+
     it('should get conversation by thread_ts only', () => {
       store.createConversation('1234.5678', 'C123ABC', 'U456DEF', [
         { role: 'user', content: 'Hello' },
@@ -147,10 +171,11 @@ describe('ConversationStore', () => {
 
       const updated = store.getConversation('1234.5678', 'C123ABC');
       expect(updated?.messages).toHaveLength(2);
-      expect(updated?.messages[1]).toEqual({
+      expect(updated?.messages[1]).toMatchObject({
         role: 'assistant',
         content: 'Hello! How can I help?',
       });
+      expect(updated?.messages[1]?.timestamp).toBeTypeOf('number');
     });
   });
 

@@ -60,7 +60,13 @@ function avatarColor(userId: string): string {
 /**
  * Render a single message
  */
-function renderMessage(message: ConversationMessage, index: number, opts?: { userId?: string; canFork?: boolean; isLast?: boolean }): string {
+function renderMessage(message: ConversationMessage, index: number, opts?: {
+  userId?: string;
+  canFork?: boolean;
+  isLast?: boolean;
+  branchPointIndex?: number | null;
+  branchCount?: number;
+}): string {
   const roleClass = message.role;
   const roleLabel = message.role === 'user' ? 'You' : 'Claude';
   const content = formatMarkdown(message.content);
@@ -74,15 +80,38 @@ function renderMessage(message: ConversationMessage, index: number, opts?: { use
     avatarContent = `<span class="avatar avatar-glow">${icon('robot', 16)}</span>`;
   }
 
+  // Timestamp tooltip on hover (escaped, explicit locale for consistency with formatTimestamp)
+  const tsAttr = message.timestamp
+    ? ` title="${escapeHtml(new Date(message.timestamp).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'medium' }))}"`
+    : '';
+
+  // Copy button on every message
+  const copyBtn = `<button class="copy-msg-btn" data-index="${String(index)}" title="Copy message">${icon('copy', 14)}</button>`;
+
   // Fork button: shown on assistant messages except the last one (forking from last is just continuing)
   const forkBtn = opts?.canFork && message.role === 'assistant' && !opts.isLast
     ? `<button class="fork-btn" data-index="${String(index)}" title="Fork conversation from here">${icon('git-branch', 14)} Fork</button>`
     : '';
 
+  // Branch point indicator
+  const isBranchPoint = opts?.branchPointIndex != null && index === opts.branchPointIndex;
+  const branchIndicator = isBranchPoint && (opts.branchCount ?? 0) > 0
+    ? `<span class="branch-point-indicator">${icon('git-branch', 12)} branch point</span>`
+    : '';
+
+  // Expand/collapse for long messages (>500 words)
+  const wordCount = message.content.split(/\s+/).length;
+  const isLong = wordCount > 500;
+  const collapsedClass = isLong ? ' collapsed' : '';
+  const showMoreBtn = isLong
+    ? `<button class="show-more-btn" data-index="${String(index)}">Show more (${String(wordCount)} words)</button>`
+    : '';
+
   return `
-    <div class="message ${roleClass}" data-index="${String(index)}">
-      <div class="message-header">${avatarContent}${roleLabel}${forkBtn}</div>
-      <div class="message-content">${content}</div>
+    <div class="message ${roleClass}" data-index="${String(index)}"${tsAttr}>
+      <div class="message-header">${avatarContent}${roleLabel}${branchIndicator}${copyBtn}${forkBtn}</div>
+      <div class="message-content${collapsedClass}">${content}</div>
+      ${showMoreBtn}
     </div>
   `;
 }
@@ -412,7 +441,11 @@ function renderContinueScript(): string {
               var contentEl = document.getElementById('stream-response-content');
               if (contentEl) contentEl.textContent = text;
 
-              responseDiv.scrollIntoView({ behavior: 'smooth', block: 'end' });
+              // Only auto-scroll if user is near the bottom (within 400px)
+              var distFromBottom = document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
+              if (distFromBottom < 400) {
+                responseDiv.scrollIntoView({ behavior: 'smooth', block: 'end' });
+              }
             } catch(err) {}
           });
 
@@ -421,11 +454,18 @@ function renderContinueScript(): string {
             // Remove streaming preview if present
             var preview = document.getElementById('stream-response');
             if (preview) preview.remove();
-            // Render server-rendered response inline
+            // Render server-rendered response inline and scroll to it
             try {
               var data = JSON.parse(e.data);
               if (data.responseHtml) {
+                // Measure distance before insertion (inserting grows scrollHeight)
+                var doneDistFromBottom = document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
                 appendAssistantMessage(data.responseHtml);
+                if (doneDistFromBottom < 400) {
+                  var allMsgs = document.querySelectorAll('.message');
+                  var lastMsg = allMsgs[allMsgs.length - 1];
+                  if (lastMsg) lastMsg.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
               }
             } catch(err) {}
             // Drain queue or finish
@@ -720,6 +760,146 @@ const conversationDetailStyles = `
     font-variant-numeric: tabular-nums;
   }
 
+  /* Scroll-to-bottom floating button */
+  .scroll-to-bottom {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 40;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px var(--shadow);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+  }
+  .scroll-to-bottom.visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .scroll-to-bottom:hover {
+    background: var(--accent-secondary);
+  }
+
+  /* Copy message button */
+  .copy-msg-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.2s, color 0.2s, border-color 0.2s;
+  }
+  .message:hover .copy-msg-btn {
+    opacity: 1;
+  }
+  .copy-msg-btn:hover {
+    color: var(--cyan);
+    border-color: var(--cyan);
+  }
+
+  /* Expand/collapse long messages */
+  .message-content.collapsed {
+    max-height: 300px;
+    overflow: hidden;
+    position: relative;
+  }
+  .message-content.collapsed::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: linear-gradient(transparent, var(--surface));
+    pointer-events: none;
+  }
+  .message.user .message-content.collapsed::after {
+    background: linear-gradient(transparent, var(--card-bg));
+  }
+  .show-more-btn {
+    display: block;
+    margin: 8px 0 0;
+    padding: 4px 12px;
+    font-size: 0.8125rem;
+    font-family: inherit;
+    color: var(--link);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .show-more-btn:hover {
+    border-color: var(--link);
+  }
+
+  /* Branch indicator */
+  .branch-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.8125rem;
+    color: var(--purple);
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: background 0.2s;
+  }
+  .branch-badge:hover {
+    background: rgba(189, 147, 249, 0.1);
+  }
+  .branch-list {
+    display: none;
+    margin-top: 6px;
+    padding: 8px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.8125rem;
+  }
+  .branch-list.open {
+    display: block;
+  }
+  .branch-list a {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    color: var(--link);
+    text-decoration: none;
+  }
+  .branch-list a:hover {
+    text-decoration: underline;
+  }
+  .branch-point-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.6875rem;
+    color: var(--purple);
+    margin-left: 8px;
+    opacity: 0.7;
+  }
+
   /* Fork button */
   .fork-btn {
     margin-left: auto;
@@ -764,10 +944,18 @@ export function renderConversation(
     contextStatus?: StoredContextStatus | null;
     parentConversationId?: number | null;
     branchPointIndex?: number | null;
+    branches?: { threadTs: string; channelId: string; createdAt: number; branchPointIndex: number | null }[];
   }
 ): string {
+  const branchCount = metadata.branches?.length ?? 0;
   const messagesHtml = messages.length > 0
-    ? messages.map((m, i) => renderMessage(m, i, { userId: metadata.userId, canFork: metadata.canContinue, isLast: i === messages.length - 1 })).join('\n')
+    ? messages.map((m, i) => renderMessage(m, i, {
+        userId: metadata.userId,
+        canFork: metadata.canContinue,
+        isLast: i === messages.length - 1,
+        branchPointIndex: metadata.branchPointIndex,
+        branchCount,
+      })).join('\n')
     : '<div class="empty">No messages in this conversation.</div>';
 
   const toolCallsHtml = renderToolCalls(toolCalls);
@@ -804,7 +992,9 @@ export function renderConversation(
         <div class="meta" style="color: var(--text-muted); font-size: 0.8125rem; margin-top: 2px;">
           ${icon('clock', 14)} ${formatTimestamp(metadata.createdAt)} &mdash; ${formatTimestamp(metadata.updatedAt)}
           ${metadata.parentConversationId != null ? ` &middot; ${icon('git-branch', 12)} <a href="/c" style="color: var(--purple);">Forked conversation</a>` : ''}
+          ${branchCount > 0 ? ` &middot; <button class="branch-badge" id="branch-toggle">${icon('git-branch', 14)} ${String(branchCount)} ${branchCount === 1 ? 'branch' : 'branches'}</button>` : ''}
         </div>
+        ${branchCount > 0 ? `<div class="branch-list" id="branch-list">${(metadata.branches ?? []).map((b) => `<a href="/c/${encodeURIComponent(b.threadTs)}/${encodeURIComponent(b.channelId)}">${icon('git-branch', 12)} Branch from message ${String((b.branchPointIndex ?? 0) + 1)} &middot; ${formatTimestamp(b.createdAt)}</a>`).join('')}</div>` : ''}
         ${renderContextStatus(metadata.contextStatus ?? null)}
         <div class="detail-tags" id="detail-tags">${tagPills}</div>
         ${tagInputHtml}
@@ -818,7 +1008,8 @@ export function renderConversation(
     ${messagesHtml}
     ${continueFormHtml}
     ${toolCallsHtml}
-  </main>`;
+  </main>
+  <button class="scroll-to-bottom" id="scroll-to-bottom" title="Scroll to bottom" aria-label="Scroll to bottom">${icon('arrow-down', 18)}</button>`;
 
   const scripts = `
   <script>
@@ -954,7 +1145,81 @@ export function renderConversation(
       });
     } catch(e) {}
   })();
-  </script>` : ''}`;
+  </script>` : ''}
+  <script>
+  // Scroll-to-bottom button
+  (function() {
+    var btn = document.getElementById('scroll-to-bottom');
+    if (!btn) return;
+    function checkScroll() {
+      var distFromBottom = document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
+      if (distFromBottom > 300) {
+        btn.classList.add('visible');
+      } else {
+        btn.classList.remove('visible');
+      }
+    }
+    window.addEventListener('scroll', checkScroll, { passive: true });
+    checkScroll();
+    btn.addEventListener('click', function() {
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+    });
+  })();
+  </script>
+  <script>
+  // Copy individual message buttons (event delegation for dynamic messages)
+  (function() {
+    document.addEventListener('click', function(e) {
+      var btn = e.target.closest('.copy-msg-btn');
+      if (!btn) return;
+      var msg = btn.closest('.message');
+      if (!msg) return;
+      var content = msg.querySelector('.message-content');
+      if (!content) return;
+      var text = content.textContent || '';
+      navigator.clipboard.writeText(text).then(function() {
+        btn.innerHTML = '${icon('check', 14)}';
+        setTimeout(function() { btn.innerHTML = '${icon('copy', 14)}'; }, 1500);
+      }).catch(function() {
+        if (typeof showToast === 'function') showToast('Copy failed');
+      });
+    });
+  })();
+  </script>
+  <script>
+  // Show more/less for long messages (event delegation for dynamic messages)
+  (function() {
+    document.querySelectorAll('.show-more-btn').forEach(function(btn) {
+      btn.setAttribute('data-label', btn.textContent || '');
+    });
+    document.addEventListener('click', function(e) {
+      var btn = e.target.closest('.show-more-btn');
+      if (!btn) return;
+      var msg = btn.closest('.message');
+      if (!msg) return;
+      var content = msg.querySelector('.message-content');
+      if (!content) return;
+      if (content.classList.contains('collapsed')) {
+        content.classList.remove('collapsed');
+        btn.textContent = 'Show less';
+      } else {
+        content.classList.add('collapsed');
+        btn.textContent = btn.getAttribute('data-label') || 'Show more';
+      }
+    });
+  })();
+  </script>
+  <script>
+  // Branch list toggle
+  (function() {
+    var toggle = document.getElementById('branch-toggle');
+    var list = document.getElementById('branch-list');
+    if (!toggle || !list) return;
+    toggle.addEventListener('click', function() {
+      list.classList.toggle('open');
+    });
+  })();
+  </script>`;
 
   return wrapInShell({
     title: 'Claude Conversation',
