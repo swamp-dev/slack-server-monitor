@@ -22,6 +22,7 @@ import { SSEConnectionManager, setSharedSSEManager } from './sse.js';
 import { getEventBus, resetEventBus } from '../services/event-bus.js';
 import { logger } from '../utils/logger.js';
 import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError, renderNotificationPage } from './templates/index.js';
+import { formatMarkdown } from './templates/utils.js';
 import { getPluginWidgets } from '../plugins/loader.js';
 import { getPluginExpressRouter } from './plugin-router.js';
 import { getNotificationStore, closeNotificationStore } from '../services/notification-store.js';
@@ -616,8 +617,11 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
           },
         },
       })
-        .then(() => {
-          sseManager?.broadcast(streamChannel, 'done', { type: 'done' });
+        .then((result) => {
+          sseManager?.broadcast(streamChannel, 'done', {
+            type: 'done',
+            responseHtml: formatMarkdown(result.response),
+          });
         })
         .catch((err: unknown) => {
           const errMessage = err instanceof Error ? err.message : 'An unexpected error occurred';

@@ -830,11 +830,6 @@ export function getBaseStyles(): string {
     opacity: 0.9;
   }
 
-  .continue-form button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
   .continue-form .continue-error {
     margin-top: 10px;
     padding: 10px 14px;
@@ -851,6 +846,24 @@ export function getBaseStyles(): string {
     margin-top: 10px;
     color: var(--text-muted);
     font-size: 0.875rem;
+  }
+
+  /* Queued message indicator */
+  .message.queued {
+    opacity: 0.7;
+    border-left: 3px solid var(--yellow);
+  }
+  .queued-badge {
+    display: inline-block;
+    font-size: 0.625rem;
+    color: var(--yellow);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-left: 8px;
+    padding: 1px 6px;
+    border: 1px solid var(--yellow);
+    border-radius: 4px;
+    vertical-align: middle;
   }
 
   /* Toast system */

@@ -204,8 +204,54 @@ function renderContinueScript(): string {
         });
       }
 
+      var messageQueue = [];
+      var isProcessing = false;
+
       function escapeHtml(s) {
         return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      }
+
+      function getMainEl() {
+        return document.querySelector('.container main') || document.querySelector('main');
+      }
+
+      function appendUserMessage(message, queued) {
+        var mainEl = getMainEl();
+        var userMsg = document.createElement('div');
+        userMsg.className = 'message user' + (queued ? ' queued' : '');
+        var badge = queued ? ' <span class="queued-badge">queued</span>' : '';
+        userMsg.innerHTML = '<div class="message-header">You' + badge + '</div><div class="message-content">' + escapeHtml(message) + '</div>';
+        var formEl = mainEl ? mainEl.querySelector('.continue-form') : null;
+        if (mainEl && formEl) mainEl.insertBefore(userMsg, formEl);
+      }
+
+      function appendAssistantMessage(html) {
+        var mainEl = getMainEl();
+        var msg = document.createElement('div');
+        msg.className = 'message assistant';
+        var header = document.createElement('div');
+        header.className = 'message-header';
+        var avatar = document.createElement('span');
+        avatar.className = 'avatar avatar-glow';
+        avatar.innerHTML = robotSvg;
+        header.appendChild(avatar);
+        header.appendChild(document.createTextNode('Claude'));
+        msg.appendChild(header);
+        var content = document.createElement('div');
+        content.className = 'message-content';
+        content.innerHTML = html;
+        msg.appendChild(content);
+        var formEl = mainEl ? mainEl.querySelector('.continue-form') : null;
+        if (mainEl && formEl) mainEl.insertBefore(msg, formEl);
+      }
+
+      function clearQueuedBadges() {
+        var queued = document.querySelectorAll('.message.queued');
+        for (var i = 0; i < queued.length; i++) {
+          queued[i].classList.remove('queued');
+          var badge = queued[i].querySelector('.queued-badge');
+          if (badge) badge.remove();
+        }
       }
 
       // Robot SVG for assistant avatar (matches server-rendered version)
@@ -234,28 +280,17 @@ function renderContinueScript(): string {
         return toolLabels[name] || ('Running ' + name.replace(/_/g, ' '));
       }
 
-      form.addEventListener('submit', function(e) {
-        e.preventDefault();
-        var message = input.value.trim();
-        if (!message) return;
-
-        submitBtn.disabled = true;
+      function sendMessage(message) {
+        isProcessing = true;
         spinner.style.display = 'block';
         spinner.textContent = 'Connecting to Claude...';
         errorDiv.style.display = 'none';
-        input.value = '';
 
-        // Add user message to the conversation
-        var mainEl = document.querySelector('.container main') || document.querySelector('main');
-        var userMsg = document.createElement('div');
-        userMsg.className = 'message user';
-        userMsg.innerHTML = '<div class="message-header">You</div><div class="message-content">' + escapeHtml(message) + '</div>';
-        if (mainEl) mainEl.insertBefore(userMsg, document.querySelector('.continue-form'));
-
-        // Create streaming area for tool calls and response
+        var mainEl = getMainEl();
         var streamArea = document.createElement('div');
-        streamArea.id = 'stream-area';
-        if (mainEl) mainEl.insertBefore(streamArea, document.querySelector('.continue-form'));
+        streamArea.className = 'stream-area';
+        var formEl = mainEl ? mainEl.querySelector('.continue-form') : null;
+        if (mainEl && formEl) mainEl.insertBefore(streamArea, formEl);
 
         fetch(window.location.pathname + '/ask', {
           method: 'POST',
@@ -268,7 +303,7 @@ function renderContinueScript(): string {
           if (!result.ok) {
             errorDiv.textContent = result.data.error || 'An error occurred';
             errorDiv.style.display = 'block';
-            submitBtn.disabled = false;
+            isProcessing = false;
             spinner.style.display = 'none';
             return;
           }
@@ -279,6 +314,8 @@ function renderContinueScript(): string {
           try {
             es = new EventSource(window.location.pathname + '/stream');
           } catch(err) {
+            isProcessing = false;
+            spinner.style.display = 'none';
             setTimeout(function() { window.location.reload(); }, 3000);
             return;
           }
@@ -366,10 +403,28 @@ function renderContinueScript(): string {
             } catch(err) {}
           });
 
-          es.addEventListener('done', function() {
+          es.addEventListener('done', function(e) {
             cleanup();
-            // Reload to get server-rendered markdown (single source of truth)
-            window.location.reload();
+            // Remove streaming preview if present
+            var preview = document.getElementById('stream-response');
+            if (preview) preview.remove();
+            // Render server-rendered response inline
+            try {
+              var data = JSON.parse(e.data);
+              if (data.responseHtml) {
+                appendAssistantMessage(data.responseHtml);
+              }
+            } catch(err) {}
+            // Drain queue or finish
+            if (messageQueue.length > 0) {
+              var collapsed = messageQueue.join('\\n\\n');
+              messageQueue = [];
+              clearQueuedBadges();
+              sendMessage(collapsed);
+            } else {
+              isProcessing = false;
+              spinner.style.display = 'none';
+            }
           });
 
           es.addEventListener('error', function(e) {
@@ -381,7 +436,7 @@ function renderContinueScript(): string {
               } catch(err) {}
             }
             cleanup();
-            submitBtn.disabled = false;
+            isProcessing = false;
             spinner.style.display = 'none';
             if (!gotEvents) {
               setTimeout(function() { window.location.reload(); }, 3000);
@@ -398,9 +453,30 @@ function renderContinueScript(): string {
         .catch(function(err) {
           errorDiv.textContent = 'Network error: ' + err.message;
           errorDiv.style.display = 'block';
-          submitBtn.disabled = false;
+          isProcessing = false;
           spinner.style.display = 'none';
         });
+      }
+
+      form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var message = input.value.trim();
+        if (!message) return;
+        input.value = '';
+        if (charCount) { charCount.textContent = '0 / 4000'; charCount.className = 'char-count'; }
+
+        if (isProcessing) {
+          if (messageQueue.length >= 10) {
+            errorDiv.textContent = 'Queue full — wait for Claude to finish before sending more.';
+            errorDiv.style.display = 'block';
+            return;
+          }
+          messageQueue.push(message);
+          appendUserMessage(message, true);
+        } else {
+          appendUserMessage(message, false);
+          sendMessage(message);
+        }
       });
     })();
   `;
