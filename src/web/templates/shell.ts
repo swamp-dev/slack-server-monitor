@@ -259,6 +259,54 @@ export function wrapInShell(opts: ShellOptions): string {
     } catch(e) {}
   })();
   </script>
+  <script>
+  // Page transition: intercept internal navigation to show loading state
+  (function() {
+    function isInternalLink(a) {
+      if (!a || !a.href) return false;
+      if (a.target === '_blank') return false;
+      if (a.getAttribute('download') != null) return false;
+      try {
+        var url = new URL(a.href, window.location.origin);
+        return url.origin === window.location.origin;
+      } catch(e) { return false; }
+    }
+
+    function showLoadingOverlay() {
+      var overlay = document.createElement('div');
+      overlay.className = 'nav-loading-overlay';
+      overlay.innerHTML = '<div class="nav-loading-skeleton">'
+        + '<div class="nav-loading-bar"></div>'
+        + '<div class="skeleton skeleton-line" style="width:40%"></div>'
+        + '<div class="skeleton skeleton-card"></div>'
+        + '<div class="skeleton skeleton-card"></div>'
+        + '<div class="skeleton skeleton-card"></div>'
+        + '</div>';
+      document.body.appendChild(overlay);
+    }
+
+    document.addEventListener('click', function(e) {
+      var a = e.target.closest('a');
+      if (!a || !isInternalLink(a)) return;
+      if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+
+      // Skip if it's the current page
+      if (a.href === window.location.href) return;
+
+      // Use View Transitions API if available
+      if (document.startViewTransition) {
+        e.preventDefault();
+        document.startViewTransition(function() {
+          window.location.href = a.href;
+        });
+        return;
+      }
+
+      // Fallback: show loading overlay before navigation
+      showLoadingOverlay();
+    });
+  })();
+  </script>
   ${getKeyboardShortcutScript()}
   ${scripts}
   ${getKeyboardHelpOverlay()}

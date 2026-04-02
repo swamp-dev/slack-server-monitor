@@ -58,5 +58,22 @@ export function getThemeStyles(): string {
     --link: #0e7490;
     color-scheme: light;
   }
+
+  /* View Transitions API (Chrome 111+) */
+  @view-transition {
+    navigation: auto;
+  }
+  ::view-transition-old(root) {
+    animation: 150ms ease-out both fade-out;
+  }
+  ::view-transition-new(root) {
+    animation: 200ms ease-out both fade-in;
+  }
+  @keyframes fade-out {
+    to { opacity: 0; }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+  }
   `;
 }

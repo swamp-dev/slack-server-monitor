@@ -895,6 +895,61 @@ export function getBaseStyles(): string {
   .skeleton-line { height: 16px; margin-bottom: 8px; width: 60%; }
   .skeleton-line.short { width: 30%; }
 
+  /* Page transitions: content fades in on load */
+  @keyframes page-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  main, .container > main, body > main {
+    animation: page-fade-in 0.2s ease-out;
+  }
+
+  /* Navigation loading overlay */
+  .nav-loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 9998;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    opacity: 0;
+    animation: fade-in-overlay 0.15s ease-out forwards;
+  }
+  @keyframes fade-in-overlay {
+    to { opacity: 1; }
+  }
+  .nav-loading-skeleton {
+    width: min(90%, 960px);
+    padding: 24px;
+  }
+  .nav-loading-bar {
+    height: 3px;
+    width: 100%;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+  .nav-loading-bar::after {
+    content: '';
+    display: block;
+    height: 100%;
+    width: 30%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-secondary));
+    border-radius: 2px;
+    animation: loading-bar 1s ease-in-out infinite;
+  }
+  @keyframes loading-bar {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(400%); }
+  }
+
   /* Keyboard navigation focus */
   .session-card.kb-focused {
     outline: 2px solid var(--accent);
