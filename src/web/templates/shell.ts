@@ -260,7 +260,9 @@ export function wrapInShell(opts: ShellOptions): string {
   })();
   </script>
   <script>
-  // Page transition: intercept internal navigation to show loading state
+  // Page transition: show loading overlay on internal navigation (fallback for
+  // browsers without View Transitions API — Chrome 111+ uses the CSS
+  // @view-transition rule in theme.ts instead)
   (function() {
     function isInternalLink(a) {
       if (!a || !a.href) return false;
@@ -272,9 +274,18 @@ export function wrapInShell(opts: ShellOptions): string {
       } catch(e) { return false; }
     }
 
+    function isSamePageNav(a) {
+      try {
+        var url = new URL(a.href, window.location.origin);
+        return url.pathname + url.search === window.location.pathname + window.location.search;
+      } catch(e) { return false; }
+    }
+
     function showLoadingOverlay() {
       var overlay = document.createElement('div');
       overlay.className = 'nav-loading-overlay';
+      overlay.setAttribute('role', 'status');
+      overlay.setAttribute('aria-label', 'Loading page');
       overlay.innerHTML = '<div class="nav-loading-skeleton">'
         + '<div class="nav-loading-bar"></div>'
         + '<div class="skeleton skeleton-line" style="width:40%"></div>'
@@ -282,28 +293,30 @@ export function wrapInShell(opts: ShellOptions): string {
         + '<div class="skeleton skeleton-card"></div>'
         + '<div class="skeleton skeleton-card"></div>'
         + '</div>';
+      document.body.setAttribute('aria-busy', 'true');
       document.body.appendChild(overlay);
+      // Safety timeout: remove overlay if navigation stalls (e.g. network error)
+      setTimeout(function() {
+        if (overlay.parentNode) {
+          overlay.remove();
+          document.body.removeAttribute('aria-busy');
+        }
+      }, 10000);
     }
 
     document.addEventListener('click', function(e) {
       var a = e.target.closest('a');
       if (!a || !isInternalLink(a)) return;
-      if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
 
-      // Skip if it's the current page
-      if (a.href === window.location.href) return;
+      // Skip same-page navigations (hash anchors, current URL)
+      if (isSamePageNav(a)) return;
 
-      // Use View Transitions API if available
-      if (document.startViewTransition) {
-        e.preventDefault();
-        document.startViewTransition(function() {
-          window.location.href = a.href;
-        });
-        return;
+      // Browsers with View Transitions API use the CSS @view-transition rule
+      // automatically — no JS needed. Only show overlay for fallback browsers.
+      if (!document.startViewTransition) {
+        showLoadingOverlay();
       }
-
-      // Fallback: show loading overlay before navigation
-      showLoadingOverlay();
     });
   })();
   </script>

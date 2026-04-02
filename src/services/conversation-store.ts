@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { randomBytes } from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
@@ -481,7 +482,7 @@ export class ConversationStore {
     // Copy messages up to and including the branch point
     const branchedMessages = parent.messages.slice(0, branchPointIndex + 1);
     const now = Date.now();
-    const branchTs = `branch-${String(now)}-${Math.random().toString(36).slice(2, 8)}`;
+    const branchTs = `branch-${String(now)}-${randomBytes(6).toString('hex')}`;
     const messagesJson = JSON.stringify(branchedMessages);
 
     const { id } = this.db.transaction(() => {

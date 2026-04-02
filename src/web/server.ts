@@ -579,6 +579,13 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     try {
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
 
+      // Ownership check: verify the conversation belongs to this user before allowing continuation
+      const existing = store.getConversation(threadTs, channelId);
+      if (existing && existing.userId !== userId) {
+        res.status(403).json({ error: 'Access denied' });
+        return;
+      }
+
       // Use getOrCreateConversation atomically — avoids TOCTOU race where
       // conversation could expire between a check and a separate update
       const conversation = store.getOrCreateConversation(

@@ -59,7 +59,9 @@ export function getThemeStyles(): string {
     color-scheme: light;
   }
 
-  /* View Transitions API (Chrome 111+) */
+  /* View Transitions API (Chrome 111+): handles cross-document transitions
+     automatically. The JS overlay in shell.ts is a fallback for older browsers.
+     Browsers that don't support this at-rule ignore it safely. */
   @view-transition {
     navigation: auto;
   }

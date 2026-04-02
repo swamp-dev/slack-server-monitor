@@ -146,7 +146,7 @@ export async function startE2EServer(): Promise<void> {
     const error = req.query.error as string | undefined;
     res.type('html').send(`<!DOCTYPE html><html><head><title>Login</title></head><body>
       <h1>Server Monitor Login</h1>
-      ${error ? `<div class="error" role="alert">${error}</div>` : ''}
+      ${error ? `<div class="error" role="alert">${esc(error)}</div>` : ''}
       <form method="POST" action="/login">
         <label for="token">Token</label>
         <input type="password" id="token" name="token" required>

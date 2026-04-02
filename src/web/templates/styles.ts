@@ -908,12 +908,15 @@ export function getBaseStyles(): string {
   .skeleton-line { height: 16px; margin-bottom: 8px; width: 60%; }
   .skeleton-line.short { width: 30%; }
 
-  /* Page transitions: content fades in on load */
+  /* Page transitions: content fades in on load.
+     On browsers with View Transitions API, the CSS @view-transition rule
+     in theme.ts handles cross-page animation — this fade-in still runs
+     but is invisible under the VT snapshot, so no double-fade. */
   @keyframes page-fade-in {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
   }
-  main, .container > main, body > main {
+  main {
     animation: page-fade-in 0.2s ease-out;
   }
 

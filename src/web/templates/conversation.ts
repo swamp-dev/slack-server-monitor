@@ -208,7 +208,7 @@ function renderContinueScript(): string {
       var isProcessing = false;
 
       function escapeHtml(s) {
-        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
       }
 
       function getMainEl() {
@@ -219,8 +219,20 @@ function renderContinueScript(): string {
         var mainEl = getMainEl();
         var userMsg = document.createElement('div');
         userMsg.className = 'message user' + (queued ? ' queued' : '');
-        var badge = queued ? ' <span class="queued-badge">queued</span>' : '';
-        userMsg.innerHTML = '<div class="message-header">You' + badge + '</div><div class="message-content">' + escapeHtml(message) + '</div>';
+        var headerDiv = document.createElement('div');
+        headerDiv.className = 'message-header';
+        headerDiv.textContent = 'You';
+        if (queued) {
+          var badge = document.createElement('span');
+          badge.className = 'queued-badge';
+          badge.textContent = 'queued';
+          headerDiv.appendChild(badge);
+        }
+        var contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        contentDiv.textContent = message;
+        userMsg.appendChild(headerDiv);
+        userMsg.appendChild(contentDiv);
         var formEl = mainEl ? mainEl.querySelector('.continue-form') : null;
         if (mainEl && formEl) mainEl.insertBefore(userMsg, formEl);
       }
@@ -314,6 +326,7 @@ function renderContinueScript(): string {
           try {
             es = new EventSource(window.location.pathname + '/stream');
           } catch(err) {
+            clearTimeout(fallbackTimer);
             isProcessing = false;
             spinner.style.display = 'none';
             setTimeout(function() { window.location.reload(); }, 3000);
@@ -813,7 +826,7 @@ export function renderConversation(
       var copyBtn = document.getElementById('copy-clipboard');
       if (copyBtn) {
         copyBtn.addEventListener('click', function() {
-          fetch('/c/${metadata.threadTs}/${metadata.channelId}/export/md?tools=false', { credentials: 'same-origin' })
+          fetch('/c/${encodeURIComponent(metadata.threadTs)}/${encodeURIComponent(metadata.channelId)}/export/md?tools=false', { credentials: 'same-origin' })
             .then(function(res) { return res.text(); })
             .then(function(text) {
               return navigator.clipboard.writeText(text);
@@ -830,7 +843,7 @@ export function renderConversation(
   </script>
   <script>
   (function() {
-    var convId = '${convId}';
+    var convId = ${JSON.stringify(convId)};
     if (!convId) return;
 
     // Favorite star toggle
