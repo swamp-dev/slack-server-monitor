@@ -35,6 +35,7 @@ export function getBaseStyles(): string {
     position: sticky;
     top: 0;
     z-index: 100;
+    view-transition-name: nav;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -907,6 +908,15 @@ export function getBaseStyles(): string {
   .skeleton-card { height: 80px; margin-bottom: 10px; }
   .skeleton-line { height: 16px; margin-bottom: 8px; width: 60%; }
   .skeleton-line.short { width: 30%; }
+
+  /* Page-specific skeleton shapes */
+  .skeleton-stat { height: 90px; flex: 1; margin-bottom: 0; }
+  .skeleton-health { height: 100px; }
+  .skeleton-widget { height: 120px; }
+  .skeleton-session { height: 72px; margin-bottom: 8px; }
+  .skeleton-message { height: 80px; border-radius: 12px; margin-bottom: 20px; }
+  .skeleton-message.short { height: 60px; }
+  .skeleton-message.tall { height: 120px; }
 
   /* Page transitions: content fades in on load.
      On browsers with View Transitions API, the CSS @view-transition rule

@@ -77,5 +77,9 @@ export function getThemeStyles(): string {
   @keyframes fade-in {
     from { opacity: 0; }
   }
+  /* Keep nav bar fully static during view transitions */
+  ::view-transition-group(nav) { animation: none; }
+  ::view-transition-old(nav),
+  ::view-transition-new(nav) { animation: none; mix-blend-mode: normal; }
   `;
 }

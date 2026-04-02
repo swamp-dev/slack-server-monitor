@@ -1923,6 +1923,41 @@ describe('web templates', () => {
           expect(html).toContain('.skeleton-line');
         });
 
+        it('page-specific skeleton CSS classes exist in base styles', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('.skeleton-stat');
+          expect(html).toContain('.skeleton-health');
+          expect(html).toContain('.skeleton-widget');
+          expect(html).toContain('.skeleton-session');
+          expect(html).toContain('.skeleton-message');
+          expect(html).toContain('.skeleton-message.short');
+          expect(html).toContain('.skeleton-message.tall');
+        });
+
+        it('shell script contains URL-aware skeleton overlay', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('getSkeletonHtml');
+          expect(html).toContain('defaultSkeleton');
+          expect(html).toContain('showLoadingOverlay(a.href)');
+        });
+
+        it('shell skeleton detects dashboard, session list, and conversation URLs', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          // Dashboard skeleton uses stat cards
+          expect(html).toContain('skeleton-stat');
+          // Session list skeleton uses session cards
+          expect(html).toContain('skeleton-session');
+          // Conversation detail skeleton uses message shapes
+          expect(html).toContain('skeleton-message tall');
+          expect(html).toContain('skeleton-message short');
+        });
+
+        it('nav bar has view-transition-name for stable transitions', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('view-transition-name: nav');
+          expect(html).toContain('::view-transition-group(nav)');
+        });
+
         it('kb-focused class exists in styles for keyboard navigation', () => {
           const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
           expect(html).toContain('.session-card.kb-focused');

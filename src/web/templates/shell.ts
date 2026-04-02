@@ -292,17 +292,74 @@ export function wrapInShell(opts: ShellOptions): string {
       } catch(e) { return false; }
     }
 
-    function showLoadingOverlay() {
+    function getSkeletonHtml(href) {
+      try {
+        var path = new URL(href, window.location.origin).pathname;
+      } catch(e) { return defaultSkeleton(); }
+
+      // Dashboard
+      if (path === '/') {
+        return '<div class="nav-loading-bar"></div>'
+          + '<div class="skeleton skeleton-line" style="width:50%"></div>'
+          + '<div style="display:flex;gap:16px;margin:16px 0">'
+          + '<div class="skeleton skeleton-stat"></div>'
+          + '<div class="skeleton skeleton-stat"></div>'
+          + '<div class="skeleton skeleton-stat"></div>'
+          + '</div>'
+          + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin:16px 0">'
+          + '<div class="skeleton skeleton-health"></div>'
+          + '<div class="skeleton skeleton-health"></div>'
+          + '<div class="skeleton skeleton-health"></div>'
+          + '<div class="skeleton skeleton-health"></div>'
+          + '</div>'
+          + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:16px">'
+          + '<div class="skeleton skeleton-widget"></div>'
+          + '<div class="skeleton skeleton-widget"></div>'
+          + '</div>';
+      }
+
+      // Session list: /c, /c/favorites, /c/archived, /c/search, /c/tag/*
+      // (checked before conversation detail to avoid /c/tag/x matching the two-segment regex)
+      if (path === '/c' || path.startsWith('/c/favorites') || path.startsWith('/c/archived')
+          || path.startsWith('/c/search') || path.startsWith('/c/tag/')) {
+        return '<div class="nav-loading-bar"></div>'
+          + '<div class="skeleton skeleton-line" style="width:30%"></div>'
+          + '<div class="skeleton skeleton-line" style="width:100%;height:40px;margin-bottom:16px"></div>'
+          + '<div class="skeleton skeleton-session"></div>'
+          + '<div class="skeleton skeleton-session"></div>'
+          + '<div class="skeleton skeleton-session"></div>'
+          + '<div class="skeleton skeleton-session"></div>'
+          + '<div class="skeleton skeleton-session"></div>';
+      }
+
+      // Conversation detail: /c/:threadTs/:channelId
+      if (new RegExp('^/c/[^/]+/[^/]+$').test(path)) {
+        return '<div class="nav-loading-bar"></div>'
+          + '<div class="skeleton skeleton-line" style="width:35%"></div>'
+          + '<div class="skeleton skeleton-message tall"></div>'
+          + '<div class="skeleton skeleton-message short"></div>'
+          + '<div class="skeleton skeleton-message tall"></div>'
+          + '<div class="skeleton skeleton-message short"></div>';
+      }
+
+      return defaultSkeleton();
+    }
+
+    function defaultSkeleton() {
+      return '<div class="nav-loading-bar"></div>'
+        + '<div class="skeleton skeleton-line" style="width:40%"></div>'
+        + '<div class="skeleton skeleton-card"></div>'
+        + '<div class="skeleton skeleton-card"></div>'
+        + '<div class="skeleton skeleton-card"></div>';
+    }
+
+    function showLoadingOverlay(href) {
       var overlay = document.createElement('div');
       overlay.className = 'nav-loading-overlay';
       overlay.setAttribute('role', 'status');
       overlay.setAttribute('aria-label', 'Loading page');
       overlay.innerHTML = '<div class="nav-loading-skeleton">'
-        + '<div class="nav-loading-bar"></div>'
-        + '<div class="skeleton skeleton-line" style="width:40%"></div>'
-        + '<div class="skeleton skeleton-card"></div>'
-        + '<div class="skeleton skeleton-card"></div>'
-        + '<div class="skeleton skeleton-card"></div>'
+        + getSkeletonHtml(href || '')
         + '</div>';
       document.body.setAttribute('aria-busy', 'true');
       document.body.appendChild(overlay);
@@ -326,7 +383,7 @@ export function wrapInShell(opts: ShellOptions): string {
       // Browsers with View Transitions API use the CSS @view-transition rule
       // automatically — no JS needed. Only show overlay for fallback browsers.
       if (!document.startViewTransition) {
-        showLoadingOverlay();
+        showLoadingOverlay(a.href);
       }
     });
   })();
