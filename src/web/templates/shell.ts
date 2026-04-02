@@ -114,6 +114,17 @@ export function wrapInShell(opts: ShellOptions): string {
       ${icon('robot', 14)} Powered by Claude
     </div>
   </footer>
+  <div id="cmd-palette" class="cmd-palette" style="display:none" role="dialog" aria-label="Command palette" aria-modal="true">
+    <div class="cmd-palette-backdrop"></div>
+    <div class="cmd-palette-panel">
+      <div class="cmd-palette-input-wrap">
+        ${icon('search', 16)}
+        <input type="text" id="cmd-palette-input" class="cmd-palette-input" placeholder="Search conversations, navigate, or run commands..." autocomplete="off" spellcheck="false">
+        <kbd class="cmd-palette-kbd">Esc</kbd>
+      </div>
+      <div id="cmd-palette-results" class="cmd-palette-results"></div>
+    </div>
+  </div>
   <div class="toast-container" id="toast-container"></div>
   ${hljsScript}
   <script>
@@ -317,6 +328,196 @@ export function wrapInShell(opts: ShellOptions): string {
       if (!document.startViewTransition) {
         showLoadingOverlay();
       }
+    });
+  })();
+  </script>
+  <script>
+  // Command palette (Cmd+K / Ctrl+K)
+  (function() {
+    var palette = document.getElementById('cmd-palette');
+    var input = document.getElementById('cmd-palette-input');
+    var results = document.getElementById('cmd-palette-results');
+    if (!palette || !input || !results) return;
+
+    var activeIndex = -1;
+    var items = [];
+    var debounceTimer = null;
+    var searchSeq = 0; // Monotonic counter to discard stale fetch responses
+
+    // Static commands
+    var commands = [
+      { title: 'New Conversation', url: '/c/new', icon: 'plus', group: 'Actions' },
+      { title: 'Dashboard', url: '/', icon: 'home', group: 'Navigate' },
+      { title: 'Conversations', url: '/c', icon: 'message-circle', group: 'Navigate' },
+      { title: 'Favorites', url: '/c/favorites', icon: 'star', group: 'Navigate' },
+      { title: 'Notifications', url: '/notifications', icon: 'bell', group: 'Navigate' },
+      { title: 'Archived', url: '/c/archived', icon: 'archive', group: 'Navigate' },
+    ];
+
+    function esc(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function open() {
+      palette.style.display = '';
+      input.value = '';
+      input.focus();
+      activeIndex = -1;
+      renderDefault();
+    }
+
+    function close() {
+      palette.style.display = 'none';
+      input.value = '';
+      activeIndex = -1;
+    }
+
+    function renderDefault() {
+      var seq = ++searchSeq;
+      // Show static commands + recent conversations
+      var html = '<div class="cmd-palette-group">Actions</div>';
+      commands.filter(function(c) { return c.group === 'Actions'; }).forEach(function(c) {
+        html += '<a href="' + esc(c.url) + '" class="cmd-palette-item"><span class="cmd-item-title">' + esc(c.title) + '</span></a>';
+      });
+      html += '<div class="cmd-palette-group">Navigate</div>';
+      commands.filter(function(c) { return c.group === 'Navigate'; }).forEach(function(c) {
+        html += '<a href="' + esc(c.url) + '" class="cmd-palette-item"><span class="cmd-item-title">' + esc(c.title) + '</span></a>';
+      });
+      // Fetch recent conversations
+      fetch('/api/search?limit=5', { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (seq !== searchSeq) return; // stale response
+          if (data.results && data.results.length > 0) {
+            html += '<div class="cmd-palette-group">Recent</div>';
+            data.results.forEach(function(r) {
+              html += '<a href="' + esc(r.url) + '" class="cmd-palette-item"><span class="cmd-item-title">' + esc(r.title) + '</span></a>';
+            });
+          }
+          results.innerHTML = html;
+          items = results.querySelectorAll('.cmd-palette-item');
+        })
+        .catch(function() {
+          if (seq !== searchSeq) return;
+          results.innerHTML = html;
+          items = results.querySelectorAll('.cmd-palette-item');
+        });
+    }
+
+    function doSearch(query) {
+      var seq = ++searchSeq;
+      var q = query.toLowerCase();
+      // Filter static commands
+      var matched = commands.filter(function(c) {
+        return c.title.toLowerCase().indexOf(q) !== -1;
+      });
+
+      var commandsHtml = '';
+      if (matched.length > 0) {
+        commandsHtml += '<div class="cmd-palette-group">Commands</div>';
+        matched.forEach(function(c) {
+          commandsHtml += '<a href="' + esc(c.url) + '" class="cmd-palette-item"><span class="cmd-item-title">' + esc(c.title) + '</span></a>';
+        });
+      }
+
+      // Search conversations
+      fetch('/api/search?q=' + encodeURIComponent(query) + '&limit=5', { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (seq !== searchSeq) return; // stale response
+          var html = commandsHtml;
+          if (data.results && data.results.length > 0) {
+            html += '<div class="cmd-palette-group">Conversations</div>';
+            data.results.forEach(function(r) {
+              html += '<a href="' + esc(r.url) + '" class="cmd-palette-item"><span class="cmd-item-title">' + esc(r.title) + '</span></a>';
+            });
+          }
+          if (!html) {
+            html = '<div class="cmd-palette-empty">No results for "' + esc(query) + '"</div>';
+          }
+          results.innerHTML = html;
+          items = results.querySelectorAll('.cmd-palette-item');
+          activeIndex = -1;
+        })
+        .catch(function() {
+          if (seq !== searchSeq) return;
+          var html = commandsHtml || '<div class="cmd-palette-empty">Search failed</div>';
+          results.innerHTML = html;
+          items = results.querySelectorAll('.cmd-palette-item');
+        });
+    }
+
+    function setActive(idx) {
+      items.forEach(function(el) { el.classList.remove('active'); });
+      if (idx >= 0 && idx < items.length) {
+        items[idx].classList.add('active');
+        items[idx].scrollIntoView({ block: 'nearest' });
+      }
+      activeIndex = idx;
+    }
+
+    // Open on Cmd+K / Ctrl+K
+    document.addEventListener('keydown', function(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        if (palette.style.display === 'none') {
+          open();
+        } else {
+          close();
+        }
+      }
+    });
+
+    // Close on backdrop click
+    palette.querySelector('.cmd-palette-backdrop').addEventListener('click', close);
+
+    // Focus trap: keep Tab within the palette while open
+    palette.addEventListener('keydown', function(e) {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        input.focus();
+      }
+    });
+
+    // Close on Escape and handle navigation
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActive(Math.min((activeIndex + 1), items.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActive(Math.max(activeIndex - 1, 0));
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (activeIndex >= 0 && items[activeIndex]) {
+          items[activeIndex].click();
+        } else if (items.length > 0) {
+          items[0].click();
+        }
+        close();
+        return;
+      }
+    });
+
+    // Debounced search on input
+    input.addEventListener('input', function() {
+      var q = input.value.trim();
+      clearTimeout(debounceTimer);
+      if (!q) {
+        renderDefault();
+        return;
+      }
+      debounceTimer = setTimeout(function() { doSearch(q); }, 150);
     });
   })();
   </script>

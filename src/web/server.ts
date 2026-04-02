@@ -726,6 +726,40 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
   });
 
+  // ─── Search API (for command palette) ──────────────────────────────────
+
+  // GET /api/search?q=...&limit=5 — lightweight conversation search
+  app.get('/api/search', sessionAuthMiddleware(webConfig, dbPath), (req: Request, res: Response) => {
+    try {
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      const limit = Math.min(typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 5, 10) || 5;
+      const userId = res.locals.userId as string | undefined;
+
+      function toResult(s: { id: number; firstMessage?: string; userId: string; channelId: string; threadTs: string; updatedAt: number }) {
+        return {
+          id: s.id,
+          title: s.firstMessage ?? `${s.userId} · ${s.channelId}`,
+          url: `/c/${encodeURIComponent(s.threadTs)}/${encodeURIComponent(s.channelId)}`,
+          time: s.updatedAt,
+        };
+      }
+
+      if (!query) {
+        // Return current user's recent conversations
+        const recent = store.listRecentSessions(limit, 0, userId);
+        res.json({ results: recent.map(toResult) });
+        return;
+      }
+
+      const sessions = store.searchConversations(query, limit, 0, userId);
+      res.json({ results: sessions.map(toResult) });
+    } catch (err) {
+      logger.error('Error in search API', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'Search failed' });
+    }
+  });
+
   // ─── Server Health API ────────────────────────────────────────────────
 
   // GET /api/health/server — cached server health metrics

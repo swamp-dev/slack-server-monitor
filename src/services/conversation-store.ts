@@ -972,7 +972,7 @@ export class ConversationStore {
   /**
    * Search conversations by message content using FTS5
    */
-  searchConversations(query: string, limit = 20, offset = 0): SessionSummary[] {
+  searchConversations(query: string, limit = 20, offset = 0, filterUserId?: string): SessionSummary[] {
     const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
 
     // Quote each token individually so "nginx restart" matches both words anywhere
@@ -981,6 +981,8 @@ export class ConversationStore {
       .filter((t) => t.length > 0)
       .map((t) => '"' + t.replace(/"/g, '""') + '"')
       .join(' ');
+
+    const userFilter = filterUserId ? 'AND c.user_id = $filterUserId' : '';
 
     const rows = this.db
       .prepare(`
@@ -993,11 +995,12 @@ export class ConversationStore {
         LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
         WHERE conversations_fts MATCH $query
           AND c.archived_at IS NULL
+          ${userFilter}
         GROUP BY c.id
         ORDER BY rank, c.updated_at DESC
         LIMIT $limit OFFSET $offset
       `)
-      .all({ query: safeQuery, limit, offset }) as {
+      .all({ query: safeQuery, limit, offset, ...(filterUserId ? { filterUserId } : {}) }) as {
         id: number;
         thread_ts: string;
         channel_id: string;

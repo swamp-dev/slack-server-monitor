@@ -141,6 +141,7 @@ export function getKeyboardHelpOverlay(): string {
       <table>
         <tr><th>Key</th><th>Action</th></tr>
         <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>
+        <tr><td><kbd>⌘K</kbd></td><td>Command palette</td></tr>
         <tr><td><kbd>t</kbd></td><td>Toggle theme</td></tr>
         <tr><td><kbd>/</kbd></td><td>Focus search</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Close / blur</td></tr>
