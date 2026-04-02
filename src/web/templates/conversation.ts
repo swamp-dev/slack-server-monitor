@@ -208,6 +208,32 @@ function renderContinueScript(): string {
         return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       }
 
+      // Robot SVG for assistant avatar (matches server-rendered version)
+      var robotSvg = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
+        + '<path d="M10 6C6.69 6 4 8.69 4 12V14C4 15.1 4.9 16 6 16H14C15.1 16 16 15.1 16 14V12C16 8.69 13.31 6 10 6Z"/>'
+        + '<path d="M7.5 11.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"/>'
+        + '<path d="M12.5 11.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"/>'
+        + '<path d="M10 3V6"/><path d="M6 3.5L8 6"/><path d="M14 3.5L12 6"/></svg>';
+
+      // Map tool names to friendly status messages
+      var toolLabels = {
+        get_container_status: 'Checking containers',
+        get_container_logs: 'Reading logs',
+        get_system_resources: 'Checking system resources',
+        get_disk_usage: 'Checking disk usage',
+        get_network_info: 'Checking network',
+        get_docker_images: 'Listing Docker images',
+        search_container_logs: 'Searching logs',
+        read_file: 'Reading file',
+        run_command: 'Running command',
+        create_github_issue: 'Creating issue',
+        list_github_issues: 'Searching issues',
+        view_github_issue: 'Reading issue'
+      };
+      function friendlyToolName(name) {
+        return toolLabels[name] || ('Running ' + name.replace(/_/g, ' '));
+      }
+
       form.addEventListener('submit', function(e) {
         e.preventDefault();
         var message = input.value.trim();
@@ -247,8 +273,8 @@ function renderContinueScript(): string {
             return;
           }
 
-          // Open SSE stream (30s fallback matches heartbeat interval)
-          var fallbackTimer = setTimeout(function() { window.location.reload(); }, 30000);
+          // Fallback: reload if no completion after 5 minutes (matches CLI timeout)
+          var fallbackTimer = setTimeout(function() { window.location.reload(); }, 300000);
           var es;
           try {
             es = new EventSource(window.location.pathname + '/stream');
@@ -259,46 +285,90 @@ function renderContinueScript(): string {
 
           var gotEvents = false;
           var toolCardIndex = 0;
+          var activeTimers = {};
+          var continueFormEl = document.querySelector('.continue-form');
+
+          // Central cleanup: clear all timers, close SSE
+          function cleanup() {
+            clearTimeout(fallbackTimer);
+            for (var k in activeTimers) { clearInterval(activeTimers[k]); }
+            activeTimers = {};
+            if (es) { es.onerror = null; es.close(); }
+          }
 
           es.addEventListener('tool_call_start', function(e) {
             gotEvents = true;
             try {
               var data = JSON.parse(e.data);
-              spinner.textContent = 'Running ' + data.toolName + '...';
+              spinner.textContent = friendlyToolName(data.toolName) + '...';
               var card = document.createElement('div');
               card.className = 'tool-call-streaming';
-              card.setAttribute('data-tc-index', String(toolCardIndex++));
-              card.innerHTML = '<span class="streaming-spinner"></span> <span class="tool-call-name">' + escapeHtml(data.toolName) + '</span>';
+              var tcIdx = String(toolCardIndex++);
+              card.setAttribute('data-tc-index', tcIdx);
+              card.innerHTML = '<span class="streaming-spinner"></span> <span class="tool-call-name">' + escapeHtml(friendlyToolName(data.toolName)) + '</span> <span class="tool-call-elapsed"></span>';
               streamArea.appendChild(card);
+              // Live elapsed time counter
+              var startTime = Date.now();
+              activeTimers[tcIdx] = setInterval(function() {
+                var elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                var el = card.querySelector('.tool-call-elapsed');
+                if (el) el.textContent = elapsed + 's';
+              }, 100);
             } catch(err) {}
           });
 
           es.addEventListener('tool_call_end', function(e) {
             try {
               var data = JSON.parse(e.data);
-              // Find the last streaming card (most recent in-progress tool)
+              // Find the last streaming card
               var cards = streamArea.querySelectorAll('.tool-call-streaming');
               var card = cards.length > 0 ? cards[cards.length - 1] : null;
               if (card) {
+                var idx = card.getAttribute('data-tc-index');
+                if (idx && activeTimers[idx]) { clearInterval(activeTimers[idx]); delete activeTimers[idx]; }
+
                 var statusClass = data.isError ? 'failure' : 'success';
                 var statusIcon = data.isError ? '✗' : '✓';
                 card.className = 'tool-call-complete';
                 card.innerHTML = '<span class="tool-call-status ' + statusClass + '">' + statusIcon + '</span> '
-                  + '<span class="tool-call-name">' + escapeHtml(data.toolName) + '</span>'
-                  + ' <span class="tool-call-duration">' + data.durationMs + 'ms</span>';
+                  + '<span class="tool-call-name">' + escapeHtml(friendlyToolName(data.toolName)) + '</span>'
+                  + ' <span class="tool-call-duration">' + escapeHtml(String(data.durationMs || 0)) + 'ms</span>';
               }
             } catch(err) {}
           });
 
           es.addEventListener('text', function(e) {
             gotEvents = true;
-            spinner.textContent = 'Finalizing response...';
+            spinner.style.display = 'none';
+            try {
+              var data = JSON.parse(e.data);
+              var text = data.text || '';
+              if (!text) return;
+
+              // Create or update streaming response preview (plain text, safe)
+              var responseDiv = document.getElementById('stream-response');
+              if (!responseDiv) {
+                responseDiv = document.createElement('div');
+                responseDiv.id = 'stream-response';
+                responseDiv.className = 'message assistant streaming';
+                responseDiv.innerHTML = '<div class="message-header">'
+                  + '<span class="avatar avatar-glow">' + robotSvg + '</span>Claude</div>'
+                  + '<div class="message-content" id="stream-response-content"></div>'
+                  + '<span class="typing-cursor"></span>';
+                if (mainEl) mainEl.insertBefore(responseDiv, continueFormEl);
+              }
+
+              // Use textContent for safety — server renders final markdown on reload
+              var contentEl = document.getElementById('stream-response-content');
+              if (contentEl) contentEl.textContent = text;
+
+              responseDiv.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            } catch(err) {}
           });
 
           es.addEventListener('done', function() {
-            clearTimeout(fallbackTimer);
-            es.close();
-            es.onerror = null;
+            cleanup();
+            // Reload to get server-rendered markdown (single source of truth)
             window.location.reload();
           });
 
@@ -310,9 +380,7 @@ function renderContinueScript(): string {
                 errorDiv.style.display = 'block';
               } catch(err) {}
             }
-            clearTimeout(fallbackTimer);
-            es.close();
-            es.onerror = null;
+            cleanup();
             submitBtn.disabled = false;
             spinner.style.display = 'none';
             if (!gotEvents) {
@@ -322,9 +390,7 @@ function renderContinueScript(): string {
 
           es.onerror = function() {
             if (!gotEvents) {
-              clearTimeout(fallbackTimer);
-              es.close();
-              es.onerror = null;
+              cleanup();
               setTimeout(function() { window.location.reload(); }, 3000);
             }
           };
@@ -522,6 +588,47 @@ const conversationDetailStyles = `
     display: flex;
     align-items: center;
     gap: 4px;
+  }
+
+  /* Typing cursor for streaming responses */
+  .typing-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    background: var(--accent);
+    margin-left: 2px;
+    animation: blink-cursor 0.8s step-end infinite;
+    vertical-align: text-bottom;
+  }
+  @keyframes blink-cursor {
+    50% { opacity: 0; }
+  }
+  .message.streaming {
+    border-color: var(--accent);
+    position: relative;
+  }
+  .message.streaming::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-secondary), var(--accent));
+    background-size: 200% 100%;
+    animation: shimmer-border 2s linear infinite;
+  }
+  @keyframes shimmer-border {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* Elapsed time counter on streaming tool cards */
+  .tool-call-elapsed {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
   }
 
   /* Fork button */
