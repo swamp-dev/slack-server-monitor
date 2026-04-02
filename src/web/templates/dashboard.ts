@@ -65,6 +65,7 @@ const dashboardStyles = `
     font-weight: 700;
     color: var(--fg);
     line-height: 1.1;
+    font-variant-numeric: tabular-nums;
   }
   .stat-card .stat-label {
     color: var(--text-muted);
@@ -329,8 +330,52 @@ const dashboardStyles = `
     transition: width 0.5s ease;
   }
   .health-bar-fill.ok { background: var(--green); }
-  .health-bar-fill.warn { background: #f1fa8c; }
-  .health-bar-fill.danger { background: #ff5555; }
+  .health-bar-fill.warn { background: var(--yellow); }
+  .health-bar-fill.danger { background: var(--red); }
+  /* Health card severity borders */
+  .health-card.severity-warn {
+    border-color: var(--yellow);
+  }
+  .health-card.severity-danger {
+    border-color: var(--red);
+    animation: pulse-border 2s ease-in-out infinite;
+  }
+  @keyframes pulse-border {
+    0%, 100% { border-color: var(--red); }
+    50% { border-color: var(--border); }
+  }
+  .health-status-text {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: 4px;
+  }
+  .health-status-text.ok { color: var(--green); }
+  .health-status-text.warn { color: var(--yellow); }
+  .health-status-text.danger { color: var(--red); }
+  /* Greeting health summary */
+  .greeting-health {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    padding: 4px 10px;
+    border-radius: 12px;
+    margin-left: 8px;
+  }
+  .greeting-health.all-ok {
+    background: rgba(80, 250, 123, 0.1);
+    color: var(--green);
+  }
+  .greeting-health.has-warn {
+    background: rgba(241, 250, 140, 0.1);
+    color: var(--yellow);
+  }
+  .greeting-health.has-danger {
+    background: rgba(255, 85, 85, 0.1);
+    color: var(--red);
+  }
   .quick-links-section {
     margin-bottom: 24px;
   }
@@ -477,16 +522,16 @@ export function renderDashboard(
   const statsHtml = `
     <div class="stats-row">
       <div class="stat-card">
-        <div class="stat-value">${String(stats.totalSessions)}</div>
+        <div class="stat-value" data-count="${String(stats.totalSessions)}">${String(stats.totalSessions)}</div>
         <div class="stat-label">Sessions</div>
         <div class="stat-detail"><span class="active-dot"></span> ${String(stats.activeSessions)} active</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value">${String(stats.totalMessages)}</div>
+        <div class="stat-value" data-count="${String(stats.totalMessages)}">${String(stats.totalMessages)}</div>
         <div class="stat-label">Messages</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value">${String(stats.totalToolCalls)}</div>
+        <div class="stat-value" data-count="${String(stats.totalToolCalls)}">${String(stats.totalToolCalls)}</div>
         <div class="stat-label">Tool Calls</div>
         ${avgDuration ? `<div class="stat-detail">${avgDuration}</div>` : ''}
       </div>
@@ -580,6 +625,15 @@ export function renderDashboard(
         const diskPct = topDisk?.percentUsed ?? 0;
         const diskClass = diskPct > 90 ? 'danger' : diskPct > 75 ? 'warn' : 'ok';
 
+        // Status text for each severity level
+        function statusText(cls: string): string {
+          if (cls === 'danger') return '<div class="health-status-text danger">Critical</div>';
+          if (cls === 'warn') return '<div class="health-status-text warn">Getting tight</div>';
+          return '<div class="health-status-text ok">Healthy</div>';
+        }
+
+        const loadPct = Math.min(100, Math.round((load1 / Math.max(1, health.cpu.cores)) * 100));
+
         return `<div class="health-section" id="health-section">
           <h2>${icon('home', 14)} Server Health</h2>
           <div class="health-grid">
@@ -587,24 +641,28 @@ export function renderDashboard(
               <div class="health-label">Uptime</div>
               <div class="health-value" id="h-uptime">${escapeHtml(health.uptime)}</div>
               <div class="health-detail">${String(health.cpu.cores)} cores</div>
+              <div class="health-status-text ok">Online</div>
             </div>
-            <div class="health-card">
+            <div class="health-card${loadClass !== 'ok' ? ` severity-${loadClass}` : ''}">
               <div class="health-label">Load Average</div>
               <div class="health-value" id="h-load">${load1.toFixed(2)}</div>
               <div class="health-detail">5m: ${health.loadAverage[1].toFixed(2)} · 15m: ${health.loadAverage[2].toFixed(2)}</div>
-              <div class="health-bar"><div class="health-bar-fill ${loadClass}" style="width:${String(Math.min(100, Math.round((load1 / Math.max(1, health.cpu.cores)) * 100)))}%"></div></div>
+              <div class="health-bar"><div class="health-bar-fill ${loadClass}" id="hb-load" style="width:${String(loadPct)}%"></div></div>
+              ${statusText(loadClass)}
             </div>
-            <div class="health-card">
+            <div class="health-card${memClass !== 'ok' ? ` severity-${memClass}` : ''}">
               <div class="health-label">Memory</div>
               <div class="health-value" id="h-mem">${String(memPct)}%</div>
               <div class="health-detail">${String(health.memory.used)}MB / ${String(health.memory.total)}MB</div>
-              <div class="health-bar"><div class="health-bar-fill ${memClass}" style="width:${String(memPct)}%"></div></div>
+              <div class="health-bar"><div class="health-bar-fill ${memClass}" id="hb-mem" style="width:${String(memPct)}%"></div></div>
+              ${statusText(memClass)}
             </div>
-            <div class="health-card">
+            <div class="health-card${diskClass !== 'ok' ? ` severity-${diskClass}` : ''}">
               <div class="health-label">Disk</div>
               <div class="health-value" id="h-disk">${String(diskPct)}%</div>
               <div class="health-detail">${topDisk ? `${escapeHtml(topDisk.used)} / ${escapeHtml(topDisk.size)} (${escapeHtml(topDisk.mountPoint)})` : 'N/A'}</div>
-              <div class="health-bar"><div class="health-bar-fill ${diskClass}" style="width:${String(diskPct)}%"></div></div>
+              <div class="health-bar"><div class="health-bar-fill ${diskClass}" id="hb-disk" style="width:${String(diskPct)}%"></div></div>
+              ${statusText(diskClass)}
             </div>
           </div>
         </div>`;
@@ -652,6 +710,26 @@ export function renderDashboard(
       </div>`
     : '';
 
+  // Health summary badge for greeting
+  let healthBadgeHtml = '';
+  if (health) {
+    const memPctVal = health.memory.percentUsed;
+    const load1Val = health.loadAverage[0];
+    const diskPctVal = health.disks.length > 0
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      ? health.disks.reduce((max, d) => d.percentUsed > max.percentUsed ? d : max, health.disks[0]!).percentUsed
+      : 0;
+    const hasDanger = memPctVal > 90 || load1Val > (health.cpu.cores * 2) || diskPctVal > 90;
+    const hasWarn = memPctVal > 70 || load1Val > health.cpu.cores || diskPctVal > 75;
+    if (hasDanger) {
+      healthBadgeHtml = `<span class="greeting-health has-danger">${icon('x', 12)} Issues detected</span>`;
+    } else if (hasWarn) {
+      healthBadgeHtml = `<span class="greeting-health has-warn">${icon('eye', 12)} Needs attention</span>`;
+    } else {
+      healthBadgeHtml = `<span class="greeting-health all-ok">${icon('check', 12)} All systems healthy</span>`;
+    }
+  }
+
   // Build the grid: left column = tools + tags, right column = recent + favorites
   const leftCol = [toolChartHtml, tagsHtml].filter(Boolean).join('\n');
   const rightCol = [recentHtml, favoritesHtml].filter(Boolean).join('\n');
@@ -659,7 +737,7 @@ export function renderDashboard(
   const bodyHtml = `
   <main class="container">
     <div class="dashboard-greeting">
-      <h1>${greeting}</h1>
+      <h1>${greeting}${healthBadgeHtml}</h1>
       <div class="subtitle">Last 24 hours: ${String(stats.totalSessions)} sessions, ${String(stats.totalMessages)} messages, ${String(stats.totalToolCalls)} tool calls</div>
     </div>
     ${quickActionsHtml}
@@ -673,25 +751,94 @@ export function renderDashboard(
     </div>
   </main>`;
 
-  // Auto-refresh health cards every 60s
+  // Animated counter script: counts up from 0 on page load
+  const counterScript = `
+  <script>
+  (function() {
+    function animateCounter(el, target, duration) {
+      if (!el || target < 0) return;
+      if (target === 0) { el.textContent = '0'; return; }
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        el.textContent = String(target);
+        return;
+      }
+      var start = 0;
+      var startTime = performance.now();
+      function step(now) {
+        var progress = Math.min((now - startTime) / duration, 1);
+        var eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+        var current = Math.round(eased * target);
+        el.textContent = String(current);
+        if (progress < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+    document.querySelectorAll('.stat-value[data-count]').forEach(function(el) {
+      var target = parseInt(el.getAttribute('data-count') || '0', 10);
+      animateCounter(el, target, 400);
+    });
+  })();
+  </script>`;
+
+  // Auto-refresh health cards every 60s (values + bars + severity)
   const healthRefreshScript = health ? `
   <script>
   (function() {
+    function severityClass(pct, warnThreshold, dangerThreshold) {
+      if (pct > dangerThreshold) return 'danger';
+      if (pct > warnThreshold) return 'warn';
+      return 'ok';
+    }
+    function updateBar(barId, pct, cls) {
+      var bar = document.getElementById(barId);
+      if (!bar) return;
+      bar.style.width = Math.min(100, pct) + '%';
+      bar.className = 'health-bar-fill ' + cls;
+    }
+    function updateCard(barId, cls) {
+      var bar = document.getElementById(barId);
+      if (!bar) return;
+      var card = bar.closest('.health-card');
+      if (!card) return;
+      card.className = 'health-card' + (cls !== 'ok' ? ' severity-' + cls : '');
+      // Update status text label
+      var statusEl = card.querySelector('.health-status-text');
+      if (statusEl) {
+        var labels = { ok: 'Healthy', warn: 'Getting tight', danger: 'Critical' };
+        statusEl.textContent = labels[cls] || 'Healthy';
+        statusEl.className = 'health-status-text ' + cls;
+      }
+    }
     setInterval(function() {
       fetch('/api/health/server')
         .then(function(r) { return r.json(); })
         .then(function(h) {
           if (!h || !h.uptime) return;
+          var cores = h.cpu && h.cpu.cores ? h.cpu.cores : 1;
           var u = document.getElementById('h-uptime');
           var l = document.getElementById('h-load');
           var m = document.getElementById('h-mem');
           var d = document.getElementById('h-disk');
           if (u) u.textContent = h.uptime;
-          if (l) l.textContent = h.loadAverage[0].toFixed(2);
-          if (m) m.textContent = h.memory.percentUsed + '%';
+          if (l) {
+            l.textContent = h.loadAverage[0].toFixed(2);
+            var loadPct = Math.round((h.loadAverage[0] / cores) * 100);
+            var loadCls = severityClass(h.loadAverage[0], cores, cores * 2);
+            updateBar('hb-load', loadPct, loadCls);
+            updateCard('hb-load', loadCls);
+          }
+          if (m) {
+            m.textContent = h.memory.percentUsed + '%';
+            var memCls = severityClass(h.memory.percentUsed, 70, 90);
+            updateBar('hb-mem', h.memory.percentUsed, memCls);
+            updateCard('hb-mem', memCls);
+          }
           if (d && h.disks && h.disks.length > 0) {
             var top = h.disks.reduce(function(mx, dk) { return dk.percentUsed > mx.percentUsed ? dk : mx; }, h.disks[0]);
             d.textContent = top.percentUsed + '%';
+            var diskCls = severityClass(top.percentUsed, 75, 90);
+            updateBar('hb-disk', top.percentUsed, diskCls);
+            updateCard('hb-disk', diskCls);
           }
         })
         .catch(function() {});
@@ -703,7 +850,7 @@ export function renderDashboard(
     title: 'Dashboard',
     styles: dashboardStyles,
     body: bodyHtml,
-    scripts: healthRefreshScript,
+    scripts: counterScript + healthRefreshScript,
     unreadCount,
   });
 }
