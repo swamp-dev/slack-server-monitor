@@ -151,6 +151,27 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     res.json({ status: 'ok' });
   });
 
+  // PWA manifest (no auth required, cacheable)
+  app.get('/manifest.json', (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.json({
+      name: 'Server Monitor',
+      short_name: 'SSM',
+      description: 'AI-powered server diagnostics',
+      start_url: '/',
+      display: 'standalone',
+      background_color: '#282a36',
+      theme_color: '#282a36',
+      icons: [
+        {
+          src: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="#ff79c6" stroke-width="1.5"><rect x="4" y="6" width="12" height="10" rx="2"/><circle cx="7.5" cy="11" r="1.5"/><circle cx="12.5" cy="11" r="1.5"/><path d="M10 2v4M6 6V4M14 6V4"/></svg>'),
+          sizes: 'any',
+          type: 'image/svg+xml',
+        },
+      ],
+    });
+  });
+
   // Login page (no auth required)
   app.get('/login', (req: Request, res: Response) => {
     const returnTo = typeof req.query.return_to === 'string' ? req.query.return_to : undefined;

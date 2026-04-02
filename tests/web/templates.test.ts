@@ -1690,6 +1690,26 @@ describe('web templates', () => {
         const html = renderLogin();
         expect(html).toContain('toggle-password');
       });
+
+      it('has floating robot animation', () => {
+        const html = renderLogin();
+        expect(html).toContain('robot-float');
+        expect(html).toContain('translateY(-4px)');
+      });
+
+      it('has circuit-board background pattern', () => {
+        const html = renderLogin();
+        expect(html).toContain('.login-page::before');
+        expect(html).toContain('background-image');
+      });
+
+      it('has token validation checkmark', () => {
+        const html = renderLogin();
+        expect(html).toContain('token-check');
+        expect(html).toContain('.token-check.valid');
+        // Validates on 16+ chars
+        expect(html).toContain('length >= 16');
+      });
     });
 
     describe('session list', () => {
@@ -2352,6 +2372,29 @@ describe('web templates', () => {
 
       // Should have a breakpoint for small phones (414px or below)
       expect(html).toMatch(/@media\s*\(max-width:\s*414px\)/);
+    });
+
+    it('includes first-visit onboarding overlay', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+      expect(html).toContain('onboarding-overlay');
+      expect(html).toContain('onboarding-card');
+      expect(html).toContain('ssm-onboarded');
+      expect(html).toContain('Welcome to Server Monitor');
+    });
+
+    it('onboarding has 3 steps with dot indicators', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+      expect(html).toContain('dot-0');
+      expect(html).toContain('dot-1');
+      expect(html).toContain('dot-2');
+      expect(html).toContain('Get Started');
+    });
+
+    it('includes PWA manifest link', () => {
+      const html = renderDashboard(baseStats, recentSessions, favoriteSessions, 1, allTags, 'U01TEST');
+      expect(html).toContain('rel="manifest"');
+      expect(html).toContain('/manifest.json');
+      expect(html).toContain('theme-color');
     });
   });
 

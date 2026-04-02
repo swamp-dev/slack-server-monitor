@@ -846,11 +846,153 @@ export function renderDashboard(
   })();
   </script>` : '';
 
+  const onboardingStyles = `
+    .onboarding-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: onboarding-fade-in 0.3s ease;
+    }
+    @keyframes onboarding-fade-in { from { opacity: 0; } }
+    .onboarding-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      max-width: 440px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+    }
+    .onboarding-card h2 {
+      font-size: 1.25rem;
+      margin: 12px 0 8px;
+    }
+    .onboarding-card p {
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      line-height: 1.5;
+      margin-bottom: 0;
+    }
+    .onboarding-icon {
+      color: var(--accent);
+      margin-bottom: 4px;
+    }
+    .onboarding-steps {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin: 20px 0 16px;
+    }
+    .onboarding-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--border);
+    }
+    .onboarding-dot.active {
+      background: var(--accent);
+    }
+    .onboarding-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      margin-top: 20px;
+    }
+    .onboarding-actions button {
+      padding: 8px 20px;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      font-family: inherit;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .onboarding-actions button:hover {
+      border-color: var(--accent);
+    }
+    .onboarding-actions .btn-primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+      color: #fff;
+      border: none;
+    }
+  `;
+
+  const onboardingHtml = `
+  <div class="onboarding-overlay" id="onboarding" style="display:none">
+    <div class="onboarding-card">
+      <div class="onboarding-icon" id="onboarding-icon">${icon('home', 36)}</div>
+      <h2 id="onboarding-title">Welcome to Server Monitor</h2>
+      <p id="onboarding-text">This is your dashboard. See server health, recent conversations, and quick stats at a glance.</p>
+      <div class="onboarding-steps">
+        <span class="onboarding-dot active" id="dot-0"></span>
+        <span class="onboarding-dot" id="dot-1"></span>
+        <span class="onboarding-dot" id="dot-2"></span>
+      </div>
+      <div class="onboarding-actions">
+        <button id="onboarding-skip" type="button">Skip</button>
+        <button id="onboarding-next" class="btn-primary" type="button">Next</button>
+      </div>
+    </div>
+  </div>`;
+
+  const onboardingScript = `
+  <script>
+  (function() {
+    var alreadyOnboarded = false;
+    try { alreadyOnboarded = localStorage.getItem('ssm-onboarded') === 'true'; } catch(e) {}
+    if (alreadyOnboarded) return;
+    var overlay = document.getElementById('onboarding');
+    if (!overlay) return;
+    overlay.style.display = '';
+    var step = 0;
+    var steps = [
+      { icon: '${icon('home', 36)}', title: 'Welcome to Server Monitor', text: 'This is your dashboard. See server health, recent conversations, and quick stats at a glance.' },
+      { icon: '${icon('message-circle', 36)}', title: 'Chat with Claude via Slack', text: 'Use /ask in Slack to start a conversation. Claude can check containers, read logs, and diagnose issues.' },
+      { icon: '${icon('search', 36)}', title: 'Keyboard Power User', text: 'Press ? for keyboard shortcuts. Cmd+K opens the command palette. Navigate conversations with j/k keys.' }
+    ];
+    var titleEl = document.getElementById('onboarding-title');
+    var textEl = document.getElementById('onboarding-text');
+    var iconEl = document.getElementById('onboarding-icon');
+    var nextBtn = document.getElementById('onboarding-next');
+    var skipBtn = document.getElementById('onboarding-skip');
+
+    function show(i) {
+      if (!titleEl || !textEl || !iconEl) return;
+      titleEl.textContent = steps[i].title;
+      textEl.textContent = steps[i].text;
+      iconEl.innerHTML = steps[i].icon;
+      for (var d = 0; d < 3; d++) {
+        var dot = document.getElementById('dot-' + d);
+        if (dot) dot.className = 'onboarding-dot' + (d === i ? ' active' : '');
+      }
+      if (nextBtn) nextBtn.textContent = i === 2 ? 'Get Started' : 'Next';
+    }
+
+    function dismiss() {
+      try { localStorage.setItem('ssm-onboarded', 'true'); } catch(e) {}
+      overlay.style.display = 'none';
+    }
+
+    if (nextBtn) nextBtn.addEventListener('click', function() {
+      if (step < 2) { step++; show(step); }
+      else dismiss();
+    });
+    if (skipBtn) skipBtn.addEventListener('click', dismiss);
+  })();
+  </script>`;
+
   return wrapInShell({
     title: 'Dashboard',
-    styles: dashboardStyles,
-    body: bodyHtml,
-    scripts: counterScript + healthRefreshScript,
+    styles: dashboardStyles + onboardingStyles,
+    body: bodyHtml + onboardingHtml,
+    scripts: counterScript + healthRefreshScript + onboardingScript,
     unreadCount,
   });
 }

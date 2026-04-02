@@ -71,6 +71,20 @@ export function renderLogin(error?: string, returnTo?: string): string {
       align-items: center;
       justify-content: center;
       background: linear-gradient(135deg, var(--bg), var(--bg-secondary));
+      position: relative;
+      overflow: hidden;
+    }
+    /* Circuit-board background pattern */
+    .login-page::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 40px 40px;
+      opacity: 0.15;
+      pointer-events: none;
     }
     .login-form {
       width: 100%;
@@ -80,6 +94,8 @@ export function renderLogin(error?: string, returnTo?: string): string {
       border-radius: 12px;
       padding: 36px;
       box-shadow: 0 8px 32px var(--shadow);
+      position: relative;
+      z-index: 1;
     }
     .login-brand {
       display: flex;
@@ -87,7 +103,14 @@ export function renderLogin(error?: string, returnTo?: string): string {
       gap: 10px;
       margin-bottom: 8px;
     }
-    .login-brand svg { color: var(--accent); }
+    .login-brand svg {
+      color: var(--accent);
+      animation: robot-float 3s ease-in-out infinite;
+    }
+    @keyframes robot-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
+    }
     .login-form h1 {
       font-size: 1.5rem;
     }
@@ -113,7 +136,7 @@ export function renderLogin(error?: string, returnTo?: string): string {
     .login-form input[type="password"],
     .login-form input[type="text"] {
       width: 100%;
-      padding: 10px 40px 10px 12px;
+      padding: 10px 64px 10px 12px;
       font-size: 0.9375rem;
       font-family: 'SF Mono', monospace;
       background: var(--code-bg);
@@ -164,6 +187,19 @@ export function renderLogin(error?: string, returnTo?: string): string {
       font-size: 0.875rem;
       color: var(--red);
     }
+    /* Token validation checkmark */
+    .token-check {
+      position: absolute;
+      right: 40px;
+      top: 50%;
+      transform: translateY(-50%) scale(0);
+      color: var(--green);
+      transition: transform 0.2s ease;
+      pointer-events: none;
+    }
+    .token-check.valid {
+      transform: translateY(-50%) scale(1);
+    }
   `;
 
   const bodyHtml = `
@@ -176,6 +212,7 @@ export function renderLogin(error?: string, returnTo?: string): string {
       <label for="token">Access Token</label>
       <div class="login-input-wrapper">
         <input type="password" id="token" name="token" required autocomplete="off" autofocus>
+        <span class="token-check" id="token-check">${icon('check', 14)}</span>
         <button type="button" class="toggle-password" id="toggle-password" aria-label="Show password">${icon('eye', 16)}</button>
       </div>
       ${returnToInput}
@@ -188,11 +225,22 @@ export function renderLogin(error?: string, returnTo?: string): string {
   (function() {
     var btn = document.getElementById('toggle-password');
     var input = document.getElementById('token');
+    var check = document.getElementById('token-check');
     if (!btn || !input) return;
     btn.addEventListener('click', function() {
       var isPassword = input.type === 'password';
       input.type = isPassword ? 'text' : 'password';
     });
+    // Token validation checkmark (min 16 chars matches WEB_AUTH_TOKEN requirement)
+    if (input && check) {
+      input.addEventListener('input', function() {
+        if (input.value.length >= 16) {
+          check.classList.add('valid');
+        } else {
+          check.classList.remove('valid');
+        }
+      });
+    }
   })();
   </script>`;
 
