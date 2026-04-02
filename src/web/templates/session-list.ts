@@ -47,12 +47,74 @@ const sessionListStyles = `
     text-decoration: none;
     color: var(--text);
     transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s;
+    position: relative;
   }
   .session-card:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 12px var(--shadow);
     border-color: var(--surface-hover);
     text-decoration: none;
+  }
+  /* Active indicator: green dot for recent conversations */
+  .session-card.is-active {
+    border-left: 3px solid var(--green);
+  }
+  .active-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--green);
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 6px;
+    animation: pulse-dot 2s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  /* Date section headers */
+  .date-section {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 12px 0 6px;
+    margin-top: 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  .date-section:first-child {
+    margin-top: 0;
+  }
+  /* Preview tooltip */
+  .session-card .preview-tooltip {
+    display: none;
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: calc(100% + 6px);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+    z-index: 10;
+    box-shadow: 0 4px 12px var(--shadow);
+    pointer-events: none;
+    max-height: 60px;
+    overflow: hidden;
+  }
+  .session-card:hover .preview-tooltip {
+    display: block;
+  }
+  /* Message count visual weight */
+  .msg-count-heavy {
+    font-weight: 700;
+    color: var(--text);
   }
   .session-card-body {
     flex: 1;
@@ -341,27 +403,76 @@ export function renderSessionList(
     emptyHtml = `<div class="empty-state">${emptyIcon}<div class="empty-title">${emptyTitle}</div><div class="empty-subtext">${emptySubtext}</div></div>`;
   }
 
+  // Group sessions by date section
+  function getDateSection(ts: number): string {
+    const now = new Date();
+    const date = new Date(ts);
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today.getTime() - 86400000);
+    const weekAgo = new Date(today.getTime() - 7 * 86400000);
+
+    if (date >= today) return 'Today';
+    if (date >= yesterday) return 'Yesterday';
+    if (date >= weekAgo) return 'This Week';
+    return 'Older';
+  }
+
+  function formatRelativeTime(ts: number): string {
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${String(mins)}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${String(hours)}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${String(days)}d ago`;
+    return formatTimestamp(ts);
+  }
+
+  const ACTIVE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+
   const sessionRows = sessions.length === 0
     ? emptyHtml
-    : sessions.map((s, i) => {
-        const link = `/c/${encodeURIComponent(s.threadTs)}/${encodeURIComponent(s.channelId)}`;
-        const date = formatTimestamp(s.updatedAt);
-        const starClass = s.isFavorited ? 'favorite-star active' : 'favorite-star';
-        const tagPills = (s.tags ?? []).map((t) =>
-          `<span class="tag">${escapeHtml(t)}</span>`
-        ).join('');
-        const sessionTitle = s.firstMessage ? escapeHtml(s.firstMessage) : `${escapeHtml(s.userId)} &middot; ${escapeHtml(s.channelId)}`;
-        return `<a href="${escapeHtml(link)}" class="session-card" data-index="${String(i)}">
-          <div class="session-card-body">
-            <div class="session-card-title"><span class="${starClass}" data-id="${String(s.id)}" tabindex="0" role="button" aria-label="Toggle favorite">&#9733;</span> ${sessionTitle}</div>
-            <div class="session-meta">${icon('clock', 14)} ${date}${tagPills ? ` ${tagPills}` : ''}</div>
-          </div>
-          <div class="session-stats">
-            <span class="session-stat">${icon('message-circle', 14)} ${String(s.messageCount)} msgs</span>
-            <span class="session-stat">${icon('wrench', 14)} ${String(s.toolCallCount)} tools</span>
-          </div>
-        </a>`;
-      }).join('\n');
+    : (() => {
+        let lastSection = '';
+        return sessions.map((s, i) => {
+          const link = `/c/${encodeURIComponent(s.threadTs)}/${encodeURIComponent(s.channelId)}`;
+          const relTime = formatRelativeTime(s.updatedAt);
+          const starClass = s.isFavorited ? 'favorite-star active' : 'favorite-star';
+          const tagPills = (s.tags ?? []).map((t) =>
+            `<span class="tag">${escapeHtml(t)}</span>`
+          ).join('');
+          const sessionTitle = s.firstMessage ? escapeHtml(s.firstMessage) : `${escapeHtml(s.userId)} &middot; ${escapeHtml(s.channelId)}`;
+          const isActive = Date.now() - s.updatedAt < ACTIVE_THRESHOLD;
+          const activeDot = isActive ? '<span class="active-dot"></span>' : '';
+          const activeClass = isActive ? ' is-active' : '';
+          const msgCountClass = s.messageCount >= 10 ? ' msg-count-heavy' : '';
+
+          // Preview tooltip: show truncated first message
+          const preview = s.firstMessage
+            ? `<div class="preview-tooltip">${escapeHtml(s.firstMessage.slice(0, 120))}${s.firstMessage.length > 120 ? '...' : ''}</div>`
+            : '';
+
+          // Date section header
+          const section = getDateSection(s.updatedAt);
+          const sectionHeader = section !== lastSection
+            ? `<div class="date-section">${escapeHtml(section)}</div>`
+            : '';
+          lastSection = section;
+
+          return `${sectionHeader}<a href="${escapeHtml(link)}" class="session-card${activeClass}" data-index="${String(i)}" data-updated="${String(s.updatedAt)}">
+            ${preview}
+            <div class="session-card-body">
+              <div class="session-card-title">${activeDot}<span class="${starClass}" data-id="${String(s.id)}" tabindex="0" role="button" aria-label="Toggle favorite">&#9733;</span> ${sessionTitle}</div>
+              <div class="session-meta">${icon('clock', 14)} <span class="relative-time" data-ts="${String(s.updatedAt)}">${relTime}</span>${tagPills ? ` ${tagPills}` : ''}</div>
+            </div>
+            <div class="session-stats">
+              <span class="session-stat${msgCountClass}">${icon('message-circle', 14)} ${String(s.messageCount)} msgs</span>
+              <span class="session-stat">${icon('wrench', 14)} ${String(s.toolCallCount)} tools</span>
+            </div>
+          </a>`;
+        }).join('\n');
+      })();
 
   const tagSidebar = allTags.length > 0
     ? `<div class="tag-sidebar">
@@ -432,10 +543,36 @@ export function renderSessionList(
     ${paginationHtml}
   </main>`;
 
+  const timeUpdateScript = `
+  <script>
+  (function() {
+    function formatRelative(ts) {
+      var diff = Date.now() - ts;
+      var mins = Math.floor(diff / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return mins + 'm ago';
+      var hours = Math.floor(mins / 60);
+      if (hours < 24) return hours + 'h ago';
+      var days = Math.floor(hours / 24);
+      if (days < 7) return days + 'd ago';
+      return null; // stop updating after a week
+    }
+    function updateTimes() {
+      document.querySelectorAll('.relative-time').forEach(function(el) {
+        var ts = parseInt(el.getAttribute('data-ts') || '0', 10);
+        if (!ts) return;
+        var text = formatRelative(ts);
+        if (text) el.textContent = text;
+      });
+    }
+    setInterval(updateTimes, 30000);
+  })();
+  </script>`;
+
   return wrapInShell({
     title,
     styles: sessionListStyles,
     body: bodyHtml,
-    scripts: starScript,
+    scripts: starScript + timeUpdateScript,
   });
 }
