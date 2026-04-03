@@ -2070,6 +2070,21 @@ describe('web templates', () => {
           expect(html).toContain('data-index="1"');
         });
 
+        it('session cards have data-conv-id for swipe gestures', () => {
+          const sessions = [makeSession47()];
+          const html = renderSessionList(sessions, basePagination47);
+          expect(html).toContain('data-conv-id="1"');
+        });
+
+        it('includes swipe gesture JS for mobile', () => {
+          const sessions = [makeSession47()];
+          const html = renderSessionList(sessions, basePagination47);
+          expect(html).toContain('touchstart');
+          expect(html).toContain('touchmove');
+          expect(html).toContain('touchend');
+          expect(html).toContain('touchcancel');
+        });
+
         it('star elements have tabindex and role=button for accessibility', () => {
           const sessions = [makeSession47()];
           const html = renderSessionList(sessions, basePagination47);
@@ -2171,6 +2186,46 @@ describe('web templates', () => {
           const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
           expect(html).toContain('.notif-entry.swiping');
           expect(html).toContain('.notif-entry.dismissed');
+        });
+
+        it('bottom nav bar CSS and HTML exist', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('.bottom-nav');
+          expect(html).toContain('.bottom-nav-item');
+          expect(html).toContain('bottom-nav');
+        });
+
+        it('bottom nav has active state based on currentPath', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>', currentPath: '/c' });
+          expect(html).toContain('bottom-nav-item active');
+        });
+
+        it('auto-hide nav CSS and JS exist', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('.nav-bar.nav-hidden');
+          expect(html).toContain('nav-hidden');
+        });
+
+        it('touch target minimum sizes exist for mobile', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('min-height: 44px');
+        });
+
+        it('fluid typography with clamp() exists', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('clamp(');
+        });
+
+        it('pull-to-refresh JS exists', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('pull-indicator');
+          expect(html).toContain('Pull to refresh');
+        });
+
+        it('swipe gesture CSS exists in base styles', () => {
+          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+          expect(html).toContain('.session-card.swiping');
+          expect(html).toContain('.swipe-action');
         });
 
         it('kb-focused class exists in styles for keyboard navigation', () => {

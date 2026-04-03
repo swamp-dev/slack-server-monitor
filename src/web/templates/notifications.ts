@@ -248,6 +248,7 @@ export function renderNotificationPage(
       styles: notificationPageStyles,
       body: bodyHtml,
       unreadCount,
+      currentPath: '/notifications',
     });
   }
 
@@ -402,5 +403,6 @@ export function renderNotificationPage(
     body: bodyHtml,
     scripts,
     unreadCount,
+    currentPath: '/notifications',
   });
 }

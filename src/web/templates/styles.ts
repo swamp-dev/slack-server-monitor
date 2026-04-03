@@ -1090,6 +1090,131 @@ export function getBaseStyles(): string {
     .session-card { padding: 12px; }
     .session-card h3 { font-size: 0.85rem; }
   }
+
+  /* ─── Bottom navigation bar (mobile) ─────────────────────── */
+  .bottom-nav {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    background: var(--nav-bg);
+    border-top: 1px solid var(--border);
+    padding: 6px 0;
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
+  }
+  @media (max-width: 640px) {
+    .bottom-nav {
+      display: flex;
+      justify-content: space-around;
+    }
+    /* Add bottom padding for fixed nav */
+    body { padding-bottom: 64px; }
+    footer { margin-bottom: 0; }
+  }
+  .bottom-nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 12px;
+    min-width: 64px;
+    min-height: 44px;
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    border-radius: 8px;
+    transition: color 0.15s;
+  }
+  .bottom-nav-item.active {
+    color: var(--accent);
+  }
+  .bottom-nav-item:hover {
+    color: var(--text);
+  }
+
+  /* ─── Auto-hide top nav on scroll (mobile) ───────────────── */
+  @media (max-width: 640px) {
+    .nav-bar {
+      transition: transform 0.25s ease;
+    }
+    .nav-bar.nav-hidden {
+      transform: translateY(-100%);
+    }
+  }
+
+  /* ─── Touch targets: minimum 44px ────────────────────────── */
+  @media (max-width: 640px) {
+    button, [type="submit"], .nav-link, .export-btn, .archive-btn,
+    .fork-btn, .copy-msg-btn, .show-more-btn, .tag, .notif-actions button {
+      min-height: 44px;
+      min-width: 44px;
+    }
+    .session-card { min-height: 44px; }
+    .notif-entry { min-height: 44px; }
+  }
+
+  /* ─── Fluid typography ───────────────────────────────────── */
+  h1 { font-size: clamp(1.25rem, 4vw, 1.75rem); }
+  h2 { font-size: clamp(1rem, 3vw, 1.5rem); }
+  .message-content { font-size: clamp(0.8125rem, 2.5vw, 0.9375rem); }
+  .session-meta { font-size: clamp(0.6875rem, 2vw, 0.8125rem); }
+
+  /* ─── Swipe gesture on session cards ─────────────────────── */
+  @media (max-width: 640px) {
+    .session-card { touch-action: pan-y; }
+  }
+  .session-card.swiping {
+    transition: none;
+  }
+  .session-card .swipe-action {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 10px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    pointer-events: none;
+  }
+  .session-card .swipe-action.swipe-fav {
+    right: 100%;
+    margin-right: 4px;
+    background: var(--yellow);
+    color: var(--bg);
+  }
+  .session-card .swipe-action.swipe-archive {
+    left: 100%;
+    margin-left: 4px;
+    background: var(--red);
+  }
+  .session-card.swiping .swipe-action {
+    opacity: 1;
+  }
+
+  /* ─── Pull-to-refresh indicator ──────────────────────────── */
+  .pull-indicator {
+    text-align: center;
+    padding: 12px;
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+    overflow: hidden;
+    max-height: 0;
+    transition: max-height 0.3s ease;
+  }
+  .pull-indicator.pulling {
+    max-height: 50px;
+  }
+  .pull-indicator.refreshing {
+    max-height: 50px;
+  }
   `;
 }
 

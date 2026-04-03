@@ -994,5 +994,6 @@ export function renderDashboard(
     body: bodyHtml + onboardingHtml,
     scripts: counterScript + healthRefreshScript + onboardingScript,
     unreadCount,
+    currentPath: '/',
   });
 }

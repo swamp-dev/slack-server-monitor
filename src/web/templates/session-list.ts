@@ -460,7 +460,7 @@ export function renderSessionList(
             : '';
           lastSection = section;
 
-          return `${sectionHeader}<a href="${escapeHtml(link)}" class="session-card${activeClass}" data-index="${String(i)}" data-updated="${String(s.updatedAt)}">
+          return `${sectionHeader}<a href="${escapeHtml(link)}" class="session-card${activeClass}" data-index="${String(i)}" data-updated="${String(s.updatedAt)}" data-conv-id="${String(s.id)}">
             ${preview}
             <div class="session-card-body">
               <div class="session-card-title">${activeDot}<span class="${starClass}" data-id="${String(s.id)}" tabindex="0" role="button" aria-label="Toggle favorite">&#9733;</span> ${sessionTitle}</div>
@@ -569,10 +569,81 @@ export function renderSessionList(
   })();
   </script>`;
 
+  const swipeScript = `
+  <script>
+  // Swipe gestures on session cards (mobile: right→favorite, left→archive)
+  (function() {
+    if (window.innerWidth > 640) return;
+    document.querySelectorAll('.session-card').forEach(function(card) {
+      var startX = 0;
+      var startY = 0;
+      var swiping = false;
+      var convId = card.getAttribute('data-conv-id');
+      if (!convId) return;
+
+      card.style.position = 'relative';
+      card.addEventListener('touchstart', function(e) {
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        swiping = false;
+      }, { passive: true });
+
+      card.addEventListener('touchmove', function(e) {
+        var dx = e.touches[0].clientX - startX;
+        var dy = e.touches[0].clientY - startY;
+        if (Math.abs(dx) > 15 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          swiping = true;
+          card.classList.add('swiping');
+          card.style.transform = 'translateX(' + dx + 'px)';
+        }
+      }, { passive: true });
+
+      card.addEventListener('touchend', function(e) {
+        card.classList.remove('swiping');
+        if (!swiping) { card.style.transform = ''; return; }
+        var dx = parseFloat(card.style.transform.replace('translateX(', '').replace('px)', '')) || 0;
+        card.style.transform = '';
+        swiping = false;
+
+        if (dx > 60) {
+          // Swipe right → favorite
+          e.preventDefault();
+          fetch('/c/' + convId + '/favorite', { method: 'POST', credentials: 'same-origin' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              if (typeof showToast === 'function') showToast(data.isFavorited ? 'Favorited' : 'Unfavorited');
+            });
+        } else if (dx < -60) {
+          // Swipe left → archive
+          e.preventDefault();
+          fetch('/c/' + convId + '/archive', { method: 'POST', credentials: 'same-origin' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              if (data.archived) {
+                card.style.transition = 'transform 0.3s ease, opacity 0.3s ease';
+                card.style.transform = 'translateX(-100%)';
+                card.style.opacity = '0';
+                setTimeout(function() { card.remove(); }, 300);
+                if (typeof showToast === 'function') showToast('Archived');
+              }
+            });
+        }
+      });
+
+      card.addEventListener('touchcancel', function() {
+        swiping = false;
+        card.classList.remove('swiping');
+        card.style.transform = '';
+      });
+    });
+  })();
+  </script>`;
+
   return wrapInShell({
     title,
     styles: sessionListStyles,
     body: bodyHtml,
-    scripts: starScript + timeUpdateScript,
+    scripts: starScript + timeUpdateScript + swipeScript,
+    currentPath: '/c',
   });
 }

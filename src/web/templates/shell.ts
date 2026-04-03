@@ -21,13 +21,15 @@ export interface ShellOptions {
   highlightJs?: boolean;
   /** Unread notification count for nav bell badge */
   unreadCount?: number;
+  /** Current URL path for bottom nav active state */
+  currentPath?: string;
 }
 
 /**
  * Wrap page content in the full HTML shell with nav, theme, fonts
  */
 export function wrapInShell(opts: ShellOptions): string {
-  const { title, styles: pageStyles, body, scripts = '', showNav = true, highlightJs = false, unreadCount = 0 } = opts;
+  const { title, styles: pageStyles, body, scripts = '', showNav = true, highlightJs = false, unreadCount = 0, currentPath = '' } = opts;
 
   const hljsLink = highlightJs
     ? `<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH" crossorigin="anonymous">`
@@ -85,7 +87,7 @@ export function wrapInShell(opts: ShellOptions): string {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23ff79c6' stroke-width='1.5'%3E%3Crect x='4' y='6' width='12' height='10' rx='2'/%3E%3Ccircle cx='7.5' cy='11' r='1.5'/%3E%3Ccircle cx='12.5' cy='11' r='1.5'/%3E%3Cpath d='M10 2v4M6 6V4M14 6V4'/%3E%3C/svg%3E">
   <link rel="manifest" href="/manifest.json">
@@ -118,6 +120,11 @@ export function wrapInShell(opts: ShellOptions): string {
       ${icon('robot', 14)} Powered by Claude
     </div>
   </footer>
+  ${showNav ? `<nav class="bottom-nav" id="bottom-nav" aria-label="App navigation">
+    <a href="/" class="bottom-nav-item${currentPath === '/' ? ' active' : ''}" aria-label="Dashboard">${icon('home', 20)}<span>Dashboard</span></a>
+    <a href="/c" class="bottom-nav-item${currentPath === '/c' ? ' active' : ''}" aria-label="Conversations">${icon('message-circle', 20)}<span>Chats</span></a>
+    <a href="/notifications" class="bottom-nav-item${currentPath === '/notifications' ? ' active' : ''}" aria-label="Notifications">${icon('bell', 20)}<span>Alerts</span></a>
+  </nav>` : ''}
   <div id="cmd-palette" class="cmd-palette" style="display:none" role="dialog" aria-label="Command palette" aria-modal="true">
     <div class="cmd-palette-backdrop"></div>
     <div class="cmd-palette-panel">
@@ -669,6 +676,66 @@ export function wrapInShell(opts: ShellOptions): string {
         return;
       }
       debounceTimer = setTimeout(function() { doSearch(q); }, 150);
+    });
+  })();
+  </script>
+  <script>
+  // Auto-hide top nav on scroll down, show on scroll up (mobile)
+  (function() {
+    var nav = document.querySelector('.nav-bar');
+    if (!nav || window.innerWidth > 640) return;
+    var lastY = window.scrollY;
+    var threshold = 10;
+    window.addEventListener('scroll', function() {
+      var y = window.scrollY;
+      if (y > lastY + threshold && y > 60) {
+        nav.classList.add('nav-hidden');
+      } else if (y < lastY - threshold) {
+        nav.classList.remove('nav-hidden');
+      }
+      lastY = y;
+    }, { passive: true });
+  })();
+  </script>
+  <script>
+  // Pull-to-refresh on dashboard and session list (mobile)
+  (function() {
+    if (window.innerWidth > 640) return;
+    var path = window.location.pathname;
+    if (path !== '/' && path !== '/c') return;
+    var indicator = document.createElement('div');
+    indicator.className = 'pull-indicator';
+    indicator.textContent = 'Pull to refresh';
+    var main = document.querySelector('main');
+    if (main && main.parentNode) main.parentNode.insertBefore(indicator, main);
+
+    var startY = 0;
+    var pulling = false;
+    document.addEventListener('touchstart', function(e) {
+      if (window.scrollY > 5) return;
+      startY = e.touches[0].clientY;
+      pulling = false;
+    }, { passive: true });
+    document.addEventListener('touchmove', function(e) {
+      if (window.scrollY > 5) return;
+      var dy = e.touches[0].clientY - startY;
+      if (dy > 30 && dy < 150) {
+        pulling = true;
+        indicator.classList.add('pulling');
+        indicator.textContent = dy > 80 ? 'Release to refresh' : 'Pull to refresh';
+      }
+    }, { passive: true });
+    document.addEventListener('touchend', function() {
+      if (!pulling) return;
+      pulling = false;
+      if (indicator.textContent === 'Release to refresh') {
+        indicator.classList.remove('pulling');
+        indicator.classList.add('refreshing');
+        indicator.textContent = 'Refreshing...';
+        window.location.reload();
+      } else {
+        indicator.classList.remove('pulling');
+      }
     });
   })();
   </script>
