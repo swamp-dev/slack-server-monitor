@@ -1,0 +1,51 @@
+{
+  "name": "feat(agentbox): plugin skeleton and database schema",
+  "description": "Create the `agentbox` plugin with init/destroy lifecycle, database tables, and slash command stub.",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "`plugins.local/agentbox.ts` loads without errors",
+      "description": "`plugins.local/agentbox.ts` loads without errors\n\nRelevant files:\n- `plugins.local/agentbox.ts` — plugin entry point (new)\n- `plugins.local/agentbox/schema.ts` — database schema setup (new)\n- `plugins.local/agentbox/config.ts` — env var config (new)\n- `tests/plugins/agentbox/skeleton.test.ts` — tests (new)",
+      "status": "pending",
+      "priority": 1
+    },
+    {
+      "id": "task-2",
+      "title": "Database tables created on init",
+      "description": "Database tables created on init:\n  - `plugin_agentbox_runs` — tracks each agentbox execution (issue_number, repo, status, branch, pr_url, started_at, finished_at, output_path, error)\n  - `plugin_agentbox_issue_links` — maps GitHub issue → Slack thread (issue_number, repo, thread_ts, channel_id, created_by, created_at)\n\nRelevant files:\n- `plugins.local/agentbox.ts` — plugin entry point (new)\n- `plugins.local/agentbox/schema.ts` — database schema setup (new)\n- `plugins.local/agentbox/config.ts` — env var config (new)\n- `tests/plugins/agentbox/skeleton.test.ts` — tests (new)",
+      "status": "pending",
+      "priority": 2,
+      "depends_on": ["task-1"]
+    },
+    {
+      "id": "task-3",
+      "title": "`/agentbox status` responds in Slack with \"no runs yet\" placeholder",
+      "description": "`/agentbox status` responds in Slack with \"no runs yet\" placeholder\n\nRelevant files:\n- `plugins.local/agentbox.ts` — plugin entry point (new)\n- `plugins.local/agentbox/schema.ts` — database schema setup (new)\n- `plugins.local/agentbox/config.ts` — env var config (new)\n- `tests/plugins/agentbox/skeleton.test.ts` — tests (new)",
+      "status": "pending",
+      "priority": 3,
+      "depends_on": ["task-2"]
+    },
+    {
+      "id": "task-4",
+      "title": "Plugin config reads env vars: `AGENTBOX_BINARY_PATH`, `AGENTBOX_WORK_DIR`, `AGENTBOX_DEFAULT_REPO`",
+      "description": "Plugin config reads env vars: `AGENTBOX_BINARY_PATH`, `AGENTBOX_WORK_DIR`, `AGENTBOX_DEFAULT_REPO`\n\nRelevant files:\n- `plugins.local/agentbox.ts` — plugin entry point (new)\n- `plugins.local/agentbox/schema.ts` — database schema setup (new)\n- `plugins.local/agentbox/config.ts` — env var config (new)\n- `tests/plugins/agentbox/skeleton.test.ts` — tests (new)",
+      "status": "pending",
+      "priority": 4,
+      "depends_on": ["task-3"]
+    },
+    {
+      "id": "task-5",
+      "title": "Unit tests for schema creation and config loading",
+      "description": "Unit tests for schema creation and config loading\n\nRelevant files:\n- `plugins.local/agentbox.ts` — plugin entry point (new)\n- `plugins.local/agentbox/schema.ts` — database schema setup (new)\n- `plugins.local/agentbox/config.ts` — env var config (new)\n- `tests/plugins/agentbox/skeleton.test.ts` — tests (new)",
+      "status": "pending",
+      "priority": 5,
+      "depends_on": ["task-4"]
+    }
+  ],
+  "metadata": {
+    "total_tasks": 5,
+    "completed": 0,
+    "in_progress": 0,
+    "pending": 5
+  }
+}
