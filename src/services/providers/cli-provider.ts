@@ -184,11 +184,15 @@ export class CliProvider implements ClaudeProvider {
       });
 
       // Check for tool calls in the response
-      const { text, toolCallRequests } = this.parseResponse(response);
+      const { text, toolCallRequests, failedParseCount } = this.parseResponse(response);
 
       if (toolCallRequests.length === 0) {
-        // No tool calls - this is the final response
-        const finalText = text || 'I apologize, but I was unable to generate a response.';
+        // If tool_call blocks were found but failed to parse, append a warning
+        let finalText = text || 'I apologize, but I was unable to generate a response.';
+        if (failedParseCount > 0) {
+          logger.error('Tool call blocks found but failed to parse', { failedParseCount, iteration });
+          finalText += `\n\n⚠️ _${String(failedParseCount)} tool call(s) failed to execute due to a parsing error. The action was not completed. Please try again or rephrase the request._`;
+        }
         options?.onProgress?.({ type: 'text', text: finalText });
         options?.onProgress?.({ type: 'done' });
         return {
@@ -354,20 +358,49 @@ ${JSON.stringify(tools, null, 2)}
   /**
    * Parse response for text and tool call requests
    */
-  private parseResponse(response: string): { text: string; toolCallRequests: ToolCallRequest[] } {
+  private parseResponse(response: string): { text: string; toolCallRequests: ToolCallRequest[]; failedParseCount: number } {
     const toolCallRequests: ToolCallRequest[] = [];
-
-    // Match tool_call code blocks
-    const toolCallPattern = /```tool_call\s*([\s\S]*?)```/g;
-    let match;
     let callIndex = 0;
+    let failedParseCount = 0;
+    let cleanedResponse = response;
 
-    while ((match = toolCallPattern.exec(response)) !== null) {
+    // Extract tool_call blocks by finding the JSON object via bracket matching.
+    // This avoids the regex non-greedy match issue where nested code fences
+    // (triple backticks inside the JSON body field) cause premature termination.
+    const marker = '```tool_call';
+    let searchFrom = 0;
+
+    let blockStart = cleanedResponse.indexOf(marker, searchFrom);
+    while (blockStart !== -1) {
+
+      // Find the opening brace of the JSON object
+      const jsonStart = cleanedResponse.indexOf('{', blockStart + marker.length);
+      if (jsonStart === -1) { searchFrom = blockStart + marker.length; continue; }
+
+      // Find the matching closing brace using bracket counting
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+      let jsonEnd = -1;
+
+      for (let i = jsonStart; i < cleanedResponse.length; i++) {
+        const ch = cleanedResponse[i];
+        if (escaped) { escaped = false; continue; }
+        if (ch === '\\' && inString) { escaped = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === '{') depth++;
+        if (ch === '}') {
+          depth--;
+          if (depth === 0) { jsonEnd = i; break; }
+        }
+      }
+
+      if (jsonEnd === -1) { searchFrom = blockStart + marker.length; continue; }
+
+      const jsonStr = cleanedResponse.substring(jsonStart, jsonEnd + 1);
+
       try {
-        const captured = match[1];
-        if (!captured) continue;
-
-        const jsonStr = captured.trim();
         const parsed = JSON.parse(jsonStr) as { tool: string; input: Record<string, unknown> };
 
         if (parsed.tool && typeof parsed.tool === 'string') {
@@ -378,17 +411,24 @@ ${JSON.stringify(tools, null, 2)}
             input: parsed.input,
           });
         }
+
+        // Remove the entire tool_call block (from marker to closing ```)
+        const closingBackticks = cleanedResponse.indexOf('```', jsonEnd + 1);
+        const blockEnd = closingBackticks !== -1 ? closingBackticks + 3 : jsonEnd + 1;
+        cleanedResponse = cleanedResponse.substring(0, blockStart) + cleanedResponse.substring(blockEnd);
+        // Don't advance searchFrom — the splice shifted content backward
       } catch (e) {
-        logger.warn('Failed to parse tool call JSON', {
+        failedParseCount++;
+        logger.warn('Failed to parse tool call JSON from bracket-matched block', {
           error: e instanceof Error ? e.message : 'Unknown error',
+          jsonLength: jsonStr.length,
         });
+        searchFrom = blockStart + marker.length;
       }
+      blockStart = cleanedResponse.indexOf(marker, searchFrom);
     }
 
-    // Remove tool_call blocks from response text
-    const text = response.replace(toolCallPattern, '').trim();
-
-    return { text, toolCallRequests };
+    return { text: cleanedResponse.trim(), toolCallRequests, failedParseCount };
   }
 
   /**

@@ -74,7 +74,7 @@ describe('CliProvider', () => {
   describe('parseResponse', () => {
     function parseResponse(response: string) {
       const provider = new CliProvider(config);
-      const parse = (provider as unknown as { parseResponse: (r: string) => { text: string; toolCallRequests: unknown[] } }).parseResponse.bind(provider);
+      const parse = (provider as unknown as { parseResponse: (r: string) => { text: string; toolCallRequests: unknown[]; failedParseCount: number } }).parseResponse.bind(provider);
       return parse(response);
     }
 
@@ -224,6 +224,65 @@ But I continue anyway.`;
 
       const result = parseResponse(response);
       expect(result.toolCallRequests).toHaveLength(0);
+    });
+
+    it('should handle nested code fences in tool call body', () => {
+      const response = `\`\`\`tool_call
+{"tool": "create_github_issue", "input": {"title": "Test issue", "body": "## Fix\\n\\n\`\`\`bash\\nsudo ufw reload\\n\`\`\`\\n\\nDone."}}
+\`\`\``;
+
+      const result = parseResponse(response);
+      expect(result.toolCallRequests).toHaveLength(1);
+      expect(result.toolCallRequests[0].name).toBe('create_github_issue');
+      const input = result.toolCallRequests[0].input as { body: string };
+      expect(input.body).toContain('sudo ufw reload');
+    });
+
+    it('should handle multi-line body with multiple code fences', () => {
+      const body = '## Summary\\n\\n```python\\nprint(1)\\n```\\n\\n```yaml\\nkey: value\\n```';
+      const response = `\`\`\`tool_call
+{"tool": "create_github_issue", "input": {"title": "Multi fence", "body": "${body}"}}
+\`\`\``;
+
+      const result = parseResponse(response);
+      expect(result.toolCallRequests).toHaveLength(1);
+      expect(result.toolCallRequests[0].name).toBe('create_github_issue');
+    });
+
+    it('should report failedParseCount when tool_call block has invalid JSON', () => {
+      const response = `\`\`\`tool_call
+{invalid json here}
+\`\`\``;
+
+      const result = parseResponse(response);
+      expect(result.toolCallRequests).toHaveLength(0);
+      expect(result.failedParseCount).toBe(1);
+    });
+
+    it('should report failedParseCount of 0 for valid tool calls', () => {
+      const response = `\`\`\`tool_call
+{"tool": "get_container_status", "input": {}}
+\`\`\``;
+
+      const result = parseResponse(response);
+      expect(result.toolCallRequests).toHaveLength(1);
+      expect(result.failedParseCount).toBe(0);
+    });
+
+    it('should strip tool call block from text even with nested fences', () => {
+      const response = `Here is my analysis.
+
+\`\`\`tool_call
+{"tool": "create_github_issue", "input": {"title": "Test", "body": "Fix:\\n\`\`\`\\ncode\\n\`\`\`"}}
+\`\`\`
+
+Done creating the issue.`;
+
+      const result = parseResponse(response);
+      expect(result.toolCallRequests).toHaveLength(1);
+      expect(result.text).toContain('Here is my analysis');
+      expect(result.text).toContain('Done creating the issue');
+      expect(result.text).not.toContain('tool_call');
     });
   });
 
