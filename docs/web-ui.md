@@ -115,3 +115,37 @@ All endpoints require session authentication.
 - Keep `WEB_AUTH_TOKEN` secret -- it is both the signing key and the emergency admin credential
 
 See [Security](security.md#web-ui-security) for the full model.
+
+## Screenshots
+
+Automated screenshots of all key pages can be generated for documentation and UI review.
+
+### Generate Screenshots
+
+```bash
+npm run screenshots              # Capture all pages
+npx tsx scripts/take-screenshots.ts dashboard   # Capture one page
+```
+
+This starts a standalone server with seed data (no Slack connection needed), launches headless Chromium via Playwright, and captures each page in both themes and viewports.
+
+### What Gets Captured
+
+| Page | Desktop | Mobile |
+|------|---------|--------|
+| Dashboard | Health cards, stats, quick links, widgets | Responsive layout, bottom nav |
+| Conversations | Session list, tags, search | Hamburger menu |
+| Conversation detail | Messages, tool calls, controls | Scrollable thread |
+| Notifications | All levels, read/unread states | Compact cards |
+| Login | Auth form | Centered form |
+
+Each page is captured in **Dracula** (dark) and **light** themes, at **desktop** (1280x720) and **mobile** (375x812) viewports — **20 screenshots** total.
+
+### Output
+
+Screenshots are saved to `screenshots/` (gitignored). Naming convention:
+
+```
+{page}-{theme}-{viewport}.png
+# e.g., dashboard-dracula-desktop.png
+```

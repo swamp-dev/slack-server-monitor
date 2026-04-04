@@ -149,7 +149,17 @@ npm test                # Run tests
 npm run typecheck       # Type checking
 npm run lint            # Linting
 npm run build           # Production build
+npm run screenshots     # Capture web UI screenshots (Playwright)
 ```
+
+### UI Development Workflow
+
+When modifying web templates (`src/web/templates/`), use screenshots to verify changes:
+
+1. Make template changes
+2. Run `npm run screenshots` (or target a single page: `npx tsx scripts/take-screenshots.ts dashboard`)
+3. View the screenshots in `screenshots/` to verify both themes and viewports look correct
+4. Iterate as needed
 
 ## Testing Conventions
 

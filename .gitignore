@@ -37,4 +37,7 @@ Thumbs.db
 data/
 *.db
 
+# Screenshots (generated via npm run screenshots)
+screenshots/
+
 # Local plugins (personal/untracked)
