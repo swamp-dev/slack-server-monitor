@@ -105,17 +105,18 @@ async function withTimeout<T>(
  * Discover plugin files in the plugins.local directory
  * @returns Array of absolute file paths
  */
-export async function discoverPlugins(): Promise<string[]> {
-  if (!existsSync(PLUGINS_DIR)) {
+export async function discoverPlugins(dir?: string): Promise<string[]> {
+  const pluginsDir = dir ?? PLUGINS_DIR;
+  if (!existsSync(pluginsDir)) {
     logger.debug('No plugins.local directory found, skipping plugin discovery');
     return [];
   }
 
   try {
-    const entries = await readdir(PLUGINS_DIR, { withFileTypes: true });
+    const entries = await readdir(pluginsDir, { withFileTypes: true });
     const pluginFiles = entries
       .filter((entry) => entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.js')) && !entry.name.endsWith('.test.ts') && !entry.name.endsWith('.test.js'))
-      .map((entry) => join(PLUGINS_DIR, entry.name));
+      .map((entry) => join(pluginsDir, entry.name));
 
     logger.debug('Discovered plugin files', { count: pluginFiles.length, files: pluginFiles });
     return pluginFiles;
@@ -178,8 +179,8 @@ async function loadPlugin(filePath: string): Promise<Plugin | null> {
  *
  * @param app - Slack Bolt app instance
  */
-export async function registerPlugins(app: App): Promise<void> {
-  const pluginFiles = await discoverPlugins();
+export async function registerPlugins(app: App, pluginsDir?: string): Promise<void> {
+  const pluginFiles = await discoverPlugins(pluginsDir);
 
   if (pluginFiles.length === 0) {
     logger.debug('No plugins to register');

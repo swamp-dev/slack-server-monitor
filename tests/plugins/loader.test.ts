@@ -31,7 +31,7 @@ const { discoverPlugins, getPluginTools, destroyPlugins, getLoadedPlugins, regis
   await import('../../src/plugins/loader.js');
 const { clearRegisteredCommands } = await import('../../src/plugins/plugin-app.js');
 
-const TEST_PLUGINS_DIR = resolve(process.cwd(), 'plugins.local');
+const TEST_PLUGINS_DIR = resolve(process.cwd(), '.plugins-test-tmp');
 
 // Helper to create a valid plugin file
 function createValidPluginContent(
@@ -108,7 +108,7 @@ describe('plugin loader', () => {
 
   describe('discoverPlugins', () => {
     it('should return empty array when plugins.local does not exist', async () => {
-      const plugins = await discoverPlugins();
+      const plugins = await discoverPlugins(TEST_PLUGINS_DIR);
       expect(plugins).toEqual([]);
     });
 
@@ -116,7 +116,7 @@ describe('plugin loader', () => {
       await mkdir(TEST_PLUGINS_DIR);
       await writeFile(join(TEST_PLUGINS_DIR, 'test.ts'), 'export default {}');
 
-      const plugins = await discoverPlugins();
+      const plugins = await discoverPlugins(TEST_PLUGINS_DIR);
       expect(plugins).toHaveLength(1);
       expect(plugins[0]).toContain('test.ts');
     });
@@ -125,7 +125,7 @@ describe('plugin loader', () => {
       await mkdir(TEST_PLUGINS_DIR);
       await writeFile(join(TEST_PLUGINS_DIR, 'test.js'), 'export default {}');
 
-      const plugins = await discoverPlugins();
+      const plugins = await discoverPlugins(TEST_PLUGINS_DIR);
       expect(plugins).toHaveLength(1);
       expect(plugins[0]).toContain('test.js');
     });
@@ -135,7 +135,7 @@ describe('plugin loader', () => {
       await writeFile(join(TEST_PLUGINS_DIR, 'readme.md'), '# Readme');
       await writeFile(join(TEST_PLUGINS_DIR, 'config.json'), '{}');
 
-      const plugins = await discoverPlugins();
+      const plugins = await discoverPlugins(TEST_PLUGINS_DIR);
       expect(plugins).toEqual([]);
     });
 
@@ -145,7 +145,7 @@ describe('plugin loader', () => {
       await writeFile(join(TEST_PLUGINS_DIR, 'my-plugin.test.ts'), 'test("works", () => {})');
       await writeFile(join(TEST_PLUGINS_DIR, 'helper.test.js'), 'test("works", () => {})');
 
-      const plugins = await discoverPlugins();
+      const plugins = await discoverPlugins(TEST_PLUGINS_DIR);
       expect(plugins).toHaveLength(1);
       expect(plugins[0]).toContain('my-plugin.ts');
       expect(plugins[0]).not.toContain('.test.');
@@ -156,7 +156,7 @@ describe('plugin loader', () => {
       await mkdir(join(TEST_PLUGINS_DIR, 'subdir'));
       await writeFile(join(TEST_PLUGINS_DIR, 'subdir', 'test.ts'), 'export default {}');
 
-      const plugins = await discoverPlugins();
+      const plugins = await discoverPlugins(TEST_PLUGINS_DIR);
       expect(plugins).toEqual([]);
     });
   });
@@ -189,7 +189,7 @@ describe('plugin loader', () => {
         createValidPluginContent('toolplugin', { toolName: 'my_custom_tool' })
       );
 
-      await registerPlugins(mockApp);
+      await registerPlugins(mockApp, TEST_PLUGINS_DIR);
 
       const tools = getPluginTools();
       expect(tools).toHaveLength(1);
@@ -203,7 +203,7 @@ describe('plugin loader', () => {
         createValidPluginContent('toolplugin', { toolName: 'my_custom_tool' })
       );
 
-      await registerPlugins(mockApp);
+      await registerPlugins(mockApp, TEST_PLUGINS_DIR);
 
       const tools = getPluginTools();
       expect(tools[0].spec.name).toBe('my_custom_tool');
@@ -230,7 +230,7 @@ describe('plugin loader', () => {
         };`
       );
 
-      await registerPlugins(mockApp);
+      await registerPlugins(mockApp, TEST_PLUGINS_DIR);
 
       // Plugin should not have loaded
       expect(getLoadedPlugins()).toHaveLength(0);
@@ -254,7 +254,7 @@ describe('plugin loader', () => {
         };`
       );
 
-      await registerPlugins(mockApp);
+      await registerPlugins(mockApp, TEST_PLUGINS_DIR);
 
       expect(getLoadedPlugins()).toHaveLength(0);
     });
@@ -272,7 +272,7 @@ describe('plugin loader', () => {
         })
       );
 
-      await registerPlugins(mockApp);
+      await registerPlugins(mockApp, TEST_PLUGINS_DIR);
 
       expect(getLoadedPlugins()).toHaveLength(0);
       expect(getPluginTools()).toHaveLength(0);
@@ -293,7 +293,7 @@ describe('plugin loader', () => {
         createValidPluginContent('bad', { hasInit: true, throwInInit: true })
       );
 
-      await registerPlugins(mockApp);
+      await registerPlugins(mockApp, TEST_PLUGINS_DIR);
 
       const loaded = getLoadedPlugins();
       expect(loaded).toHaveLength(1);
@@ -314,7 +314,7 @@ describe('plugin loader', () => {
         })
       );
 
-      await registerPlugins(mockApp);
+      await registerPlugins(mockApp, TEST_PLUGINS_DIR);
 
       // Plugin should not have loaded due to timeout
       expect(getLoadedPlugins()).toHaveLength(0);
