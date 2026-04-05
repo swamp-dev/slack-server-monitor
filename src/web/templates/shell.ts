@@ -3,8 +3,7 @@
  */
 
 import { escapeHtml } from './utils.js';
-import { getThemeStyles } from './theme.js';
-import { getBaseStyles, getAnimationStyles } from './styles.js';
+import { getStaticCssHash } from './styles.js';
 import { icon } from './icons.js';
 import { getKeyboardShortcutScript, getKeyboardHelpOverlay } from './keyboard.js';
 import { renderNotificationBell, renderNotificationDropdown } from './notifications.js';
@@ -110,7 +109,8 @@ export function wrapInShell(opts: ShellOptions): string {
       } catch(e) {}
     })();
   </script>
-  <style>${getThemeStyles()}${getBaseStyles()}${getAnimationStyles()}${pageStyles}</style>
+  <link rel="stylesheet" href="/static/styles.css?v=${getStaticCssHash()}">
+  ${pageStyles ? `<style>${pageStyles}</style>` : ''}
 </head>
 <body>
   ${navHtml}

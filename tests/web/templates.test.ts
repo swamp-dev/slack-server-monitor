@@ -12,6 +12,7 @@ import {
   getThemeStyles,
   wrapInShell,
 } from '../../src/web/templates/index.js';
+import { getStaticCss } from '../../src/web/templates/styles.js';
 import type { ConversationMessage, ToolCallLog, SessionSummary, SessionStats, TagInfo, PaginationInfo } from '../../src/services/conversation-store.js';
 
 describe('web templates', () => {
@@ -1641,7 +1642,9 @@ describe('web templates', () => {
       it('uses system font stack without external font dependencies', () => {
         const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
         expect(html).not.toContain('fonts.googleapis.com');
-        expect(html).toContain('-apple-system');
+        // Font stack is now in the static CSS bundle, not inlined in HTML
+        const css = getStaticCss();
+        expect(css).toContain('-apple-system');
       });
 
       it('includes FOWT prevention script', () => {
@@ -2113,22 +2116,22 @@ describe('web templates', () => {
 
       describe('skeleton loading', () => {
         it('skeleton CSS classes exist in base styles', () => {
-          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
-          expect(html).toContain('.skeleton');
-          expect(html).toContain('skeleton-shimmer');
-          expect(html).toContain('.skeleton-card');
-          expect(html).toContain('.skeleton-line');
+          const css = getStaticCss();
+          expect(css).toContain('.skeleton');
+          expect(css).toContain('skeleton-shimmer');
+          expect(css).toContain('.skeleton-card');
+          expect(css).toContain('.skeleton-line');
         });
 
         it('page-specific skeleton CSS classes exist in base styles', () => {
-          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
-          expect(html).toContain('.skeleton-stat');
-          expect(html).toContain('.skeleton-health');
-          expect(html).toContain('.skeleton-widget');
-          expect(html).toContain('.skeleton-session');
-          expect(html).toContain('.skeleton-message');
-          expect(html).toContain('.skeleton-message.short');
-          expect(html).toContain('.skeleton-message.tall');
+          const css = getStaticCss();
+          expect(css).toContain('.skeleton-stat');
+          expect(css).toContain('.skeleton-health');
+          expect(css).toContain('.skeleton-widget');
+          expect(css).toContain('.skeleton-session');
+          expect(css).toContain('.skeleton-message');
+          expect(css).toContain('.skeleton-message.short');
+          expect(css).toContain('.skeleton-message.tall');
         });
 
         it('shell script contains URL-aware skeleton overlay', () => {
@@ -2150,9 +2153,9 @@ describe('web templates', () => {
         });
 
         it('nav bar has view-transition-name for stable transitions', () => {
-          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
-          expect(html).toContain('view-transition-name: nav');
-          expect(html).toContain('::view-transition-group(nav)');
+          const css = getStaticCss();
+          expect(css).toContain('view-transition-name: nav');
+          expect(css).toContain('::view-transition-group(nav)');
         });
 
         it('shell includes favicon badge logic', () => {
@@ -2176,22 +2179,23 @@ describe('web templates', () => {
         });
 
         it('notification prefs CSS exists in base styles', () => {
-          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
-          expect(html).toContain('.notif-prefs');
-          expect(html).toContain('.notif-pref-toggle');
-          expect(html).toContain('.notif-group-count');
+          const css = getStaticCss();
+          expect(css).toContain('.notif-prefs');
+          expect(css).toContain('.notif-pref-toggle');
+          expect(css).toContain('.notif-group-count');
         });
 
         it('swipe-to-dismiss CSS exists in base styles', () => {
-          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
-          expect(html).toContain('.notif-entry.swiping');
-          expect(html).toContain('.notif-entry.dismissed');
+          const css = getStaticCss();
+          expect(css).toContain('.notif-entry.swiping');
+          expect(css).toContain('.notif-entry.dismissed');
         });
 
         it('bottom nav bar CSS and HTML exist', () => {
           const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
-          expect(html).toContain('.bottom-nav');
-          expect(html).toContain('.bottom-nav-item');
+          const css = getStaticCss();
+          expect(css).toContain('.bottom-nav');
+          expect(css).toContain('.bottom-nav-item');
           expect(html).toContain('bottom-nav');
         });
 
@@ -2202,18 +2206,19 @@ describe('web templates', () => {
 
         it('auto-hide nav CSS and JS exist', () => {
           const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
-          expect(html).toContain('.nav-bar.nav-hidden');
+          const css = getStaticCss();
+          expect(css).toContain('.nav-bar.nav-hidden');
           expect(html).toContain('nav-hidden');
         });
 
         it('touch target minimum sizes exist for mobile', () => {
-          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
-          expect(html).toContain('min-height: 44px');
+          const css = getStaticCss();
+          expect(css).toContain('min-height: 44px');
         });
 
         it('fluid typography with clamp() exists', () => {
-          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
-          expect(html).toContain('clamp(');
+          const css = getStaticCss();
+          expect(css).toContain('clamp(');
         });
 
         it('pull-to-refresh JS exists', () => {
@@ -2223,15 +2228,15 @@ describe('web templates', () => {
         });
 
         it('swipe gesture CSS exists in base styles', () => {
-          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
-          expect(html).toContain('.session-card.swiping');
-          expect(html).toContain('.swipe-action');
+          const css = getStaticCss();
+          expect(css).toContain('.session-card.swiping');
+          expect(css).toContain('.swipe-action');
         });
 
         it('kb-focused class exists in styles for keyboard navigation', () => {
-          const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
-          expect(html).toContain('.session-card.kb-focused');
-          expect(html).toContain('outline');
+          const css = getStaticCss();
+          expect(css).toContain('.session-card.kb-focused');
+          expect(css).toContain('outline');
         });
 
         it('continue form uses SSE streaming during processing', () => {

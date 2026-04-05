@@ -23,6 +23,7 @@ import { getEventBus, resetEventBus } from '../services/event-bus.js';
 import { logger } from '../utils/logger.js';
 import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError, renderNotificationPage } from './templates/index.js';
 import { formatMarkdown } from './templates/utils.js';
+import { getStaticCss } from './templates/styles.js';
 import { getPluginWidgets } from '../plugins/loader.js';
 import { getPluginExpressRouter } from './plugin-router.js';
 import { getNotificationStore, closeNotificationStore } from '../services/notification-store.js';
@@ -170,6 +171,13 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         },
       ],
     });
+  });
+
+  // Static CSS bundle (no auth, aggressively cached)
+  app.get('/static/styles.css', (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'text/css; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(getStaticCss());
   });
 
   // Login page (no auth required)

@@ -2,6 +2,27 @@
  * Base CSS styles and animation styles for all pages
  */
 
+import { createHash } from 'node:crypto';
+import { getThemeStyles } from './theme.js';
+
+/** Combined CSS bundle for the static /static/styles.css endpoint. */
+let staticCssCache: string | null = null;
+let staticCssHash: string | null = null;
+
+export function getStaticCss(): string {
+  if (!staticCssCache) {
+    staticCssCache = getThemeStyles() + getBaseStyles() + getAnimationStyles();
+    staticCssHash = createHash('sha256').update(staticCssCache).digest('hex').slice(0, 8);
+  }
+  return staticCssCache;
+}
+
+/** Short content hash of the CSS bundle for cache-busting URLs. */
+export function getStaticCssHash(): string {
+  getStaticCss(); // ensure cache is populated
+  return staticCssHash ?? '';
+}
+
 /**
  * Base CSS styles for all pages (replaces old `styles` constant)
  */
