@@ -1,5 +1,5 @@
 /**
- * Hue bridge HTTP client with retry and connection reuse.
+ * Hue bridge HTTP client with retry, connection reuse, and response caching.
  */
 
 import https from 'node:https';
@@ -8,6 +8,7 @@ import {
   HueBridgeUnreachableError,
   HueNotConfiguredError,
 } from './types.js';
+import { HueResponseCache } from './response-cache.js';
 import type {
   HueResponse,
   HueLight,
@@ -77,6 +78,43 @@ export function isTransientError(err: unknown): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// =============================================================================
+// Response Cache
+// =============================================================================
+
+const responseCache = new HueResponseCache();
+
+/** TTL for sensor endpoints (motion, temperature, light_level). */
+const SENSOR_CACHE_TTL_MS = 10_000;
+
+/** TTL for all other GET endpoints (lights, rooms, scenes, etc.). */
+const RESOURCE_CACHE_TTL_MS = 30_000;
+
+const SENSOR_PREFIXES = ['/motion', '/temperature', '/light_level'];
+
+function getCacheTtl(path: string): number {
+  for (const prefix of SENSOR_PREFIXES) {
+    if (path === prefix || path.startsWith(prefix + '/')) {
+      return SENSOR_CACHE_TTL_MS;
+    }
+  }
+  return RESOURCE_CACHE_TTL_MS;
+}
+
+/**
+ * Extract the base resource type from a path (e.g., "/light/abc" → "/light").
+ * Used to invalidate list caches when a specific resource is modified.
+ */
+function getResourcePrefix(path: string): string {
+  const secondSlash = path.indexOf('/', 1);
+  return secondSlash === -1 ? path : path.slice(0, secondSlash);
+}
+
+/** Expose the cache for testing. */
+export function getResponseCache(): HueResponseCache {
+  return responseCache;
 }
 
 // =============================================================================
@@ -151,11 +189,28 @@ export async function hueRequest<T>(
   path: string,
   body?: unknown,
 ): Promise<HueResponse<T>> {
+  // Check cache for GET requests
+  if (method === 'GET') {
+    const cached = responseCache.get(path) as HueResponse<T> | undefined;
+    if (cached) return cached;
+  }
+
   let lastError: unknown;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      return await hueRequestOnce<T>(method, path, body);
+      const result = await hueRequestOnce<T>(method, path, body);
+
+      if (method === 'GET') {
+        // Cache successful GET responses
+        responseCache.set(path, result, getCacheTtl(path));
+      } else {
+        // Write operations invalidate the resource's list cache and the specific path
+        const prefix = getResourcePrefix(path);
+        responseCache.invalidateByPrefix(prefix);
+      }
+
+      return result;
     } catch (err) {
       lastError = err;
       if (!isTransientError(err) || attempt === MAX_RETRIES - 1) {
