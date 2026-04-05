@@ -233,6 +233,16 @@ export class ConversationStore {
       this.db.exec('ALTER TABLE conversations ADD COLUMN context_status TEXT');
     }
 
+    // Migrate: add message_count for fast aggregate stats (avoids json_array_length scans).
+    // SQLite allows NOT NULL + DEFAULT on ALTER TABLE ADD COLUMN.
+    // The backfill runs unconditionally to handle the case where the column was added
+    // but the process crashed before the UPDATE completed.
+    if (!convColumnNames.has('message_count')) {
+      this.db.exec('ALTER TABLE conversations ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0');
+    }
+    // Idempotent backfill: sets message_count for any rows still at default 0
+    this.db.exec('UPDATE conversations SET message_count = json_array_length(messages) WHERE message_count = 0 AND json_array_length(messages) > 0');
+
     // Migrate: add parent_conversation_id and branch_point_index for conversation branching
     if (!convColumnNames.has('parent_conversation_id')) {
       this.db.exec('ALTER TABLE conversations ADD COLUMN parent_conversation_id INTEGER REFERENCES conversations(id)');
@@ -350,10 +360,10 @@ export class ConversationStore {
 
     const result = this.db
       .prepare(`
-        INSERT INTO conversations (thread_ts, channel_id, user_id, messages, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO conversations (thread_ts, channel_id, user_id, messages, created_at, updated_at, message_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `)
-      .run(threadTs, channelId, userId, messagesJson, now, now);
+      .run(threadTs, channelId, userId, messagesJson, now, now, messages.length);
 
     const id = result.lastInsertRowid as number;
 
@@ -387,8 +397,8 @@ export class ConversationStore {
 
     this.db.transaction(() => {
       this.db
-        .prepare('UPDATE conversations SET messages = ?, updated_at = ? WHERE id = ?')
-        .run(messagesJson, now, id);
+        .prepare('UPDATE conversations SET messages = ?, updated_at = ?, message_count = ? WHERE id = ?')
+        .run(messagesJson, now, messages.length, id);
       this.db.prepare("INSERT INTO conversations_fts(conversations_fts, rowid, messages_text) VALUES('delete', ?, '')").run(id);
       this.db.prepare('INSERT INTO conversations_fts(rowid, messages_text) VALUES (?, ?)').run(id, text);
     })();
@@ -493,10 +503,10 @@ export class ConversationStore {
     const { id } = this.db.transaction(() => {
       const result = this.db
         .prepare(`
-          INSERT INTO conversations (thread_ts, channel_id, user_id, messages, created_at, updated_at, parent_conversation_id, branch_point_index)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO conversations (thread_ts, channel_id, user_id, messages, created_at, updated_at, parent_conversation_id, branch_point_index, message_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
-        .run(branchTs, parent.channelId, userId, messagesJson, now, now, parentId, branchPointIndex);
+        .run(branchTs, parent.channelId, userId, messagesJson, now, now, parentId, branchPointIndex, branchedMessages.length);
 
       const insertedId = result.lastInsertRowid as number;
 
@@ -662,7 +672,7 @@ export class ConversationStore {
       .prepare(`
         SELECT
           c.id, c.thread_ts, c.channel_id, c.user_id,
-          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at,
+          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at, c.message_count,
           COUNT(tc.id) as tool_call_count
         FROM conversations c
         LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
@@ -682,6 +692,7 @@ export class ConversationStore {
         channel_id: string;
         user_id: string;
         messages: string;
+        message_count: number;
         created_at: number;
         updated_at: number;
         archived_at: number | null;
@@ -716,7 +727,7 @@ export class ConversationStore {
       .prepare(`
         SELECT
           c.id, c.thread_ts, c.channel_id, c.user_id,
-          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at,
+          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at, c.message_count,
           COUNT(tc.id) as tool_call_count
         FROM conversations c
         LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
@@ -731,6 +742,7 @@ export class ConversationStore {
         channel_id: string;
         user_id: string;
         messages: string;
+        message_count: number;
         created_at: number;
         updated_at: number;
         archived_at: number | null;
@@ -797,6 +809,7 @@ export class ConversationStore {
       channel_id: string;
       user_id: string;
       messages: string;
+      message_count: number;
       created_at: number;
       updated_at: number;
       archived_at: number | null;
@@ -818,7 +831,7 @@ export class ConversationStore {
       threadTs: row.thread_ts,
       channelId: row.channel_id,
       userId: row.user_id,
-      messageCount: messages.length,
+      messageCount: row.message_count,
       toolCallCount: row.tool_call_count,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -857,10 +870,10 @@ export class ConversationStore {
         active_sessions: number;
       };
 
-    // Get total messages using SQLite's json_array_length (avoids fetching full JSON blobs)
+    // Get total messages using denormalized message_count column (avoids json_array_length scans)
     const messageStats = this.db
       .prepare(`
-        SELECT COALESCE(SUM(json_array_length(messages)), 0) as total_messages
+        SELECT COALESCE(SUM(message_count), 0) as total_messages
         FROM conversations
         WHERE updated_at > ? AND archived_at IS NULL
       `)
@@ -1001,7 +1014,7 @@ export class ConversationStore {
       .prepare(`
         SELECT
           c.id, c.thread_ts, c.channel_id, c.user_id,
-          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at,
+          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at, c.message_count,
           COUNT(tc.id) as tool_call_count
         FROM conversations c
         INNER JOIN conversations_fts fts ON fts.rowid = c.id
@@ -1019,6 +1032,7 @@ export class ConversationStore {
         channel_id: string;
         user_id: string;
         messages: string;
+        message_count: number;
         created_at: number;
         updated_at: number;
         archived_at: number | null;
@@ -1111,7 +1125,7 @@ export class ConversationStore {
       .prepare(`
         SELECT
           c.id, c.thread_ts, c.channel_id, c.user_id,
-          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at,
+          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at, c.message_count,
           COUNT(tc.id) as tool_call_count
         FROM conversations c
         INNER JOIN conversation_tags ct ON ct.conversation_id = c.id
@@ -1128,6 +1142,7 @@ export class ConversationStore {
         channel_id: string;
         user_id: string;
         messages: string;
+        message_count: number;
         created_at: number;
         updated_at: number;
         archived_at: number | null;
@@ -1195,7 +1210,7 @@ export class ConversationStore {
       .prepare(`
         SELECT
           c.id, c.thread_ts, c.channel_id, c.user_id,
-          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at,
+          c.messages, c.created_at, c.updated_at, c.archived_at, c.favorited_at, c.message_count,
           COUNT(tc.id) as tool_call_count
         FROM conversations c
         LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
@@ -1211,6 +1226,7 @@ export class ConversationStore {
         channel_id: string;
         user_id: string;
         messages: string;
+        message_count: number;
         created_at: number;
         updated_at: number;
         archived_at: number | null;
