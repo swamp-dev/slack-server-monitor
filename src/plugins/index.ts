@@ -37,6 +37,7 @@ export type {
   PluginHelpEntry,
   PluginNotifyOptions,
   DashboardWidget,
+  PluginScreenshotPage,
 } from './types.js';
 export { isValidPlugin } from './types.js';
 

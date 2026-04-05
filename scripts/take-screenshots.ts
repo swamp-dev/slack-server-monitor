@@ -13,7 +13,7 @@ import { chromium } from 'playwright';
 import { mkdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { startScreenshotServer, stopScreenshotServer } from './screenshot-server.js';
+import { startScreenshotServer, stopScreenshotServer, pluginPages } from './screenshot-server.js';
 
 const OUTPUT_DIR = path.resolve(fileURLToPath(new URL('..', import.meta.url)), 'screenshots');
 
@@ -54,18 +54,27 @@ const VIEWPORTS = [
 ] as const;
 
 async function main() {
-  const filter = process.argv[2];
-  const pages = filter ? PAGES.filter((p) => p.name === filter) : [...PAGES];
-
-  if (filter && pages.length === 0) {
-    console.error(`Unknown page: "${filter}". Available: ${PAGES.map((p) => p.name).join(', ')}`);
-    process.exit(1);
-  }
-
   await mkdir(OUTPUT_DIR, { recursive: true });
 
   const port = await startScreenshotServer();
   const baseUrl = `http://localhost:${port}`;
+
+  // Append plugin pages discovered during server startup
+  const allPages: PageDef[] = [...PAGES];
+  for (const pp of pluginPages) {
+    allPages.push({
+      name: `${pp.pluginName}-${pp.name}`,
+      path: `/p/${pp.pluginName}${pp.path}`,
+    });
+  }
+
+  const filter = process.argv[2];
+  const pages = filter ? allPages.filter((p) => p.name === filter) : allPages;
+
+  if (filter && pages.length === 0) {
+    console.error(`Unknown page: "${filter}". Available: ${allPages.map((p) => p.name).join(', ')}`);
+    process.exit(1);
+  }
 
   let captured = 0;
 

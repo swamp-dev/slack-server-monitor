@@ -3,6 +3,7 @@
  *
  * Minimal Express app serving real templates with seed data.
  * No auth, no Slack connection — just the web UI for screenshots.
+ * Discovers plugins from plugins.example/ and loads their screenshot hooks.
  *
  * Usage:
  *   npx tsx scripts/screenshot-server.ts          # start on port 18970
@@ -10,7 +11,16 @@
  */
 
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import Database from 'better-sqlite3';
 import type { Server } from 'http';
+import type { Plugin, PluginContext } from '../src/plugins/index.js';
+import { discoverPlugins } from '../src/plugins/loader.js';
+import { isValidPlugin } from '../src/plugins/types.js';
+import { createPluginRouter, getPluginExpressRouter, clearPluginRoutes } from '../src/web/plugin-router.js';
+import { PluginDatabase } from '../src/services/plugin-database.js';
+import { getStaticCss } from '../src/web/templates/styles.js';
 import {
   renderDashboard,
   renderSessionList,
@@ -41,12 +51,113 @@ import {
 } from './screenshot-fixtures.js';
 
 const PORT = parseInt(process.env.SCREENSHOT_PORT ?? '', 10) || 18970;
+const ROOT_DIR = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+const PLUGINS_EXAMPLE_DIR = path.join(ROOT_DIR, 'plugins.example');
 
 let server: Server | null = null;
 
-export function startScreenshotServer(): Promise<number> {
+/** Plugin pages discovered during startup, exported for the harness. */
+export let pluginPages: Array<{ pluginName: string; name: string; path: string }> = [];
+
+/** Track initialized plugins for cleanup. */
+const initializedPlugins: Array<{ plugin: Plugin; ctx: PluginContext }> = [];
+
+/**
+ * Load a single plugin file using jiti (same approach as loader.ts).
+ */
+async function loadPluginFile(filePath: string): Promise<Plugin | null> {
+  try {
+    const { createJiti } = await import('jiti');
+    const jiti = createJiti(import.meta.url, { interopDefault: true });
+    const imported = await jiti.import(filePath, { default: true });
+    const module = { default: imported };
+    if (!module.default || !isValidPlugin(module.default)) return null;
+    return module.default;
+  } catch (err) {
+    console.warn(`[screenshot] Failed to load plugin ${filePath}:`, err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+/**
+ * Create a minimal PluginContext for screenshot mode.
+ * No Slack, no Claude — just a database and no-op stubs.
+ */
+function createMockContext(plugin: Plugin): PluginContext {
+  const db = new Database(':memory:');
+  db.pragma('journal_mode = WAL');
+  const pluginDb = new PluginDatabase(db, plugin.name);
+
+  return {
+    db: pluginDb,
+    name: plugin.name,
+    version: plugin.version,
+    notify: () => {},
+    sse: { broadcast: () => {}, clientCount: () => 0 },
+  };
+}
+
+/**
+ * Discover and initialize plugins that have screenshot support.
+ */
+async function loadScreenshotPlugins(app: ReturnType<typeof express>): Promise<void> {
+  const files = await discoverPlugins(PLUGINS_EXAMPLE_DIR);
+  const pages: typeof pluginPages = [];
+
+  for (const filePath of files) {
+    const plugin = await loadPluginFile(filePath);
+    if (!plugin) continue;
+    if (!plugin.screenshotPages?.length) continue;
+
+    const ctx = createMockContext(plugin);
+
+    // Run screenshot setup (populate caches, seed DB, etc.)
+    if (plugin.screenshotSetup) {
+      await plugin.screenshotSetup(ctx);
+    }
+
+    // Run init if present (may set up state needed by routes)
+    if (plugin.init) {
+      try {
+        await plugin.init(ctx);
+      } catch (err) {
+        console.warn(`[screenshot] Plugin "${plugin.name}" init failed:`, err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    initializedPlugins.push({ plugin, ctx });
+
+    // Register web routes
+    if (plugin.registerWebRoutes) {
+      const router = createPluginRouter(plugin.name, ctx, plugin.webNavEntry);
+      plugin.registerWebRoutes(router);
+    }
+
+    // Collect screenshot pages
+    for (const page of plugin.screenshotPages) {
+      pages.push({ pluginName: plugin.name, name: page.name, path: page.path });
+    }
+  }
+
+  // Mount the shared plugin router at /p/
+  if (pages.length > 0) {
+    app.use('/p', getPluginExpressRouter());
+  }
+
+  pluginPages = pages;
+}
+
+export async function startScreenshotServer(): Promise<number> {
+  clearPluginRoutes();
+  pluginPages = [];
+
   return new Promise((resolve, reject) => {
     const app = express();
+
+    // Static CSS (needed for the shell's <link> tag)
+    app.get('/static/styles.css', (_req, res) => {
+      res.type('text/css').send(getStaticCss());
+    });
 
     // Dashboard — variants: empty, degraded
     app.get('/', (req, res) => {
@@ -150,20 +261,35 @@ export function startScreenshotServer(): Promise<number> {
       res.json({ results: [] });
     });
 
-    // 404 catch-all
-    app.use((_req, res) => {
-      res.status(404).type('html').send(render404());
-    });
+    // Load plugins with screenshot support
+    loadScreenshotPlugins(app).then(() => {
+      // 404 catch-all (must be registered after plugin routes)
+      app.use((_req, res) => {
+        res.status(404).type('html').send(render404());
+      });
 
-    server = app.listen(PORT, () => {
-      resolve(PORT);
-    });
+      server = app.listen(PORT, () => {
+        resolve(PORT);
+      });
 
-    server.on('error', reject);
+      server.on('error', reject);
+    }).catch(reject);
   });
 }
 
-export function stopScreenshotServer(): Promise<void> {
+export async function stopScreenshotServer(): Promise<void> {
+  // Destroy plugins to stop intervals (e.g., SSE polling)
+  for (const { plugin, ctx } of initializedPlugins) {
+    if (plugin.destroy) {
+      try {
+        await plugin.destroy(ctx);
+      } catch {
+        // Best-effort cleanup
+      }
+    }
+  }
+  initializedPlugins.length = 0;
+
   return new Promise((resolve) => {
     if (server) {
       const s = server;

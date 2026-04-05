@@ -305,4 +305,71 @@ describe('isValidPlugin', () => {
       expect(isValidPlugin(plugin)).toBe(true);
     });
   });
+
+  describe('screenshot hooks', () => {
+    it('should accept plugin with screenshotPages and screenshotSetup', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        screenshotPages: [{ name: 'dashboard', path: '/' }],
+        screenshotSetup: async () => { /* seed mock data */ },
+      })).toBe(true);
+    });
+
+    it('should accept plugin with screenshotPages only', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        screenshotPages: [{ name: 'dashboard', path: '/' }, { name: 'scenes', path: '/scenes' }],
+      })).toBe(true);
+    });
+
+    it('should accept empty screenshotPages array', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        screenshotPages: [],
+      })).toBe(true);
+    });
+
+    it('should reject non-array screenshotPages', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        screenshotPages: 'not-an-array',
+      })).toBe(false);
+    });
+
+    it('should reject screenshotPages with invalid entries', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        screenshotPages: [{ name: 123, path: '/' }],
+      })).toBe(false);
+    });
+
+    it('should reject screenshotPages missing path', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        screenshotPages: [{ name: 'dashboard' }],
+      })).toBe(false);
+    });
+
+    it('should reject screenshotPages path without leading slash', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        screenshotPages: [{ name: 'dashboard', path: 'no-slash' }],
+      })).toBe(false);
+    });
+
+    it('should reject non-function screenshotSetup', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        screenshotSetup: 'not-a-function',
+      })).toBe(false);
+    });
+  });
 });

@@ -252,6 +252,31 @@ export interface Plugin {
    * TIMEOUT: Must complete within 5 seconds.
    */
   destroy?: (ctx: PluginContext) => Promise<void>;
+
+  /**
+   * Pages to include in automated screenshot capture.
+   * Each page will be captured in all theme/viewport combinations.
+   * Only used when the plugin also provides `screenshotSetup`.
+   */
+  screenshotPages?: PluginScreenshotPage[];
+
+  /**
+   * Initialize mock data for screenshots.
+   * Called by the screenshot server before routes are registered.
+   * Use this to seed the response cache, database, or any other
+   * state needed to render pages without external dependencies.
+   */
+  screenshotSetup?: (ctx: PluginContext) => Promise<void>;
+}
+
+/**
+ * A page to capture in the screenshot pipeline
+ */
+export interface PluginScreenshotPage {
+  /** Page name used in filename (e.g., "dashboard", "scenes") */
+  name: string;
+  /** Route path relative to plugin root (e.g., "/", "/scenes") */
+  path: string;
 }
 
 /**
@@ -324,6 +349,21 @@ export function isValidPlugin(obj: unknown): obj is Plugin {
 
   if (plugin.registerWebRoutes !== undefined && typeof plugin.registerWebRoutes !== 'function') {
     return false;
+  }
+
+  if (plugin.screenshotSetup !== undefined && typeof plugin.screenshotSetup !== 'function') {
+    return false;
+  }
+
+  if (plugin.screenshotPages !== undefined) {
+    if (!Array.isArray(plugin.screenshotPages)) {
+      return false;
+    }
+    for (const page of plugin.screenshotPages) {
+      if (typeof page !== 'object' || page === null) return false;
+      const p = page as Record<string, unknown>;
+      if (typeof p.name !== 'string' || typeof p.path !== 'string' || !p.path.startsWith('/')) return false;
+    }
   }
 
   return true;

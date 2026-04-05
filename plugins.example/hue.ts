@@ -42,6 +42,7 @@ import { queryTools } from './hue/tools-query.js';
 import { stopAll } from './hue/effects-registry.js';
 import { initSceneCache } from './hue/scene-cache.js';
 import { registerHueWebRoutes, getHueWidgets, startSSEPolling, stopSSEPolling } from './hue/web.js';
+import { populateScreenshotCache } from './hue/screenshot-fixtures.js';
 
 // =============================================================================
 // Claude AI Tools
@@ -243,6 +244,16 @@ const huePlugin: Plugin = {
   destroy: async () => {
     stopSSEPolling();
     stopAll();
+  },
+
+  screenshotPages: [
+    { name: 'dashboard', path: '/' },
+    { name: 'scenes', path: '/scenes' },
+    { name: 'sensors', path: '/sensors' },
+  ],
+
+  screenshotSetup: async () => {
+    populateScreenshotCache();
   },
 };
 
