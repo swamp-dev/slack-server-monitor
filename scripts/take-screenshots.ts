@@ -17,13 +17,34 @@ import { startScreenshotServer, stopScreenshotServer } from './screenshot-server
 
 const OUTPUT_DIR = path.resolve(fileURLToPath(new URL('..', import.meta.url)), 'screenshots');
 
-const PAGES = [
-  { name: 'dashboard', path: '/' },
-  { name: 'sessions', path: '/c' },
-  { name: 'conversation', path: '/c/1000.001/C001' },
-  { name: 'notifications', path: '/notifications' },
-  { name: 'login', path: '/login' },
-] as const;
+interface PageDef {
+  name: string;
+  path: string;
+  variants?: { name: string; query: string }[];
+}
+
+const PAGES: PageDef[] = [
+  { name: 'dashboard', path: '/', variants: [
+    { name: 'empty', query: '?variant=empty' },
+    { name: 'degraded', query: '?variant=degraded' },
+  ]},
+  { name: 'sessions', path: '/c', variants: [
+    { name: 'empty', query: '?variant=empty' },
+    { name: 'search-no-results', query: '?variant=search-no-results' },
+    { name: 'favorites', query: '?variant=favorites' },
+    { name: 'archived', query: '?variant=archived' },
+  ]},
+  { name: 'conversation', path: '/c/1000.001/C001', variants: [
+    { name: 'branched', query: '?variant=branched' },
+  ]},
+  { name: 'notifications', path: '/notifications', variants: [
+    { name: 'empty', query: '?variant=empty' },
+  ]},
+  { name: 'login', path: '/login', variants: [
+    { name: 'error', query: '?variant=error' },
+  ]},
+  { name: '404', path: '/nonexistent-page' },
+];
 
 const THEMES = ['dracula', 'light'] as const;
 
@@ -46,46 +67,69 @@ async function main() {
   const port = await startScreenshotServer();
   const baseUrl = `http://localhost:${port}`;
 
-  const browser = await chromium.launch({ headless: true });
   let captured = 0;
 
+  async function capture(browser: Awaited<ReturnType<typeof chromium.launch>>, pageName: string, url: string, theme: string, viewport: typeof VIEWPORTS[number]) {
+    // Fresh context per combo ensures localStorage (theme) is cleanly set
+    const context = await browser.newContext({
+      viewport: { width: viewport.width, height: viewport.height },
+      storageState: {
+        cookies: [],
+        origins: [{
+          origin: baseUrl,
+          localStorage: [
+            { name: 'ssm-theme', value: theme },
+            { name: 'ssm-onboarded', value: 'true' },
+          ],
+        }],
+      },
+    });
+
+    try {
+      const pw = await context.newPage();
+      await pw.goto(url, { waitUntil: 'networkidle' });
+
+      const filename = `${pageName}-${theme}-${viewport.name}.png`;
+      await pw.screenshot({
+        path: path.join(OUTPUT_DIR, filename),
+        fullPage: false,
+      });
+
+      captured++;
+      console.log(`  ${filename}`);
+    } finally {
+      await context.close();
+    }
+  }
+
   try {
-    for (const page of pages) {
-      for (const theme of THEMES) {
-        for (const viewport of VIEWPORTS) {
-          // Fresh context per combo ensures localStorage (theme) is cleanly set
-          const context = await browser.newContext({
-            viewport: { width: viewport.width, height: viewport.height },
-            storageState: {
-              cookies: [],
-              origins: [{
-                origin: baseUrl,
-                localStorage: [
-                  { name: 'ssm-theme', value: theme },
-                  { name: 'ssm-onboarded', value: 'true' },
-                ],
-              }],
-            },
-          });
+    const browser = await chromium.launch({ headless: true });
+    try {
+      for (const page of pages) {
+        for (const theme of THEMES) {
+          for (const viewport of VIEWPORTS) {
+            // Default state
+            await capture(browser, page.name, `${baseUrl}${page.path}`, theme, viewport);
 
-          const pw = await context.newPage();
-          await pw.goto(`${baseUrl}${page.path}`, { waitUntil: 'networkidle' });
-
-          const filename = `${page.name}-${theme}-${viewport.name}.png`;
-          await pw.screenshot({
-            path: path.join(OUTPUT_DIR, filename),
-            fullPage: false,
-          });
-
-          captured++;
-          console.log(`  ${filename}`);
-
-          await context.close();
+            // Variant states
+            if (page.variants) {
+              for (const variant of page.variants) {
+                await capture(
+                  browser,
+                  `${page.name}-${variant.name}`,
+                  `${baseUrl}${page.path}${variant.query}`,
+                  theme,
+                  viewport,
+                );
+              }
+            }
+          }
         }
       }
+    } finally {
+      await browser.close();
     }
   } finally {
-    await browser.close();
     await stopScreenshotServer();
   }
 

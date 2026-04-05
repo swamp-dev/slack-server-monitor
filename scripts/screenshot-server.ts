@@ -34,6 +34,10 @@ import {
   seedToolCalls,
   seedConversationMeta,
   seedNotifications,
+  emptyStats,
+  degradedHealth,
+  archivedSessions,
+  branchedConversationMeta,
 } from './screenshot-fixtures.js';
 
 const PORT = parseInt(process.env.SCREENSHOT_PORT ?? '', 10) || 18970;
@@ -44,39 +48,88 @@ export function startScreenshotServer(): Promise<number> {
   return new Promise((resolve, reject) => {
     const app = express();
 
-    // Dashboard
-    app.get('/', (_req, res) => {
-      const html = renderDashboard(
-        seedStats, seedRecent, seedFavorites, seedFavCount,
-        seedAllTags, 'admin', seedWidgets, 2, seedQuickLinks, seedHealth,
-      );
+    // Dashboard — variants: empty, degraded
+    app.get('/', (req, res) => {
+      const variant = req.query.variant as string | undefined;
+      let html: string;
+      if (variant === 'empty') {
+        html = renderDashboard(
+          emptyStats, [], [], 0, [], 'admin', [], 0, [], null,
+        );
+      } else if (variant === 'degraded') {
+        html = renderDashboard(
+          seedStats, seedRecent, seedFavorites, seedFavCount,
+          seedAllTags, 'admin', seedWidgets, 2, seedQuickLinks, degradedHealth,
+        );
+      } else {
+        html = renderDashboard(
+          seedStats, seedRecent, seedFavorites, seedFavCount,
+          seedAllTags, 'admin', seedWidgets, 2, seedQuickLinks, seedHealth,
+        );
+      }
       res.type('html').send(html);
     });
 
-    // Session list
-    app.get('/c', (_req, res) => {
-      const html = renderSessionList(seedSessions, seedPagination, {
-        allTags: seedAllTags,
-        currentUserId: 'admin',
-      });
+    // Session list — variants: empty, search-no-results, favorites, archived
+    app.get('/c', (req, res) => {
+      const variant = req.query.variant as string | undefined;
+      const emptyPagination = { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 };
+      let html: string;
+      if (variant === 'empty') {
+        html = renderSessionList([], emptyPagination, {
+          allTags: [],
+          currentUserId: 'admin',
+        });
+      } else if (variant === 'search-no-results') {
+        html = renderSessionList([], emptyPagination, {
+          allTags: seedAllTags,
+          currentUserId: 'admin',
+          searchQuery: 'kubernetes cluster migration',
+        });
+      } else if (variant === 'favorites') {
+        html = renderSessionList(seedFavorites, { page: 1, pageSize: 20, totalItems: seedFavorites.length, totalPages: 1 }, {
+          allTags: seedAllTags,
+          currentUserId: 'admin',
+          favorites: true,
+        });
+      } else if (variant === 'archived') {
+        html = renderSessionList(archivedSessions, { page: 1, pageSize: 20, totalItems: archivedSessions.length, totalPages: 1 }, {
+          allTags: seedAllTags,
+          currentUserId: 'admin',
+          archived: true,
+        });
+      } else {
+        html = renderSessionList(seedSessions, seedPagination, {
+          allTags: seedAllTags,
+          currentUserId: 'admin',
+        });
+      }
       res.type('html').send(html);
     });
 
-    // Conversation detail
-    app.get('/c/:threadTs/:channelId', (_req, res) => {
-      const html = renderConversation(seedMessages, seedToolCalls, seedConversationMeta);
+    // Conversation detail — variants: branched
+    app.get('/c/:threadTs/:channelId', (req, res) => {
+      const variant = req.query.variant as string | undefined;
+      const meta = variant === 'branched' ? branchedConversationMeta : seedConversationMeta;
+      const html = renderConversation(seedMessages, seedToolCalls, meta);
       res.type('html').send(html);
     });
 
-    // Notifications
-    app.get('/notifications', (_req, res) => {
-      const html = renderNotificationPage(seedNotifications, 2);
+    // Notifications — variants: empty
+    app.get('/notifications', (req, res) => {
+      const variant = req.query.variant as string | undefined;
+      const html = variant === 'empty'
+        ? renderNotificationPage([], 0)
+        : renderNotificationPage(seedNotifications, 2);
       res.type('html').send(html);
     });
 
-    // Login
-    app.get('/login', (_req, res) => {
-      const html = renderLogin();
+    // Login — variants: error
+    app.get('/login', (req, res) => {
+      const variant = req.query.variant as string | undefined;
+      const html = variant === 'error'
+        ? renderLogin('Invalid access token. Please check your token and try again.')
+        : renderLogin();
       res.type('html').send(html);
     });
 

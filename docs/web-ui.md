@@ -131,21 +131,26 @@ This starts a standalone server with seed data (no Slack connection needed), lau
 
 ### What Gets Captured
 
-| Page | Desktop | Mobile |
-|------|---------|--------|
-| Dashboard | Health cards, stats, quick links, widgets | Responsive layout, bottom nav |
-| Conversations | Session list, tags, search | Hamburger menu |
-| Conversation detail | Messages, tool calls, controls | Scrollable thread |
-| Notifications | All levels, read/unread states | Compact cards |
-| Login | Auth form | Centered form |
+Each page is captured in its default state plus variant states (empty, error, degraded, etc.):
 
-Each page is captured in **Dracula** (dark) and **light** themes, at **desktop** (1280x720) and **mobile** (375x812) viewports — **20 screenshots** total.
+| Page | Default | Variants |
+|------|---------|----------|
+| Dashboard | Health cards, stats, widgets | `empty` (welcome screen), `degraded` (critical health) |
+| Sessions | Conversation list with tags | `empty`, `search-no-results`, `favorites`, `archived` |
+| Conversation | Messages and tool calls | `branched` (fork indicators) |
+| Notifications | Read/unread notifications | `empty` |
+| Login | Auth form | `error` (invalid token) |
+| 404 | Not found page | — |
+
+Each state is captured in **Dracula** (dark) and **light** themes, at **desktop** (1280x720) and **mobile** (375x812) viewports — **60 screenshots** total.
 
 ### Output
 
 Screenshots are saved to `screenshots/` (gitignored). Naming convention:
 
 ```
-{page}-{theme}-{viewport}.png
+{page}-{theme}-{viewport}.png              # default state
+{page}-{variant}-{theme}-{viewport}.png    # variant state
 # e.g., dashboard-dracula-desktop.png
+#        dashboard-degraded-dracula-desktop.png
 ```

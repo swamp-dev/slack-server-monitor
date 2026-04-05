@@ -217,3 +217,75 @@ export const seedNotifications: Notification[] = [
   { id: 4, source: 'health', level: 'info', title: 'Disk usage normal', body: '/data partition at 72% — below 80% warning threshold.', link: null, createdAt: now - 6 * hour, readAt: now - 5 * hour },
   { id: 5, source: 'hue', level: 'info', title: 'Scene activated', body: 'Evening scene activated in Living Room at 7:00 PM.', link: '/p/hue/', createdAt: now - 2 * hour, readAt: null },
 ];
+
+// =============================================================================
+// Variant fixtures — alternate states for the same pages
+// =============================================================================
+
+// --- Dashboard: empty (new user welcome) ---
+
+export const emptyStats: SessionStats = {
+  totalSessions: 0,
+  activeSessions: 0,
+  totalMessages: 0,
+  totalToolCalls: 0,
+  avgToolDurationMs: null,
+  toolFailureRate: 0,
+  topTools: [],
+};
+
+// --- Dashboard: degraded health ---
+
+export const degradedHealth: ServerHealth = {
+  uptime: '2 days, 1:15',
+  uptimeSeconds: 2 * 86400 + 1 * 3600 + 15 * 60,
+  loadAverage: [6.8, 5.2, 4.1],
+  cpu: { cores: 4, model: 'Intel Core i5-8250U' },
+  memory: {
+    total: 16384,
+    used: 15200,
+    free: 384,
+    available: 1184,
+    bufferCache: 800,
+    percentUsed: 93,
+  },
+  swap: { total: 4096, used: 3200, free: 896, percentUsed: 78 },
+  disks: [
+    { filesystem: '/dev/sda1', size: '100G', used: '92G', available: '8G', percentUsed: 92, mountPoint: '/' },
+    { filesystem: '/dev/sdb1', size: '1.0T', used: '820G', available: '180G', percentUsed: 82, mountPoint: '/data' },
+  ],
+  timestamp: now,
+};
+
+// --- Sessions: archived ---
+
+export const archivedSessions: SessionSummary[] = [
+  {
+    id: 10, threadTs: '10000.010', channelId: 'C001', userId: 'admin',
+    messageCount: 6, toolCallCount: 2, createdAt: now - 14 * day, updatedAt: now - 14 * day + hour,
+    archivedAt: now - 7 * day, isActive: false, isFavorited: false,
+    tags: ['docker'], firstMessage: 'How do I update the Jellyfin container to the latest version?',
+  },
+  {
+    id: 11, threadTs: '11000.011', channelId: 'C001', userId: 'admin',
+    messageCount: 3, toolCallCount: 1, createdAt: now - 21 * day, updatedAt: now - 21 * day + 30 * 60_000,
+    archivedAt: now - 14 * day, isActive: false, isFavorited: false,
+    tags: ['nginx', 'ssl'], firstMessage: 'Set up SSL for the new subdomain wiki.example.com',
+  },
+  {
+    id: 12, threadTs: '12000.012', channelId: 'C001', userId: 'admin',
+    messageCount: 8, toolCallCount: 4, createdAt: now - 30 * day, updatedAt: now - 30 * day + 2 * hour,
+    archivedAt: now - 21 * day, isActive: false, isFavorited: false,
+    tags: ['backup', 'disk'], firstMessage: 'Debug why borg backup is failing with a lock error',
+  },
+];
+
+// --- Conversation: with branches ---
+
+export const branchedConversationMeta = {
+  ...seedConversationMeta,
+  branches: [
+    { threadTs: '1000.001b1', channelId: 'C001', createdAt: now - 8 * 60_000, branchPointIndex: 1 },
+    { threadTs: '1000.001b2', channelId: 'C001', createdAt: now - 5 * 60_000, branchPointIndex: 3 },
+  ],
+};
