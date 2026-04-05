@@ -55,6 +55,17 @@ export function checkAndRecordClaudeRequest(userId: string): boolean {
   // Under limit - record the request atomically
   validRequests.push(now);
   claudeRateLimits.set(userId, validRequests);
+
+  // Prune entries for other users whose timestamps have all expired.
+  // This runs on each request but is O(n) over the map size, which is
+  // bounded by the number of distinct users — typically small.
+  for (const [uid, timestamps] of claudeRateLimits) {
+    if (uid === userId) continue;
+    if (timestamps.every(t => now - t >= windowMs)) {
+      claudeRateLimits.delete(uid);
+    }
+  }
+
   return true;
 }
 

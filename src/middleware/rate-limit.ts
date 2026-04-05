@@ -99,8 +99,9 @@ function cleanupStaleBuckets(): void {
   }
 }
 
-// Run cleanup every 5 minutes
+// Run cleanup every 5 minutes (unref so it doesn't keep the process alive)
 const cleanupInterval = setInterval(cleanupStaleBuckets, 5 * 60 * 1000);
+cleanupInterval.unref();
 
 /**
  * Rate limiting middleware using token bucket algorithm.
