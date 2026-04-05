@@ -457,7 +457,12 @@ export function getPluginWidgets(): DashboardWidget[] {
     if (!plugin.getWidgets) continue;
 
     try {
+      const start = Date.now();
       const pluginWidgets = plugin.getWidgets();
+      const elapsed = Date.now() - start;
+      if (elapsed > 100) {
+        logger.warn('Slow plugin widget load', { name: plugin.name, durationMs: elapsed });
+      }
       if (Array.isArray(pluginWidgets)) {
         widgets.push(...pluginWidgets);
       }
