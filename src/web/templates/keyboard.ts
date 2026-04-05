@@ -16,9 +16,18 @@ export function getKeyboardShortcutScript(): string {
   <script>
   (function() {
     var focusIndex = -1;
-    function getCards() { return document.querySelectorAll('.session-card'); }
+    // Cache DOM queries — these don't change within a page
+    var cachedCards = null;
+    var cachedIsConvDetail = null;
+    function getCards() {
+      if (!cachedCards) cachedCards = document.querySelectorAll('.session-card');
+      return cachedCards;
+    }
     function isSessionList() { return getCards().length > 0; }
-    function isConvDetail() { return !!document.querySelector('.conv-header'); }
+    function isConvDetail() {
+      if (cachedIsConvDetail === null) cachedIsConvDetail = !!document.querySelector('.conv-header');
+      return cachedIsConvDetail;
+    }
 
     function updateFocus(cards, idx) {
       cards.forEach(function(c) { c.classList.remove('kb-focused'); });
