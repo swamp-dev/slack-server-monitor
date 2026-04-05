@@ -138,6 +138,10 @@ export class ConversationStore {
   /** A session is considered "active" if updated within this time */
   private static readonly ACTIVE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
+  /** Stats cache TTL — dashboard stats don't need real-time accuracy */
+  private static readonly STATS_CACHE_TTL_MS = 30_000; // 30 seconds
+  private statsCache: { data: SessionStats; hours: number; expiresAt: number } | null = null;
+
   constructor(dbPath: string, ttlHours = 24) {
     this.ttlHours = ttlHours;
 
@@ -831,6 +835,11 @@ export class ConversationStore {
    * @param hours - Time window in hours (default: 24)
    */
   getSessionStats(hours = 24): SessionStats {
+    // Return cached result if still valid for the same time window
+    if (this.statsCache?.hours === hours && Date.now() < this.statsCache.expiresAt) {
+      return this.statsCache.data;
+    }
+
     const cutoff = Date.now() - hours * 60 * 60 * 1000;
     const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
 
@@ -900,7 +909,7 @@ export class ConversationStore {
       `)
       .all(cutoff) as { name: string; count: number; avg_duration_ms: number | null }[];
 
-    return {
+    const stats: SessionStats = {
       totalSessions: sessionStats.total_sessions,
       activeSessions: sessionStats.active_sessions,
       totalMessages,
@@ -915,6 +924,9 @@ export class ConversationStore {
         avgDurationMs: t.avg_duration_ms != null ? Math.round(t.avg_duration_ms) : null,
       })),
     };
+
+    this.statsCache = { data: stats, hours, expiresAt: Date.now() + ConversationStore.STATS_CACHE_TTL_MS };
+    return stats;
   }
 
   /**
