@@ -158,16 +158,15 @@ const notificationPageStyles = `
     opacity: 0.6;
   }
   .notif-entry .notif-indicator {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    margin-top: 6px;
     flex-shrink: 0;
+    margin-top: 2px;
+    display: flex;
+    align-items: center;
   }
-  .notif-entry.notif-info .notif-indicator { background: var(--accent); }
-  .notif-entry.notif-warn .notif-indicator { background: #f1fa8c; }
-  .notif-entry.notif-error .notif-indicator { background: #ff5555; }
-  .notif-entry.notif-read .notif-indicator { background: var(--border); }
+  .notif-entry.notif-info .notif-indicator { color: var(--accent); }
+  .notif-entry.notif-warn .notif-indicator { color: var(--yellow); }
+  .notif-entry.notif-error .notif-indicator { color: var(--red); }
+  .notif-entry.notif-read .notif-indicator { color: var(--border); }
   .notif-entry .notif-content {
     flex: 1;
     min-width: 0;
@@ -276,8 +275,12 @@ export function renderNotificationPage(
       ? `<div class="notif-actions"><button type="button" data-mark-read="${String(n.id)}" title="Mark as read">${icon('check', 16)}</button></div>`
       : '';
 
+    const levelIcon = n.level === 'error' ? icon('x-circle', 16)
+      : n.level === 'warn' ? icon('alert-triangle', 16)
+      : icon('info-circle', 16);
+
     return `<div class="notif-entry ${levelClass} ${readClass}" data-id="${String(n.id)}">
-      <div class="notif-indicator"></div>
+      <div class="notif-indicator">${levelIcon}</div>
       <div class="notif-content">
         <div class="notif-entry-title">${titleContent}</div>
         ${bodyHtml}

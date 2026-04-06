@@ -557,6 +557,10 @@ const conversationDetailStyles = `
     gap: 12px;
     flex-wrap: wrap;
   }
+  .conv-title {
+    margin: 0;
+    font-size: 1.1rem;
+  }
   .conv-back {
     display: flex;
     align-items: center;
@@ -566,6 +570,28 @@ const conversationDetailStyles = `
     font-size: 0.875rem;
   }
   .conv-back:hover { text-decoration: underline; }
+  .conv-details-toggle { display: none; }
+  /* Mobile: compact header */
+  @media (max-width: 640px) {
+    .conv-back-text { display: none; }
+    .conv-header { padding: 6px 12px; }
+    .conv-title {
+      font-size: 0.95rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 60vw;
+    }
+    .conv-details-toggle {
+      display: inline-flex;
+    }
+    .conv-collapsible {
+      display: none;
+    }
+    .conv-collapsible.open {
+      display: block;
+    }
+  }
   .detail-favorite-star {
     color: var(--text-muted);
     font-size: 1.4rem;
@@ -993,15 +1019,17 @@ export function renderConversation(
       <div class="container">
         <div class="conv-header-top">
           <div style="display: flex; align-items: center; gap: 8px;">
-            <a href="/c" class="conv-back">${icon('arrow-left', 16)} Back to conversations</a>
-            <h1 style="margin: 0; font-size: 1.1rem;">${convId ? `<span class="${starClass}" data-id="${convId}" id="detail-star">&#9733;</span> ` : ''}${escapeHtml(conversationTitle(messages, 80))}</h1>
+            <a href="/c" class="conv-back">${icon('arrow-left', 16)} <span class="conv-back-text">Back to conversations</span></a>
+            <h1 class="conv-title">${convId ? `<span class="${starClass}" data-id="${convId}" id="detail-star">&#9733;</span> ` : ''}${escapeHtml(conversationTitle(messages, 80))}</h1>
           </div>
           <div class="export-actions" style="margin-top: 0;">
             <a class="export-btn" id="export-md" href="/c/${metadata.threadTs}/${metadata.channelId}/export/md" title="Export Markdown">${icon('download', 14)}</a>
             <button class="export-btn" id="copy-clipboard" type="button" title="Copy to Clipboard">${icon('copy', 14)}</button>
             ${archiveIconBtn}
+            <button class="export-btn conv-details-toggle" id="conv-details-toggle" type="button" title="Details">${icon('chevron-down', 14)}</button>
           </div>
         </div>
+        <div class="conv-collapsible" id="conv-collapsible">
         <div class="meta" style="color: var(--text-muted); font-size: 0.8125rem; margin-top: 2px;">
           ${icon('clock', 14)} ${formatTimestamp(metadata.createdAt)} &mdash; ${formatTimestamp(metadata.updatedAt)}
           ${metadata.parentConversationId != null ? ` &middot; ${icon('git-branch', 12)} <a href="/c" style="color: var(--purple);">Forked conversation</a>` : ''}
@@ -1011,6 +1039,7 @@ export function renderConversation(
         ${renderContextStatus(metadata.contextStatus ?? null)}
         <div class="detail-tags" id="detail-tags">${tagPills}</div>
         ${tagInputHtml}
+        </div>
       </div>
     </div>
   </div>`;
@@ -1230,6 +1259,17 @@ export function renderConversation(
     if (!toggle || !list) return;
     toggle.addEventListener('click', function() {
       list.classList.toggle('open');
+    });
+  })();
+  // Mobile details toggle
+  (function() {
+    var toggle = document.getElementById('conv-details-toggle');
+    var panel = document.getElementById('conv-collapsible');
+    if (!toggle || !panel) return;
+    toggle.addEventListener('click', function(e) {
+      e.preventDefault();
+      panel.classList.toggle('open');
+      toggle.style.transform = panel.classList.contains('open') ? 'rotate(180deg)' : '';
     });
   })();
   </script>`;

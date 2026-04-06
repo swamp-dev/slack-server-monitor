@@ -87,7 +87,7 @@ export function renderLogin(error?: string, returnTo?: string): string {
     }
     .login-form {
       width: 100%;
-      max-width: 400px;
+      max-width: 440px;
       background: var(--card-bg);
       border: 1px solid var(--border);
       border-radius: 12px;

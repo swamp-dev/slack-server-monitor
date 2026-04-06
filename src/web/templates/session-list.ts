@@ -252,6 +252,15 @@ const sessionListStyles = `
   .search-btn:hover {
     opacity: 0.9;
   }
+  /* Mobile: icon-only search button */
+  @media (max-width: 640px) {
+    .search-btn {
+      padding: 10px 12px;
+    }
+    .search-btn-text {
+      display: none;
+    }
+  }
   .favorite-star {
     color: var(--text-muted);
     font-size: 1.4rem;
@@ -408,7 +417,7 @@ export function renderSessionList(
         ${icon('search', 16)}
         <input type="text" name="q" placeholder="Search conversations..." value="${escapeHtml(searchQuery)}" class="search-input">
       </div>
-      <button type="submit" class="search-btn">${icon('search', 16)} Search</button>
+      <button type="submit" class="search-btn">${icon('search', 16)} <span class="search-btn-text">Search</span></button>
     </form>`;
 
   let emptyHtml = '';
