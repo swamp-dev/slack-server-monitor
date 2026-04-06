@@ -175,6 +175,42 @@ describe('notification templates', () => {
     });
   });
 
+  describe('notification severity icons', () => {
+    it('should render info-circle SVG for info notifications', () => {
+      const html = renderNotificationPage(sampleNotifications, 3);
+      // info-circle icon has a unique path: M10 9V14 (stem)
+      expect(html).toContain('M10 9V14');
+    });
+
+    it('should render alert-triangle SVG for warn notifications', () => {
+      const html = renderNotificationPage(sampleNotifications, 3);
+      // alert-triangle icon has a unique path: M10 3L18 17H2L10 3Z (triangle)
+      expect(html).toContain('M10 3L18 17H2L10 3Z');
+    });
+
+    it('should render x-circle SVG for error notifications', () => {
+      const html = renderNotificationPage(sampleNotifications, 3);
+      // x-circle icon has unique paths: M7 7L13 13 and M13 7L7 13 (X marks)
+      expect(html).toContain('M7 7L13 13');
+      expect(html).toContain('M13 7L7 13');
+    });
+  });
+
+  describe('mark all read button styling', () => {
+    it('should render Mark all read with accent border when unread exist', () => {
+      const html = renderNotificationPage(sampleNotifications, 2);
+      expect(html).toContain('id="page-mark-all"');
+      expect(html).toContain('border: 1px solid var(--accent)');
+    });
+
+    it('should not render Mark all read button element when no unread', () => {
+      const allRead = sampleNotifications.map((n) => ({ ...n, readAt: Date.now() }));
+      const html = renderNotificationPage(allRead, 0);
+      // The button element should not be rendered (JS reference is fine)
+      expect(html).not.toContain('id="page-mark-all"');
+    });
+  });
+
   describe('notification grouping', () => {
     it('should group consecutive notifications from same source in dropdown', () => {
       const grouped: Notification[] = [

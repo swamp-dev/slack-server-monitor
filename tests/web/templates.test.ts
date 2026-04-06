@@ -1050,6 +1050,54 @@ describe('web templates', () => {
       expect(html).toContain('Scroll to bottom');
     });
 
+    it('should render scroll-to-bottom with muted styling', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1', channelId: 'C1', createdAt: Date.now(), updatedAt: Date.now(),
+      });
+      // FAB should use surface bg, not accent gradient
+      expect(html).toContain('scroll-to-bottom');
+      expect(html).toMatch(/\.scroll-to-bottom\s*\{[^}]*var\(--surface\)/);
+      expect(html).not.toMatch(/\.scroll-to-bottom\s*\{[^}]*var\(--accent\)/);
+    });
+
+    it('should use first user message as page title', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'What is the status of nginx?' },
+        { role: 'assistant', content: 'Running fine.' },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1', channelId: 'C1', createdAt: Date.now(), updatedAt: Date.now(),
+      });
+      expect(html).toContain('<title>What is the status of nginx?</title>');
+      expect(html).toContain('conv-title');
+      expect(html).toContain('What is the status of nginx?');
+    });
+
+    it('should fall back to Claude Conversation when no user messages', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'assistant', content: 'Hello!' },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1', channelId: 'C1', createdAt: Date.now(), updatedAt: Date.now(),
+      });
+      expect(html).toContain('<title>Claude Conversation</title>');
+    });
+
+    it('should wrap back text in span for mobile hiding', () => {
+      const messages: ConversationMessage[] = [
+        { role: 'user', content: 'Hi' },
+      ];
+      const html = renderConversation(messages, [], {
+        threadTs: '1', channelId: 'C1', createdAt: Date.now(), updatedAt: Date.now(),
+      });
+      expect(html).toContain('conv-back-text');
+      expect(html).toContain('conv-details-toggle');
+      expect(html).toContain('conv-collapsible');
+    });
+
     it('should render copy button on each message', () => {
       const messages: ConversationMessage[] = [
         { role: 'user', content: 'Hello' },
@@ -1395,6 +1443,18 @@ describe('web templates', () => {
       expect(html).toContain('404');
       expect(html).toContain('not found');
     });
+
+    it('should include navigation bar', () => {
+      const html = render404();
+      expect(html).toContain('nav-bar');
+    });
+
+    it('should say Page not found with dashboard link', () => {
+      const html = render404();
+      expect(html).toContain('Page not found');
+      expect(html).toContain('Back to dashboard');
+      expect(html).toContain('href="/"');
+    });
   });
 
   describe('render401', () => {
@@ -1735,6 +1795,13 @@ describe('web templates', () => {
         expect(html).toContain('.token-check.valid');
         // Validates on 16+ chars
         expect(html).toContain('length >= 16');
+      });
+
+      it('should show help text about WEB_AUTH_TOKEN', () => {
+        const html = renderLogin();
+        expect(html).toContain('WEB_AUTH_TOKEN');
+        expect(html).toContain('.env');
+        expect(html).toContain('login-help');
       });
     });
 
@@ -2615,6 +2682,12 @@ describe('web templates', () => {
       const html = renderDashboard(baseStats, [], [], 0, [], 'U01', [], 0, [], dangerHealth as never);
       expect(html).toContain('Issues detected');
       expect(html).toContain('has-danger');
+    });
+
+    it('should render health bars with 6px height', () => {
+      const html = renderDashboard(baseStats, [], [], 0, [], 'U01', [], 0, [], okHealth as never);
+      expect(html).toContain('health-bar');
+      expect(html).toMatch(/\.health-bar\s*\{[^}]*height:\s*6px/);
     });
   });
 
