@@ -368,40 +368,61 @@ const CSS = `
     color: white;
   }
 
+  .hue-scene-group {
+    margin-bottom: 1.5rem;
+  }
+  .hue-scene-group-header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .hue-scene-group-name {
+    font-weight: 600;
+    font-size: 1rem;
+    color: var(--text);
+  }
+  .hue-scene-group-count {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
   .hue-scene-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0.75rem;
   }
   .hue-scene-card {
-    background: var(--bg-secondary);
+    background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 1rem;
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
   }
   .hue-scene-card-name {
-    font-weight: 600;
-    color: var(--text-primary);
-    margin-bottom: 0.25rem;
-  }
-  .hue-scene-card-room {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    margin-bottom: 0.75rem;
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: var(--text);
   }
   .hue-activate-btn {
-    padding: 0.35rem 0.8rem;
+    padding: 0.3rem 0.7rem;
     border-radius: 4px;
     border: 1px solid var(--accent);
     background: transparent;
     color: var(--accent);
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     cursor: pointer;
     transition: all 0.2s;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .hue-activate-btn:hover {
     background: var(--accent);
-    color: var(--text-inverse);
+    color: white;
   }
 
   .hue-sensor-grid {
@@ -556,27 +577,60 @@ function renderRoomCard(room: RoomState): string {
 // Page: Scenes
 // =============================================================================
 
-async function renderScenes(): Promise<string> {
-  const [scenes, rooms] = await Promise.all([getScenes(), getRooms()]);
-  const roomMap = new Map(rooms.map((r) => [r.id, r.metadata.name]));
-
+/**
+ * Render scene cards grouped by room.
+ * Pure function — takes data in, returns HTML string.
+ */
+export function renderSceneCards(scenes: HueScene[], rooms: HueRoom[]): string {
   if (scenes.length === 0) {
     return '<div class="hue-empty">No scenes found on the bridge.</div>';
   }
 
-  let html = '<div class="hue-scene-grid">';
+  const roomMap = new Map(rooms.map((r) => [r.id, { name: r.metadata.name, lightCount: r.children.length }]));
+
+  // Group scenes by room
+  const groups = new Map<string, { name: string; lightCount: number; scenes: HueScene[] }>();
   for (const scene of scenes) {
-    const roomName = roomMap.get(scene.group.rid) ?? 'Unknown room';
-    html += `
-      <div class="hue-scene-card">
-        <div class="hue-scene-card-name">${escapeHtml(scene.metadata.name)}</div>
-        <div class="hue-scene-card-room">${escapeHtml(roomName)}</div>
-        <button class="hue-activate-btn" onclick="hueActivateScene('${escapeHtml(scene.id)}')">Activate</button>
-      </div>
-    `;
+    const roomId = scene.group.rid;
+    const room = roomMap.get(roomId);
+    const key = room ? roomId : '__other__';
+    if (!groups.has(key)) {
+      groups.set(key, {
+        name: room?.name ?? 'Other',
+        lightCount: room?.lightCount ?? 0,
+        scenes: [],
+      });
+    }
+    groups.get(key)!.scenes.push(scene);
   }
-  html += '</div>';
+
+  let html = '';
+  for (const [, group] of groups) {
+    const lightLabel = group.lightCount === 1 ? '1 device' : `${group.lightCount} devices`;
+    html += `<div class="hue-scene-group">`;
+    html += `<div class="hue-scene-group-header">`;
+    html += `<span class="hue-scene-group-name">${escapeHtml(group.name)}</span>`;
+    if (group.lightCount > 0) {
+      html += `<span class="hue-scene-group-count">${lightLabel}</span>`;
+    }
+    html += `</div>`;
+    html += `<div class="hue-scene-grid">`;
+    for (const scene of group.scenes) {
+      html += `
+        <div class="hue-scene-card">
+          <div class="hue-scene-card-name">${escapeHtml(scene.metadata.name)}</div>
+          <button class="hue-activate-btn" onclick="hueActivateScene('${escapeHtml(scene.id)}')">Activate</button>
+        </div>
+      `;
+    }
+    html += `</div></div>`;
+  }
   return html;
+}
+
+async function renderScenes(): Promise<string> {
+  const [scenes, rooms] = await Promise.all([getScenes(), getRooms()]);
+  return renderSceneCards(scenes, rooms);
 }
 
 // =============================================================================
