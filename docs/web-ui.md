@@ -35,6 +35,8 @@ Sessions expire after `WEB_SESSION_TTL_HOURS` (default: 72h) and are cleaned up 
 
 Re-login invalidates existing sessions for that user.
 
+![Login page](images/login-dracula-desktop.png)
+
 ## Features
 
 ### Dashboard
@@ -46,6 +48,10 @@ The home page shows:
 - **Quick links** -- per-user bookmarks (add, remove, reorder)
 - **Recent conversations** -- latest Claude AI sessions
 
+When the server is under stress, health cards turn red to surface critical issues at a glance:
+
+![Dashboard with degraded server health](images/dashboard-degraded-dracula-desktop.png)
+
 ### Conversations
 
 - **List view** -- all sessions with search, tabs (All / Starred / Archived), ownership filter
@@ -54,6 +60,16 @@ The home page shows:
 - **New conversations** -- start fresh from `/c/new`
 - **Markdown export** -- `GET /c/:threadTs/:channelId/export/md?tools=true|false`
 
+![Session list](images/sessions-dracula-desktop.png)
+
+Conversation detail shows full message history with collapsible tool calls:
+
+![Conversation detail with tool call output](images/conversation-dracula-desktop.png)
+
+Conversations with branch points show fork indicators:
+
+![Branched conversation](images/conversation-branched-dracula-desktop.png)
+
 ### Notifications
 
 - Bell icon in nav bar with unread badge
@@ -61,15 +77,25 @@ The home page shows:
 - Full page at `/notifications`
 - Plugins can push notifications via `ctx.notify()`
 
+![Notification center](images/notifications-dracula-desktop.png)
+
 ### Themes
 
 - **Dracula** (default) and **Light** themes
 - Toggle with the `t` key or the theme button
 - Preference persisted in browser
 
+| Dracula (default) | Light |
+|---|---|
+| ![Dracula theme](images/dashboard-dracula-desktop.png) | ![Light theme](images/dashboard-light-desktop.png) |
+
 ### Mobile
 
 Responsive layout with hamburger menu at 640px breakpoint.
+
+| Dashboard | Sessions |
+|---|---|
+| ![Mobile dashboard](images/dashboard-dracula-mobile.png) | ![Mobile sessions](images/sessions-dracula-mobile.png) |
 
 ## Keyboard Shortcuts
 

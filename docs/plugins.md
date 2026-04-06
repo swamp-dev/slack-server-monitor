@@ -221,6 +221,8 @@ getWidgets: () => [
 | `priority` | No | Sort order (lower first, default: 100) |
 | `size` | No | `'small'`, `'medium'`, or `'large'` (grid span) |
 
+Plugin widgets appear on the dashboard alongside server health cards and quick links (see [Web UI - Dashboard](web-ui.md#dashboard)).
+
 ## Web Routes
 
 Register pages under `/p/{pluginName}/`:

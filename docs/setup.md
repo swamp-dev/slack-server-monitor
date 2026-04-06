@@ -124,6 +124,10 @@ Then in Slack:
 3. Try `/resources` to confirm the bot can read system metrics
 4. If using Claude AI, try `/ask what containers are running?`
 
+If the web UI is enabled, the dashboard confirms everything is running:
+
+![Dashboard after successful setup](images/dashboard-dracula-desktop.png)
+
 ### If Something Goes Wrong
 
 - **No response to commands** - Check that your user ID is in `AUTHORIZED_USER_IDS`
