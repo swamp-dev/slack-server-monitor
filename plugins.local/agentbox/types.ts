@@ -16,6 +16,13 @@ export interface AgentboxRun {
   outputPath: string | null;
   error: string | null;
   createdAt: number;
+  sessionId: string | null;
+  progressPct: number;
+  tasksTotal: number | null;
+  tasksCompleted: number | null;
+  prdPath: string | null;
+  cancelledBy: string | null;
+  pausedAt: number | null;
 }
 
 export interface IssueLink {

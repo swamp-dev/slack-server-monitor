@@ -49,6 +49,36 @@ export function handleStatus(db: PluginDatabase): string {
   return `*Recent AgentBox Runs*\n${lines.join('\n')}`;
 }
 
+/**
+ * Idempotent schema migration — adds columns introduced in T10 (ingestion layer).
+ * Uses PRAGMA table_info to check existing columns before ALTER TABLE ADD COLUMN.
+ */
+export function migrateRunsTable(db: PluginDatabase): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(${db.prefix}runs)`)
+    .all() as Array<{ name: string }>;
+  const existing = new Set(columns.map((c) => c.name));
+
+  const newColumns: Array<{ name: string; definition: string }> = [
+    { name: 'session_id', definition: 'TEXT' },
+    { name: 'progress_pct', definition: 'INTEGER DEFAULT 0' },
+    { name: 'tasks_total', definition: 'INTEGER' },
+    { name: 'tasks_completed', definition: 'INTEGER' },
+    { name: 'prd_path', definition: 'TEXT' },
+    { name: 'cancelled_by', definition: 'TEXT' },
+    { name: 'paused_at', definition: 'INTEGER' },
+  ];
+
+  const toAdd = newColumns.filter((col) => !existing.has(col.name));
+  if (toAdd.length > 0) {
+    db.transaction(() => {
+      for (const col of toAdd) {
+        db.exec(`ALTER TABLE ${db.prefix}runs ADD COLUMN ${col.name} ${col.definition}`);
+      }
+    });
+  }
+}
+
 const REPO_FORMAT = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
 function resolveRepo(input: Record<string, unknown>): string {
@@ -210,6 +240,8 @@ const agentboxPlugin: Plugin = {
         UNIQUE(issue_number, repo)
       )
     `);
+
+    migrateRunsTable(ctx.db);
 
     logger.info('AgentBox plugin initialized', {
       version: ctx.version,

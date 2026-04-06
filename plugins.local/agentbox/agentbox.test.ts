@@ -45,7 +45,12 @@ describe('agentbox init()', () => {
 
     const columns = db.prepare('PRAGMA table_info(plugin_agentbox_runs)').all() as Array<{ name: string; type: string; notnull: number; pk: number }>;
     const colNames = columns.map((c) => c.name);
-    expect(colNames).toEqual(['id', 'issue_number', 'repo', 'status', 'branch', 'pr_url', 'started_at', 'finished_at', 'output_path', 'error', 'created_at']);
+    expect(colNames).toEqual([
+      'id', 'issue_number', 'repo', 'status', 'branch', 'pr_url',
+      'started_at', 'finished_at', 'output_path', 'error', 'created_at',
+      'session_id', 'progress_pct', 'tasks_total', 'tasks_completed',
+      'prd_path', 'cancelled_by', 'paused_at',
+    ]);
     expect(columns.find((c) => c.name === 'id')!.pk).toBe(1);
     expect(columns.find((c) => c.name === 'created_at')!.notnull).toBe(1);
 
@@ -113,5 +118,109 @@ describe('agentbox destroy()', () => {
     expect(getPluginDb()).not.toBeNull();
     await plugin.destroy!(ctx);
     expect(getPluginDb()).toBeNull();
+  });
+});
+
+describe('migrateRunsTable()', () => {
+  beforeEach(() => setupTestDb());
+  afterEach(() => teardownTestDb());
+
+  it('adds new columns to an existing runs table without them', async () => {
+    // Create legacy table (without new columns)
+    pluginDb.exec(`
+      CREATE TABLE IF NOT EXISTS ${pluginDb.prefix}runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        issue_number INTEGER,
+        repo TEXT,
+        status TEXT CHECK(status IN ('pending','running','success','failed','cancelled')),
+        branch TEXT,
+        pr_url TEXT,
+        started_at INTEGER,
+        finished_at INTEGER,
+        output_path TEXT,
+        error TEXT,
+        created_at INTEGER NOT NULL
+      )
+    `);
+
+    // Insert a legacy row
+    pluginDb.prepare(
+      `INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, created_at) VALUES (?, ?, ?, ?)`
+    ).run(1, 'org/repo', 'pending', Date.now());
+
+    // Run migration
+    const { migrateRunsTable } = await import('../agentbox.js');
+    migrateRunsTable(pluginDb);
+
+    // Verify new columns exist
+    const columns = db.prepare(`PRAGMA table_info(${pluginDb.prefix}runs)`).all() as Array<{ name: string }>;
+    const colNames = new Set(columns.map((c) => c.name));
+    expect(colNames.has('session_id')).toBe(true);
+    expect(colNames.has('progress_pct')).toBe(true);
+    expect(colNames.has('tasks_total')).toBe(true);
+    expect(colNames.has('tasks_completed')).toBe(true);
+    expect(colNames.has('prd_path')).toBe(true);
+    expect(colNames.has('cancelled_by')).toBe(true);
+    expect(colNames.has('paused_at')).toBe(true);
+
+    // Verify existing data is preserved
+    const row = pluginDb.prepare(`SELECT * FROM ${pluginDb.prefix}runs WHERE issue_number = 1`).get() as Record<string, unknown>;
+    expect(row.repo).toBe('org/repo');
+    expect(row.status).toBe('pending');
+    expect(row.session_id).toBeNull();
+    expect(row.progress_pct).toBe(0);
+  });
+
+  it('is idempotent — running twice does not error', async () => {
+    const { default: plugin, migrateRunsTable } = await import('../agentbox.js');
+    await plugin.init!(createMockContext());
+
+    // Run migration again on already-migrated table
+    migrateRunsTable(pluginDb);
+
+    const columns = db.prepare(`PRAGMA table_info(${pluginDb.prefix}runs)`).all() as Array<{ name: string }>;
+    const colNames = columns.map((c) => c.name);
+    // Should still have exactly the expected columns (no duplicates)
+    const uniqueNames = [...new Set(colNames)];
+    expect(colNames).toEqual(uniqueNames);
+    expect(colNames.length).toBe(18);
+  });
+
+  it('sets progress_pct default to 0 for new rows', async () => {
+    const { default: plugin } = await import('../agentbox.js');
+    await plugin.init!(createMockContext());
+
+    pluginDb.prepare(
+      `INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, created_at) VALUES (?, ?, ?, ?)`
+    ).run(99, 'org/repo', 'pending', Date.now());
+
+    const row = pluginDb.prepare(
+      `SELECT progress_pct FROM ${pluginDb.prefix}runs WHERE issue_number = 99`
+    ).get() as { progress_pct: number };
+    expect(row.progress_pct).toBe(0);
+  });
+
+  it('allows writing and reading all new columns', async () => {
+    const { default: plugin } = await import('../agentbox.js');
+    await plugin.init!(createMockContext());
+
+    pluginDb.prepare(`
+      INSERT INTO ${pluginDb.prefix}runs
+        (issue_number, repo, status, created_at, session_id, progress_pct, tasks_total, tasks_completed, prd_path, cancelled_by, paused_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(42, 'org/repo', 'running', Date.now(), 'sess-abc-123', 75, 10, 7, '/work/prd.json', null, null);
+
+    const row = pluginDb.prepare(
+      `SELECT session_id, progress_pct, tasks_total, tasks_completed, prd_path, cancelled_by, paused_at
+       FROM ${pluginDb.prefix}runs WHERE issue_number = 42`
+    ).get() as Record<string, unknown>;
+
+    expect(row.session_id).toBe('sess-abc-123');
+    expect(row.progress_pct).toBe(75);
+    expect(row.tasks_total).toBe(10);
+    expect(row.tasks_completed).toBe(7);
+    expect(row.prd_path).toBe('/work/prd.json');
+    expect(row.cancelled_by).toBeNull();
+    expect(row.paused_at).toBeNull();
   });
 });
