@@ -12,7 +12,7 @@
 
 import express from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import Database from 'better-sqlite3';
 import type { Server } from 'http';
 import type { Plugin, PluginContext } from '../src/plugins/index.js';
@@ -63,16 +63,25 @@ export let pluginPages: Array<{ pluginName: string; name: string; path: string }
 const initializedPlugins: Array<{ plugin: Plugin; ctx: PluginContext }> = [];
 
 /**
- * Load a single plugin file using jiti (same approach as loader.ts).
+ * Load a single plugin file via native dynamic import().
+ *
+ * The screenshot server runs under tsx which handles .ts files natively.
+ * Using jiti on top of tsx causes two problems:
+ * 1. CJS/ESM interop conflicts (e.g. winston.format becomes undefined)
+ * 2. Module instance duplication — jiti creates separate module instances
+ *    from tsx, so shared state (like the plugin router) diverges
  */
 async function loadPluginFile(filePath: string): Promise<Plugin | null> {
   try {
-    const { createJiti } = await import('jiti');
-    const jiti = createJiti(import.meta.url, { interopDefault: true });
-    const imported = await jiti.import(filePath, { default: true });
-    const module = { default: imported };
-    if (!module.default || !isValidPlugin(module.default)) return null;
-    return module.default;
+    const fileUrl = pathToFileURL(filePath).href;
+    const mod = await import(fileUrl);
+    const plugin = mod.default;
+    if (!plugin) {
+      console.warn(`[screenshot] Plugin ${filePath} has no default export, skipping`);
+      return null;
+    }
+    if (!isValidPlugin(plugin)) return null;
+    return plugin;
   } catch (err) {
     console.warn(`[screenshot] Failed to load plugin ${filePath}:`, err instanceof Error ? err.message : String(err));
     return null;
