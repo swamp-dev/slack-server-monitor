@@ -1223,18 +1223,17 @@ export function getBaseStyles(): string {
   /* ─── Pull-to-refresh indicator ──────────────────────────── */
   .pull-indicator {
     text-align: center;
-    padding: 12px;
+    padding: 0 12px;
     color: var(--text-muted);
     font-size: 0.8125rem;
     overflow: hidden;
     max-height: 0;
-    transition: max-height 0.3s ease;
+    transition: max-height 0.3s ease, padding 0.3s ease;
   }
-  .pull-indicator.pulling {
-    max-height: 50px;
-  }
+  .pull-indicator.pulling,
   .pull-indicator.refreshing {
     max-height: 50px;
+    padding: 12px;
   }
   `;
 }

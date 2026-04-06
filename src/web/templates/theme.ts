@@ -16,6 +16,7 @@ export function getThemeStyles(): string {
     --surface-hover: #525568;
     --text: #f8f8f2;
     --text-muted: #6272a4;
+    --text-muted-boost: #8893b5;
     --accent: #ff79c6;
     --accent-secondary: #bd93f9;
     --cyan: #8be9fd;
@@ -41,6 +42,7 @@ export function getThemeStyles(): string {
     --surface-hover: #d8d8d2;
     --text: #282a36;
     --text-muted: #6272a4;
+    --text-muted-boost: #6272a4;
     --accent: #d6368f;
     --accent-secondary: #7c4ddb;
     --cyan: #0e7490;

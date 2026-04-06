@@ -145,6 +145,11 @@ const sessionListStyles = `
     gap: 2px;
     align-items: flex-end;
   }
+  /* Boost metadata contrast in dark theme */
+  [data-theme="dracula"] .session-meta,
+  [data-theme="dracula"] .session-stats {
+    color: var(--text-muted-boost);
+  }
   .session-stat {
     display: flex;
     align-items: center;

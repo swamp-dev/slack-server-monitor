@@ -137,6 +137,7 @@ const notificationPageStyles = `
   .notif-entry {
     background: var(--surface);
     border: 1px solid var(--border);
+    border-left: 3px solid transparent;
     border-radius: 10px;
     padding: 14px 16px;
     display: flex;
@@ -146,6 +147,9 @@ const notificationPageStyles = `
   }
   .notif-entry:hover {
     border-color: var(--accent);
+  }
+  .notif-entry:not(.notif-read) {
+    border-left-color: var(--accent);
   }
   .notif-entry.notif-read {
     opacity: 0.6;

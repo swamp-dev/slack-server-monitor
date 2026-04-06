@@ -17,8 +17,8 @@ export function render404(): string {
     <div class="empty" style="margin-top: 100px;">
       ${icon('search', 48)}
       <h1 style="font-size: 3rem; margin: 20px 0 12px;">404</h1>
-      <p>Conversation not found or has expired.</p>
-      <p style="margin-top: 20px;"><a href="/c" class="export-btn">${icon('home', 14)} Back to conversations</a></p>
+      <p>Page not found.</p>
+      <p style="margin-top: 20px;"><a href="/" class="export-btn">${icon('home', 14)} Back to dashboard</a></p>
     </div>
   </main>`;
 
@@ -26,7 +26,6 @@ export function render404(): string {
     title: 'Not Found',
     styles: '',
     body: bodyHtml,
-    showNav: false,
   });
 }
 
@@ -263,7 +262,7 @@ export function renderError(message: string): string {
       ${icon('x', 48)}
       <h1 style="font-size: 2rem; margin: 20px 0 12px;">Error</h1>
       <p>${escapeHtml(message)}</p>
-      <p style="margin-top: 20px;"><a href="/c" class="export-btn">${icon('home', 14)} Back to conversations</a></p>
+      <p style="margin-top: 20px;"><a href="/" class="export-btn">${icon('home', 14)} Back to dashboard</a></p>
     </div>
   </main>`;
 
@@ -271,6 +270,5 @@ export function renderError(message: string): string {
     title: 'Error',
     styles: '',
     body: bodyHtml,
-    showNav: false,
   });
 }
