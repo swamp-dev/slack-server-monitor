@@ -1284,6 +1284,27 @@ describe('web templates', () => {
       expect(html).toContain('(1)');
     });
 
+    it('should render collapsible toggle button when tags exist', () => {
+      const html = renderSessionList([], basePagination, {
+        allTags: [
+          { name: 'nginx', count: 3 },
+        ],
+      });
+
+      expect(html).toContain('tag-sidebar-toggle');
+      expect(html).toContain('aria-label="Toggle tags"');
+    });
+
+    it('should include tag sidebar collapse script with localStorage', () => {
+      const html = renderSessionList([], basePagination, {
+        allTags: [
+          { name: 'nginx', count: 3 },
+        ],
+      });
+
+      expect(html).toContain('ssm-tag-sidebar-collapsed');
+    });
+
     it('should render favorites tab', () => {
       const html = renderSessionList([], basePagination);
 

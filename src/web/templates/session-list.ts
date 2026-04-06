@@ -328,6 +328,36 @@ const sessionListStyles = `
       width: 100%;
     }
   }
+  /* Collapsible tag sidebar */
+  .tag-sidebar-toggle {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px;
+    display: inline-flex;
+    align-items: center;
+    margin-left: auto;
+    transition: color 0.2s;
+  }
+  .tag-sidebar-toggle:hover {
+    color: var(--text);
+  }
+  .tag-sidebar-toggle svg {
+    transition: transform 0.2s;
+  }
+  .tag-sidebar.collapsed {
+    width: auto;
+  }
+  .tag-sidebar.collapsed .tag-link {
+    display: none;
+  }
+  .tag-sidebar.collapsed .tag-sidebar-toggle svg {
+    transform: rotate(-90deg);
+  }
+  @media (max-width: 640px) {
+    .tag-sidebar-toggle { display: none; }
+  }
 `;
 
 // ─── Session List ─────────────────────────────────────────────────────
@@ -481,7 +511,7 @@ export function renderSessionList(
 
   const tagSidebar = allTags.length > 0
     ? `<div class="tag-sidebar">
-        <h3>${icon('tag', 14)} Tags</h3>
+        <h3>${icon('tag', 14)} Tags <button class="tag-sidebar-toggle" type="button" aria-label="Toggle tags">${icon('chevron-down', 14)}</button></h3>
         ${allTags.map((t) =>
           `<a href="/c/tag/${encodeURIComponent(t.name)}" class="tag-link${activeTag === t.name ? ' active' : ''}">${escapeHtml(t.name)} <span class="tag-count">(${String(t.count)})</span></a>`
         ).join('\n')}
@@ -644,11 +674,34 @@ export function renderSessionList(
   })();
   </script>`;
 
+  const tagToggleScript = `
+  <script>
+  // Collapsible tag sidebar with localStorage persistence
+  (function() {
+    var sidebar = document.querySelector('.tag-sidebar');
+    var toggle = document.querySelector('.tag-sidebar-toggle');
+    if (!sidebar || !toggle) return;
+    try {
+      if (localStorage.getItem('ssm-tag-sidebar-collapsed') === 'true') {
+        sidebar.classList.add('collapsed');
+      }
+    } catch(e) {}
+    toggle.setAttribute('aria-expanded', String(!sidebar.classList.contains('collapsed')));
+    toggle.addEventListener('click', function() {
+      sidebar.classList.toggle('collapsed');
+      toggle.setAttribute('aria-expanded', String(!sidebar.classList.contains('collapsed')));
+      try {
+        localStorage.setItem('ssm-tag-sidebar-collapsed', sidebar.classList.contains('collapsed') ? 'true' : 'false');
+      } catch(e) {}
+    });
+  })();
+  </script>`;
+
   return wrapInShell({
     title,
     styles: sessionListStyles,
     body: bodyHtml,
-    scripts: starScript + timeUpdateScript + swipeScript,
+    scripts: starScript + timeUpdateScript + swipeScript + tagToggleScript,
     currentPath: '/c',
   });
 }
