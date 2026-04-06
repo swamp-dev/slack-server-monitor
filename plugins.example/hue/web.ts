@@ -136,7 +136,7 @@ export function stopSSEPolling(): void {
 // Data Helpers
 // =============================================================================
 
-interface RoomState {
+export interface RoomState {
   id: string;
   name: string;
   groupedLightId: string | null;
@@ -145,9 +145,10 @@ interface RoomState {
   lightsOn: number;
   lightsTotal: number;
   scenes: Array<{ id: string; name: string }>;
+  lights: Array<{ id: string; on: boolean }>;
 }
 
-function buildRoomStates(
+export function buildRoomStates(
   lights: HueLight[],
   rooms: HueRoom[],
   groupedLights: HueGroupedLight[],
@@ -172,6 +173,7 @@ function buildRoomStates(
       lightsOn: roomLights.filter((l) => l.on.on).length,
       lightsTotal: roomLights.length,
       scenes: roomScenes.map((s) => ({ id: s.id, name: s.metadata.name })),
+      lights: roomLights.map((l) => ({ id: l.id, on: l.on.on })),
     };
   });
 }
@@ -195,7 +197,7 @@ function navPills(active: string): string {
 // CSS
 // =============================================================================
 
-const CSS = `
+export const CSS = `
   .hue-nav {
     display: flex;
     gap: 0.5rem;
@@ -206,16 +208,16 @@ const CSS = `
     border-radius: 20px;
     text-decoration: none;
     font-size: 0.9rem;
-    color: var(--text-secondary);
-    background: var(--bg-secondary);
+    color: var(--text-muted);
+    background: var(--card-bg);
     transition: all 0.2s;
   }
   .hue-pill:hover {
-    color: var(--text-primary);
-    background: var(--bg-tertiary);
+    color: var(--text);
+    background: var(--surface);
   }
   .hue-pill.active {
-    color: var(--text-inverse);
+    color: #fff;
     background: var(--accent);
   }
 
@@ -227,7 +229,7 @@ const CSS = `
   }
 
   .hue-room-card {
-    background: var(--bg-secondary);
+    background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 1rem;
@@ -245,18 +247,37 @@ const CSS = `
   .hue-room-name {
     font-weight: 600;
     font-size: 1.05rem;
-    color: var(--text-primary);
+    color: var(--text);
   }
   .hue-light-count {
     font-size: 0.85rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
+  }
+
+  .hue-light-dots {
+    display: flex;
+    gap: 6px;
+    margin-top: 0.25rem;
+    flex-wrap: wrap;
+  }
+  .hue-light-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+  }
+  .hue-light-dot.on {
+    background: var(--accent);
+  }
+  .hue-light-dot.off {
+    background: var(--surface);
   }
 
   .hue-toggle {
     position: relative;
     width: 44px;
     height: 24px;
-    background: var(--bg-tertiary);
+    background: var(--surface);
     border-radius: 12px;
     border: none;
     cursor: pointer;
@@ -289,7 +310,7 @@ const CSS = `
   }
   .hue-brightness-label {
     font-size: 0.8rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     text-align: right;
     display: block;
   }
@@ -304,14 +325,14 @@ const CSS = `
     padding: 0.25rem 0.6rem;
     border-radius: 12px;
     border: 1px solid var(--border);
-    background: var(--bg-primary);
-    color: var(--text-secondary);
+    background: var(--bg);
+    color: var(--text-muted);
     font-size: 0.8rem;
     cursor: pointer;
     transition: all 0.2s;
   }
   .hue-scene-btn:hover {
-    color: var(--text-primary);
+    color: var(--text);
     border-color: var(--accent);
   }
 
@@ -320,18 +341,18 @@ const CSS = `
     align-items: center;
     gap: 1rem;
     padding: 0.75rem 1rem;
-    background: var(--bg-secondary);
+    background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: 8px;
     margin-bottom: 1.5rem;
   }
   .hue-master-label {
     font-weight: 600;
-    color: var(--text-primary);
+    color: var(--text);
   }
   .hue-master-count {
     font-size: 0.9rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     margin-left: auto;
   }
 
@@ -347,24 +368,24 @@ const CSS = `
   }
   .hue-effect-name {
     font-weight: 500;
-    color: var(--text-primary);
+    color: var(--text);
   }
   .hue-effect-desc {
     font-size: 0.85rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
   }
   .hue-stop-btn {
     padding: 0.25rem 0.6rem;
     border-radius: 4px;
-    border: 1px solid var(--danger, #e74c3c);
+    border: 1px solid var(--red, #e74c3c);
     background: transparent;
-    color: var(--danger, #e74c3c);
+    color: var(--red, #e74c3c);
     font-size: 0.8rem;
     cursor: pointer;
     transition: all 0.2s;
   }
   .hue-stop-btn:hover {
-    background: var(--danger, #e74c3c);
+    background: var(--red, #e74c3c);
     color: white;
   }
 
@@ -431,26 +452,19 @@ const CSS = `
     gap: 1rem;
   }
   .hue-sensor-card {
-    background: var(--bg-secondary);
+    background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 1rem;
   }
-  .hue-sensor-type {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-secondary);
-    margin-bottom: 0.25rem;
-  }
   .hue-sensor-value {
     font-size: 1.5rem;
     font-weight: 700;
-    color: var(--text-primary);
+    color: var(--text);
   }
   .hue-sensor-label {
     font-size: 0.85rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     margin-top: 0.25rem;
   }
   .hue-sensor-status {
@@ -460,23 +474,41 @@ const CSS = `
     border-radius: 50%;
     margin-right: 0.4rem;
   }
-  .hue-sensor-status.active { background: var(--success, #2ecc71); }
-  .hue-sensor-status.inactive { background: var(--text-secondary); }
+  .hue-sensor-status.active { background: var(--green, #2ecc71); }
+  .hue-sensor-status.inactive { background: var(--text-muted); }
+
+  .hue-section-header {
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin: 1.5rem 0 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .hue-section-header:first-child {
+    margin-top: 0;
+  }
+  .hue-section-header svg {
+    vertical-align: -2px;
+    margin-right: 0.35rem;
+  }
 
   .hue-not-configured {
     text-align: center;
     padding: 3rem 1rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
   }
   .hue-not-configured h2 {
-    color: var(--text-primary);
+    color: var(--text);
     margin-bottom: 0.5rem;
   }
 
   .hue-empty {
     text-align: center;
     padding: 2rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
   }
 
   .hue-flash {
@@ -485,6 +517,41 @@ const CSS = `
   @keyframes hue-flash-anim {
     0% { opacity: 0.5; }
     100% { opacity: 1; }
+  }
+
+  /* Manual .plugin-hue scoping required — pluginStyles() skips at-rules */
+  @media (max-width: 640px) {
+    .plugin-hue .hue-nav {
+      gap: 0.25rem;
+    }
+    .plugin-hue .hue-pill {
+      padding: 0.3rem 0.7rem;
+      font-size: 0.8rem;
+    }
+    .plugin-hue .hue-grid {
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+    }
+    .plugin-hue .hue-scene-grid {
+      grid-template-columns: 1fr;
+      gap: 0.5rem;
+    }
+    .plugin-hue .hue-scene-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+    }
+    .plugin-hue .hue-scene-card-name {
+      margin-bottom: 0;
+    }
+    .plugin-hue .hue-sensor-grid {
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+    }
+    .plugin-hue .hue-master-bar {
+      flex-wrap: wrap;
+    }
   }
 `;
 
@@ -543,7 +610,7 @@ async function renderDashboard(): Promise<string> {
   return html;
 }
 
-function renderRoomCard(room: RoomState): string {
+export function renderRoomCard(room: RoomState): string {
   const brightnessVal = Math.round(room.brightness);
   const scenesHtml = room.scenes.length > 0
     ? `<div class="hue-scenes-row">${room.scenes.map(
@@ -563,6 +630,9 @@ function renderRoomCard(room: RoomState): string {
           onclick="hueToggleRoom('${escapeHtml(room.id)}', '${escapeHtml(room.groupedLightId ?? '')}')"
           title="Toggle ${escapeHtml(room.name)}"></button>
       </div>
+      <div class="hue-light-dots">${room.lights.map(
+        (l) => `<span class="hue-light-dot ${l.on ? 'on' : 'off'}" title="${l.on ? 'On' : 'Off'}"></span>`,
+      ).join('')}</div>
       <input type="range" class="hue-brightness" min="0" max="100" value="${String(brightnessVal)}"
         data-room-brightness="${escapeHtml(room.id)}"
         oninput="hueDebouncedRoomBrightness('${escapeHtml(room.id)}', '${escapeHtml(room.groupedLightId ?? '')}', this.value)"
@@ -637,7 +707,7 @@ async function renderScenes(): Promise<string> {
 // Page: Sensors
 // =============================================================================
 
-async function renderSensors(): Promise<string> {
+export async function renderSensors(): Promise<string> {
   const [motion, temp, lightLevel, devices] = await Promise.all([
     getMotionSensors(),
     getTemperatureSensors(),
@@ -655,49 +725,65 @@ async function renderSensors(): Promise<string> {
     return '<div class="hue-empty">No sensors found on the bridge.</div>';
   }
 
-  let html = '<div class="hue-sensor-grid">';
+  // Inline SVG icons (16x16, currentColor)
+  const motionIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 6a2 2 0 1 1 0 4"/><path d="M5 4.5a5 5 0 0 0 0 7"/><path d="M11 4.5a5 5 0 0 1 0 7"/></svg>';
+  const tempIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8"/><circle cx="8" cy="12" r="2"/><path d="M6 10V4a2 2 0 1 1 4 0v6"/></svg>';
+  const luxIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>';
 
-  for (const s of motion) {
-    const name = deviceNames.get(s.owner.rid) ?? 'Motion sensor';
-    const active = s.motion.motion;
-    html += `
-      <div class="hue-sensor-card" data-sensor-id="${escapeHtml(s.id)}">
-        <div class="hue-sensor-type">Motion</div>
-        <div class="hue-sensor-value">
-          <span class="hue-sensor-status ${active ? 'active' : 'inactive'}"></span>
-          ${active ? 'Motion detected' : 'Clear'}
+  let html = '';
+
+  if (motion.length > 0) {
+    html += `<h3 class="hue-section-header">${motionIcon} Motion</h3>`;
+    html += '<div class="hue-sensor-grid">';
+    for (const s of motion) {
+      const name = deviceNames.get(s.owner.rid) ?? 'Motion sensor';
+      const active = s.motion.motion;
+      html += `
+        <div class="hue-sensor-card" data-sensor-id="${escapeHtml(s.id)}">
+          <div class="hue-sensor-value">
+            <span class="hue-sensor-status ${active ? 'active' : 'inactive'}"></span>
+            ${active ? 'Motion detected' : 'Clear'}
+          </div>
+          <div class="hue-sensor-label">${escapeHtml(name)}</div>
         </div>
-        <div class="hue-sensor-label">${escapeHtml(name)}</div>
-      </div>
-    `;
+      `;
+    }
+    html += '</div>';
   }
 
-  for (const s of temp) {
-    const name = deviceNames.get(s.owner.rid) ?? 'Temperature sensor';
-    const tempC = s.temperature.temperature;
-    const tempF = (tempC * 9) / 5 + 32;
-    html += `
-      <div class="hue-sensor-card" data-sensor-id="${escapeHtml(s.id)}">
-        <div class="hue-sensor-type">Temperature</div>
-        <div class="hue-sensor-value">${tempC.toFixed(1)}&deg;C / ${tempF.toFixed(1)}&deg;F</div>
-        <div class="hue-sensor-label">${escapeHtml(name)}</div>
-      </div>
-    `;
+  if (temp.length > 0) {
+    html += `<h3 class="hue-section-header">${tempIcon} Temperature</h3>`;
+    html += '<div class="hue-sensor-grid">';
+    for (const s of temp) {
+      const name = deviceNames.get(s.owner.rid) ?? 'Temperature sensor';
+      const tempC = s.temperature.temperature;
+      const tempF = (tempC * 9) / 5 + 32;
+      html += `
+        <div class="hue-sensor-card" data-sensor-id="${escapeHtml(s.id)}">
+          <div class="hue-sensor-value">${tempC.toFixed(1)}&deg;C / ${tempF.toFixed(1)}&deg;F</div>
+          <div class="hue-sensor-label">${escapeHtml(name)}</div>
+        </div>
+      `;
+    }
+    html += '</div>';
   }
 
-  for (const s of lightLevel) {
-    const name = deviceNames.get(s.owner.rid) ?? 'Light sensor';
-    const lux = Math.round(Math.pow(10, (s.light.light_level - 1) / 10000));
-    html += `
-      <div class="hue-sensor-card" data-sensor-id="${escapeHtml(s.id)}">
-        <div class="hue-sensor-type">Light Level</div>
-        <div class="hue-sensor-value">${String(lux)} lux</div>
-        <div class="hue-sensor-label">${escapeHtml(name)}</div>
-      </div>
-    `;
+  if (lightLevel.length > 0) {
+    html += `<h3 class="hue-section-header">${luxIcon} Light Level</h3>`;
+    html += '<div class="hue-sensor-grid">';
+    for (const s of lightLevel) {
+      const name = deviceNames.get(s.owner.rid) ?? 'Light sensor';
+      const lux = Math.round(Math.pow(10, (s.light.light_level - 1) / 10000));
+      html += `
+        <div class="hue-sensor-card" data-sensor-id="${escapeHtml(s.id)}">
+          <div class="hue-sensor-value">${String(lux)} lux</div>
+          <div class="hue-sensor-label">${escapeHtml(name)}</div>
+        </div>
+      `;
+    }
+    html += '</div>';
   }
 
-  html += '</div>';
   return html;
 }
 
@@ -1055,7 +1141,7 @@ export function registerHueWebRoutes(router: PluginRouter): void {
 // =============================================================================
 
 // Cached widget state (updated by SSE poll loop)
-let cachedWidgetHtml = '<p style="color:var(--text-secondary)">Connecting to bridge...</p>';
+let cachedWidgetHtml = '<p style="color:var(--text-muted)">Connecting to bridge...</p>';
 let cachedWidgetSize: 'small' | 'medium' = 'small';
 
 export function updateWidgetCache(
@@ -1073,7 +1159,7 @@ export function updateWidgetCache(
     <p style="font-size:1.1rem;margin:0 0 0.25rem 0">
       ${String(totalOn)}/${String(totalLights)} lights on
     </p>
-    <p style="font-size:0.85rem;color:var(--text-secondary);margin:0">
+    <p style="font-size:0.85rem;color:var(--text-muted);margin:0">
       ${topRooms || 'No rooms'}
     </p>
   `;
