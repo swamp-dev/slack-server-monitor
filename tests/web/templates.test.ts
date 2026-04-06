@@ -33,7 +33,7 @@ describe('web templates', () => {
       const html = renderConversation(messages, toolCalls, metadata);
 
       expect(html).toContain('<!DOCTYPE html>');
-      expect(html).toContain('<title>Claude Conversation</title>');
+      expect(html).toContain('<title>What is the status of nginx?</title>');
       expect(html).toContain('What is the status of nginx?');
       expect(html).toContain('The nginx container is running.');
       expect(html).toContain('class="message user"');
@@ -57,6 +57,8 @@ describe('web templates', () => {
       // User-supplied script tag should be escaped, not rendered as HTML
       expect(html).not.toContain('<script>alert');
       expect(html).toContain('&lt;script&gt;');
+      // Title tag should also be escaped (first user message becomes page title)
+      expect(html).toContain('<title>&lt;script&gt;alert');
     });
 
     it('should format code blocks', () => {

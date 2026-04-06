@@ -120,14 +120,17 @@ const notificationPageStyles = `
   .notif-page-header .btn {
     padding: 8px 16px;
     border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--fg);
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
     cursor: pointer;
     font-size: 0.85rem;
+    font-weight: 500;
+    transition: background 0.2s, color 0.2s;
   }
   .notif-page-header .btn:hover {
-    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--bg);
   }
   .notif-list {
     display: flex;

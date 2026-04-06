@@ -318,15 +318,15 @@ const dashboardStyles = `
     margin-top: 4px;
   }
   .health-bar {
-    height: 4px;
+    height: 6px;
     background: var(--border);
-    border-radius: 2px;
+    border-radius: 3px;
     margin-top: 8px;
     overflow: hidden;
   }
   .health-bar-fill {
     height: 100%;
-    border-radius: 2px;
+    border-radius: 3px;
     transition: width 0.5s ease;
   }
   .health-bar-fill.ok { background: var(--green); }

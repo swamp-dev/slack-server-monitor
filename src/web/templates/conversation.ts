@@ -766,12 +766,12 @@ const conversationDetailStyles = `
     bottom: 24px;
     right: 24px;
     z-index: 40;
-    width: 40px;
-    height: 40px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
-    background: var(--accent);
-    color: #fff;
-    border: none;
+    background: var(--surface);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -783,12 +783,14 @@ const conversationDetailStyles = `
     pointer-events: none;
   }
   .scroll-to-bottom.visible {
-    opacity: 1;
+    opacity: 0.8;
     transform: translateY(0);
     pointer-events: auto;
   }
   .scroll-to-bottom:hover {
-    background: var(--accent-secondary);
+    opacity: 1;
+    color: var(--text);
+    border-color: var(--accent);
   }
 
   /* Copy message button */
@@ -926,6 +928,17 @@ const conversationDetailStyles = `
 `;
 
 /**
+ * Extract a title from the first user message, truncated with ellipsis.
+ * Returns raw (unescaped) text — callers must escape for their context.
+ */
+function conversationTitle(messages: ConversationMessage[], maxLen: number): string {
+  const first = messages.find((m) => m.role === 'user');
+  if (!first) return 'Claude Conversation';
+  const preview = first.content.slice(0, maxLen);
+  return preview + (first.content.length > maxLen ? '...' : '');
+}
+
+/**
  * Render the full conversation page
  */
 export function renderConversation(
@@ -981,7 +994,7 @@ export function renderConversation(
         <div class="conv-header-top">
           <div style="display: flex; align-items: center; gap: 8px;">
             <a href="/c" class="conv-back">${icon('arrow-left', 16)} Back to conversations</a>
-            <h1 style="margin: 0; font-size: 1.1rem;">${convId ? `<span class="${starClass}" data-id="${convId}" id="detail-star">&#9733;</span> ` : ''}Claude Conversation</h1>
+            <h1 style="margin: 0; font-size: 1.1rem;">${convId ? `<span class="${starClass}" data-id="${convId}" id="detail-star">&#9733;</span> ` : ''}${escapeHtml(conversationTitle(messages, 80))}</h1>
           </div>
           <div class="export-actions" style="margin-top: 0;">
             <a class="export-btn" id="export-md" href="/c/${metadata.threadTs}/${metadata.channelId}/export/md" title="Export Markdown">${icon('download', 14)}</a>
@@ -1222,7 +1235,7 @@ export function renderConversation(
   </script>`;
 
   return wrapInShell({
-    title: 'Claude Conversation',
+    title: conversationTitle(messages, 60),
     styles: conversationDetailStyles,
     body: bodyHtml,
     scripts,

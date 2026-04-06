@@ -199,6 +199,18 @@ export function renderLogin(error?: string, returnTo?: string): string {
     .token-check.valid {
       transform: translateY(-50%) scale(1);
     }
+    .login-help {
+      margin-top: 10px;
+      margin-bottom: 0;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    .login-help code {
+      padding: 1px 5px;
+      background: var(--code-bg);
+      border-radius: 3px;
+      font-size: 0.7rem;
+    }
   `;
 
   const bodyHtml = `
@@ -214,6 +226,7 @@ export function renderLogin(error?: string, returnTo?: string): string {
         <span class="token-check" id="token-check">${icon('check', 14)}</span>
         <button type="button" class="toggle-password" id="toggle-password" aria-label="Show password">${icon('eye', 16)}</button>
       </div>
+      <p class="login-help">Your token is the <code>WEB_AUTH_TOKEN</code> value in your <code>.env</code> file.</p>
       ${returnToInput}
       <button type="submit">${icon('logout', 16)} Log in</button>
     </form>
