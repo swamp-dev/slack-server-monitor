@@ -1,10 +1,12 @@
-# Epic: Username/Password Authentication for Web UI
+# Epic: User Accounts with Slack ID Linkage
 
 ## Context
 
-The web UI currently requires either a Slack-generated HMAC link token or the raw `WEB_AUTH_TOKEN` (emergency admin) to log in. There's no way for regular users to access the web UI directly without Slack. Additionally, all authenticated users see all conversations regardless of ownership.
+The current auth model relies on a static env-var whitelist (`AUTHORIZED_USER_IDS`) with no persistent user records. Web sessions carry a simple `is_admin` boolean with no real identity model. There's no way to add/remove users without restarting the app, no per-user conversation scoping, and no standalone web login.
 
-This epic adds username/password authentication with invite-code-gated registration, per-user conversation scoping, full admin CRUD in the web UI, and a separate CLI for user/invite management.
+This epic introduces a `users` table as the single source of truth for identity, connected to Slack IDs. It adds two web login paths (Slack link tokens and username/password with invite codes), per-user conversation filtering, and admin tooling for managing users at runtime.
+
+**Design principle**: Use a text `role` column (not boolean `is_admin`) so future tickets can introduce granular permissions without schema changes.
 
 ---
 
@@ -12,91 +14,179 @@ This epic adds username/password authentication with invite-code-gated registrat
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| User management CLI | Separate `npm run manage-users` | Keeps setup wizard focused on initial config |
-| Admin web UI | Full CRUD | Admin can create/edit/delete users, generate invites from web |
-| Web conversations | Web identity (`web:<username>`) | Web users own their own conversations; linked Slack IDs also visible |
-| Password hashing | `crypto.scrypt` (Node built-in) | No new dependency needed |
+| Identity model | Slack ID is primary, web credentials optional | Bot is Slack-first; web is secondary interface |
+| Role storage | `role TEXT CHECK(role IN ('admin','user'))` | Extensible -- add roles later via ALTER CHECK |
+| Web user namespace | `web:<username>` prefix on userId | Prevents collision with Slack IDs (`U...`) |
+| Password hashing | `crypto.scrypt` (Node built-in) | No new dependency |
 | Registration gating | Single-use invite codes with expiry | Prevents abuse while remaining user-friendly |
-| User ID namespace | `web:<username>` prefix | Prevents collision with Slack IDs (`U...`) |
+| Conversation scoping | Non-admins see only own conversations | Admin sees all; linked Slack+web IDs merged |
+| User management | Slack command + web admin + CLI | Three surfaces for flexibility |
 
 ---
 
-## Phase 1: User Store
+## Dependency Graph
 
-**New file:** `src/services/user-store.ts`
+```
+Ticket 1 (users table + UserStore)
+  ├──> Ticket 2 (bootstrap + migrate Slack auth)
+  │      ├──> Ticket 5 (/user-admin Slack command)
+  │      └──> Ticket 8 (deprecate env-var-only auth)
+  ├──> Ticket 3 (invite store + web credentials)
+  │      └──> Ticket 6 (web registration + login routes)
+  ├──> Ticket 4 (web sessions use user accounts)
+  │      ├──> Ticket 6
+  │      └──> Ticket 7 (admin web UI)
+  └──> Ticket 9 (conversation scoping)
+```
 
-SQLite table in the existing `claude.db`:
+Parallelizable: 2+3+4 after 1. Then 5+6+7 after their deps. 8+9 are final.
+
+---
+
+## Ticket 1: `users` table and `UserStore` service
+
+**Summary**: Create the foundational data layer for user accounts.
+
+### Schema
 
 ```sql
-CREATE TABLE IF NOT EXISTS web_users (
+CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  password_hash TEXT NOT NULL,       -- "hex(salt):hex(scrypt_key)"
+  slack_id TEXT UNIQUE,                -- NULL if web-only user
+  username TEXT UNIQUE COLLATE NOCASE, -- NULL if Slack-only user
+  password_hash TEXT,                  -- "hex(salt):hex(scrypt_key)", NULL if Slack-only
   display_name TEXT,
-  slack_user_id TEXT,                -- optional link to Slack identity
-  is_admin INTEGER NOT NULL DEFAULT 0,
+  role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('admin', 'user')),
+  is_active INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_web_users_username ON web_users(username);
-CREATE INDEX IF NOT EXISTS idx_web_users_slack_id ON web_users(slack_user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slack_id ON users(slack_id) WHERE slack_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username) WHERE username IS NOT NULL;
 ```
 
 ### Password Hashing
 
 - `crypto.scrypt` with 32-byte random salt, keylen=64
 - Store as `hex(salt):hex(derivedKey)`
-- Verify with timing-safe comparison
-- All password operations are async (scrypt is callback-based, promisify it)
+- Timing-safe comparison on verify
+- All password ops are async (promisified scrypt)
 
-### Validation
+### Validation (Zod)
 
+- `UserRoleSchema = z.enum(['admin', 'user'])`
 - Username: 3-32 chars, `^[a-zA-Z][a-zA-Z0-9_-]*$`
 - Password: minimum 8 characters
+- Slack ID: `^U[A-Z0-9]+$`
 
 ### Methods
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `createUser` | `(username, password, opts?) → Promise<WebUser>` | opts: displayName, slackUserId, isAdmin |
-| `verifyPassword` | `(username, password) → Promise<WebUser \| null>` | Async, timing-safe |
-| `getUser` | `(username) → WebUser \| null` | |
-| `getUserBySlackId` | `(slackUserId) → WebUser \| null` | |
-| `updateUser` | `(username, updates) → void` | displayName, slackUserId, isAdmin |
-| `updatePassword` | `(username, newPassword) → Promise<void>` | Rehash with new salt |
-| `deleteUser` | `(username) → void` | |
-| `listUsers` | `() → WebUser[]` | |
+| `create` | `(opts: CreateUserInput) → Promise<User>` | At least one of slack_id or username required |
+| `getById` | `(id: number) → User \| null` | |
+| `getBySlackId` | `(slackId: string) → User \| null` | |
+| `getByUsername` | `(username: string) → User \| null` | Case-insensitive |
+| `verifyPassword` | `(username: string, password: string) → Promise<User \| null>` | Timing-safe |
+| `updateRole` | `(id: number, role: string) → void` | |
+| `updateProfile` | `(id: number, updates) → void` | display_name, slack_id, username |
+| `updatePassword` | `(id: number, newPassword: string) → Promise<void>` | Rehash with new salt |
+| `deactivate` | `(id: number) → void` | Soft delete |
+| `activate` | `(id: number) → void` | |
+| `listAll` | `() → User[]` | |
+| `countByRole` | `(role: string) → number` | For last-admin protection |
+| `resolveIdentities` | `(userId: string) → string[]` | See below |
 
-Singleton pattern matching `session-store.ts` (`getUserStore(dbPath)`).
+### `resolveIdentities(userId)`
 
-### Tests
+Given a session userId, returns all IDs whose conversations the user can see:
 
-**New file:** `tests/services/user-store.test.ts`
+| Input | Returns |
+|-------|---------|
+| `web:alice` (linked to `U01ABC`) | `['web:alice', 'U01ABC']` |
+| `web:bob` (no Slack link) | `['web:bob']` |
+| `U01ABC` (Slack session, linked to `web:alice`) | `['U01ABC', 'web:alice']` |
+| Admin user | `undefined` (no filter = see all) |
 
-- Create user and verify fields
-- Verify correct password returns user
-- Verify wrong password returns null
-- Duplicate username throws
-- Case-insensitive username lookup
-- Update user fields
-- Delete user
-- List users
+### Files
+
+- `src/services/user-store.ts` (new)
+- `src/types/user.ts` (new)
+- `tests/services/user-store.test.ts` (new)
+
+### Acceptance Criteria
+
+- [ ] Table created on startup via `initSchema()`
+- [ ] All CRUD methods work with SQLite
+- [ ] Password hash/verify is timing-safe
+- [ ] Zod validation on all inputs
+- [ ] `resolveIdentities` handles all cases
+- [ ] Tests for: create, get by slack/username, verify password (correct + wrong), duplicate handling, case-insensitive username, deactivate/activate, list, role update
+
+### Dependencies
+
+None
 
 ---
 
-## Phase 2: Invite Store
+## Ticket 2: Bootstrap users from env var + migrate Slack auth
 
-**New file:** `src/services/invite-store.ts`
+**Summary**: Seed `users` table from `AUTHORIZED_USER_IDS` on first startup, then make the `users` table the primary auth source for Slack commands.
+
+### Bootstrap Logic
+
+1. If `users` table empty AND `AUTHORIZED_USER_IDS` is set: insert all IDs as Slack-only users. First ID becomes `admin`, rest become `user`.
+2. If table populated: no-op (idempotent).
+3. Best-effort Slack API call to resolve display names.
+
+### Authorize Middleware Changes
+
+**Current** (`src/middleware/authorize.ts`): checks `config.authorization.userIds.includes(userId)`.
+
+**New**:
+1. Primary: `userStore.getBySlackId(userId)` -- allow if found + `is_active`
+2. Fallback: `config.authorization.userIds.includes(userId)` with deprecation warning log
+3. Attach `user.role` to Bolt `args.context` for downstream handlers
+4. Relax `authorization.userIds` schema from `.min(1)` to allow empty array
+
+### Files
+
+- `src/services/user-store.ts` (add `bootstrap` method)
+- `src/middleware/authorize.ts` (DB lookup + role on context)
+- `src/config/schema.ts` (relax userIds constraint)
+- `src/app.ts` (wire bootstrap + UserStore)
+- `tests/middleware/authorize.test.ts` (update)
+
+### Acceptance Criteria
+
+- [ ] Fresh install with `AUTHORIZED_USER_IDS=U111,U222` creates 2 rows, U111 is admin
+- [ ] Re-running bootstrap on populated table is no-op
+- [ ] User in `users` table can execute commands even if not in env var
+- [ ] Deactivated user (`is_active=0`) is rejected even if in env var
+- [ ] Env-var fallback works with deprecation warning
+- [ ] `args.context.userRole` available to command handlers
+
+### Dependencies
+
+Ticket 1
+
+---
+
+## Ticket 3: Invite store + web credentials on user accounts
+
+**Summary**: Add invite code infrastructure and the ability for users to have username/password credentials linked to their account.
+
+### Invite Schema
 
 ```sql
 CREATE TABLE IF NOT EXISTS invite_codes (
   code TEXT PRIMARY KEY,             -- 32-char hex
-  created_by TEXT NOT NULL,          -- userId of admin who created it
-  is_admin INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER NOT NULL,       -- user.id of admin who created it
+  role TEXT NOT NULL DEFAULT 'user',
   slack_user_id TEXT,                -- optionally pre-link invitee to Slack ID
   expires_at INTEGER NOT NULL,
   used_at INTEGER,
-  used_by TEXT                       -- username who redeemed it
+  used_by INTEGER                    -- user.id who redeemed it
 );
 ```
 
@@ -104,86 +194,294 @@ CREATE TABLE IF NOT EXISTS invite_codes (
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `createInvite` | `(createdBy, opts?) → InviteCode` | opts: isAdmin, slackUserId, ttlHours (default 72) |
+| `createInvite` | `(createdBy, opts?) → InviteCode` | opts: role, slackUserId, ttlHours (default 72) |
 | `redeemInvite` | `(code) → InviteCode \| null` | Atomic: UPDATE WHERE used_at IS NULL AND expires_at > now |
 | `getInvite` | `(code) → InviteCode \| null` | |
-| `listInvites` | `() → InviteCode[]` | All invites (used and unused) |
-| `listActiveInvites` | `() → InviteCode[]` | Unused + not expired |
+| `listActive` | `() → InviteCode[]` | Unused + not expired |
+| `listAll` | `() → InviteCode[]` | |
 | `deleteInvite` | `(code) → void` | |
 | `cleanupExpired` | `() → number` | Delete expired+used invites older than 7 days |
 
-Code generation: `crypto.randomBytes(16).toString('hex')` (32 chars)
+Code generation: `crypto.randomBytes(16).toString('hex')`
 
-### Tests
+### Files
 
-**New file:** `tests/services/invite-store.test.ts`
+- `src/services/invite-store.ts` (new)
+- `tests/services/invite-store.test.ts` (new)
 
-- Create invite and verify fields
-- Redeem valid invite succeeds
-- Double-redeem returns null
-- Expired invite returns null
-- Cleanup removes old expired invites
+### Acceptance Criteria
+
+- [ ] Create invite with code, expiry, and role
+- [ ] Redeem valid invite succeeds (atomic)
+- [ ] Double-redeem returns null
+- [ ] Expired invite returns null
+- [ ] Cleanup removes old expired invites
+- [ ] Pre-linked Slack ID carried through to user creation
+
+### Dependencies
+
+Ticket 1
 
 ---
 
-## Phase 3: Auth Module Updates
+## Ticket 4: Web sessions reference user accounts
 
-**Modified file:** `src/web/auth.ts`
+**Summary**: Derive session permissions from the `users` table instead of hardcoding from token type.
 
-### New Functions
+### Changes
 
-#### `resolveUserPassword(username, password, dbPath): Promise<TokenIdentity | null>`
+- `SessionStore.createSession` accepts user ID and looks up role from `UserStore`
+- HMAC link token login: resolve user from DB, create session with actual role
+- Static admin token: still grants admin (emergency access)
+- If Slack user in token not in `users` table: auto-create as `user` role with warning log
 
+### Auth Module Updates (`src/web/auth.ts`)
+
+New function: `resolveUserPassword(username, password) → Promise<TokenIdentity | null>`
 - Calls `userStore.verifyPassword(username, password)`
-- Returns `{ userId: 'web:<username>', isAdmin: user.isAdmin }` or `null`
-- The `web:` prefix namespaces web users away from Slack IDs
+- Returns `{ userId: 'web:<username>', isAdmin: user.role === 'admin' }`
 
-#### `resolveUserIdentities(userId, dbPath): string[]`
+### Files
 
-Purpose: Given an authenticated userId, return all IDs whose conversations this user should see.
+- `src/services/session-store.ts`
+- `src/web/auth.ts` (add `resolveUserPassword`)
+- `src/web/server.ts` (login flow)
+- `tests/services/session-store.test.ts`
+- `tests/web/auth.test.ts`
 
-| Input | Behavior | Returns |
-|-------|----------|---------|
-| `web:alice` (linked to `U01ABC`) | Sees both identities | `['web:alice', 'U01ABC']` |
-| `web:bob` (no Slack link) | Sees only web convos | `['web:bob']` |
-| `admin` or `isAdmin=true` | Sees everything | `[]` (empty = no filter) |
-| `U01ABC` (Slack session) | Sees own convos | `['U01ABC']` |
+### Acceptance Criteria
 
-### Existing `resolveToken` — UNCHANGED
+- [ ] Admin user via HMAC link token gets `isAdmin: true` session
+- [ ] Regular user via HMAC link token gets `isAdmin: false`
+- [ ] Static admin token still works
+- [ ] `resolveUserPassword` returns correct identity for valid credentials
+- [ ] `resolveUserPassword` returns null for invalid credentials (timing-safe)
 
-HMAC link tokens and static admin token continue working exactly as before.
+### Dependencies
 
-### Tests
-
-**Modified file:** `tests/web/auth.test.ts`
-
-- `resolveUserPassword` with valid/invalid credentials
-- `resolveUserIdentities` for all cases above
+Ticket 1
 
 ---
 
-## Phase 4: Conversation Store Filtering
+## Ticket 5: `/user-admin` Slack command
 
-**Modified file:** `src/services/conversation-store.ts`
+**Summary**: Admin user management from Slack.
 
-### Add `userId` parameter to all unfiltered query methods
+### Subcommands
 
-| Method | Has userId? | Change |
-|--------|-------------|--------|
-| `listRecentSessions(limit, offset, userId?)` | Yes (string) | Extend to accept `string \| string[]` |
-| `countSessions(userId?)` | Yes (string) | Extend to accept `string \| string[]` |
-| `searchConversations(query, limit, offset)` | No | Add `userId?: string \| string[]` |
-| `countSearchResults(query)` | No | Add `userId?: string \| string[]` |
-| `listFavoriteSessions(limit, offset)` | No | Add `userId?: string \| string[]` |
-| `countFavoriteSessions()` | No | Add `userId?: string \| string[]` |
-| `listSessionsByTag(tag, limit, offset)` | No | Add `userId?: string \| string[]` |
-| `countSessionsByTag(tag)` | No | Add `userId?: string \| string[]` |
-| `listArchivedSessions(limit, offset)` | No | Add `userId?: string \| string[]` |
-| `countArchivedSessions()` | No | Add `userId?: string \| string[]` |
-| `listAllTags()` | No | Add `userId?: string \| string[]` |
-| `getSessionStats(hours)` | No | Add `userId?: string \| string[]` |
+| Subcommand | Access | Description |
+|------------|--------|-------------|
+| `list` | Any user | Show all users with roles and active status |
+| `whoami` | Any user | Show own user record |
+| `add <SlackID> [admin]` | Admin | Add new Slack-only user |
+| `remove <SlackID>` | Admin | Soft-deactivate user |
+| `promote <SlackID>` | Admin | Set role to admin |
+| `demote <SlackID>` | Admin | Set role to user |
+| `invite [admin] [ttl=72h]` | Admin | Generate invite code, post to DM |
 
-### Implementation Pattern
+### Guards
+
+- Admin-only for mutations (check `args.context.userRole`)
+- Last-admin protection: cannot demote/remove if `countByRole('admin') === 1`
+- Slack ID format validation
+
+### Files
+
+- `src/commands/user-admin.ts` (new)
+- `src/commands/index.ts` (register)
+- `tests/commands/user-admin.test.ts` (new)
+
+### Acceptance Criteria
+
+- [ ] Admin can list, add, remove, promote, demote, generate invites
+- [ ] Non-admin gets "Permission denied" for mutations
+- [ ] Non-admin can run `whoami` and `list`
+- [ ] Cannot demote/remove last admin
+- [ ] Block Kit formatted output
+
+### Dependencies
+
+Tickets 1, 2, 3
+
+---
+
+## Ticket 6: Web registration + username/password login
+
+**Summary**: Add `/register` page (invite-gated) and username/password login tab.
+
+### Routes
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/register` | Public | Registration form (404 if disabled) |
+| `POST` | `/register` | Public | Redeem invite, create user, start session |
+| `POST` | `/login` | Public | Extended: username/password OR token |
+
+### POST /register Flow
+
+1. Rate limit (5 per IP per 15 min)
+2. Validate fields (Zod)
+3. Verify passwords match
+4. `inviteStore.redeemInvite(code)` -- atomic
+5. `userStore.create({ username, password, role: invite.role, slackUserId: invite.slackUserId })`
+6. `sessionStore.createSession('web:<username>', isAdmin)`
+7. Set cookie, redirect to `/`
+
+### POST /login Changes
+
+Detect auth mode from request body:
+- `body.username + body.password` → `resolveUserPassword()` (async)
+- `body.token` → `resolveToken()` (existing)
+
+### Login Page Changes
+
+Replace single token field with tabbed UI:
+- **Tab 1**: Username + Password (default)
+- **Tab 2**: Access Token (existing)
+- Registration link: "Don't have an account? Register"
+
+### Config
+
+- `WEB_REGISTRATION_ENABLED` (default: `true`) → `web.registrationEnabled`
+
+### Files
+
+- `src/web/server.ts` (routes)
+- `src/web/templates/login.ts` (new or modify existing login rendering)
+- `src/web/templates/register.ts` (new)
+- `src/config/schema.ts` (+registrationEnabled)
+- `src/config/index.ts`
+- `.env.example`
+
+### Acceptance Criteria
+
+- [ ] Register with valid invite code creates account and logs in
+- [ ] Invalid/expired/used invite code shows error
+- [ ] Login with username/password works
+- [ ] Login with token still works
+- [ ] Rate limiting on login + register (5/15min per IP)
+- [ ] `WEB_REGISTRATION_ENABLED=false` returns 404 on `/register`
+
+### Dependencies
+
+Tickets 1, 3, 4
+
+---
+
+## Ticket 7: Admin user management web page
+
+**Summary**: `/admin/users` page for managing accounts and invites in the web UI.
+
+### Routes
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/admin/users` | User list + invite management |
+| `POST` | `/admin/users` | Create user (form) |
+| `PUT` | `/admin/users/:id` | Update user (JSON) |
+| `POST` | `/admin/users/:id/toggle-active` | Activate/deactivate |
+| `POST` | `/admin/users/:id/reset-password` | Reset password |
+| `POST` | `/admin/invites` | Generate invite code |
+| `DELETE` | `/admin/invites/:code` | Delete invite |
+
+### Page Layout
+
+**Users section:**
+- Table: username, display name, Slack ID, role badge, active status, created date
+- Per-row actions: edit, deactivate, reset password
+- Create user form
+
+**Invites section:**
+- Generate invite form: role, TTL, optional Slack ID pre-link
+- Active invites table: code (copyable), created by, role, expires, registration URL, delete
+
+### Guards
+
+- Admin-only middleware on `/admin/*` (403 for non-admins)
+- Last-admin protection on demote/deactivate
+- Admin nav link visible only to admins in shell template
+
+### Files
+
+- `src/web/templates/admin-users.ts` (new)
+- `src/web/templates/index.ts` (export)
+- `src/web/templates/shell.ts` (admin nav link)
+- `src/web/templates/errors.ts` (403 page)
+- `src/web/server.ts` (routes + admin guard middleware)
+
+### Acceptance Criteria
+
+- [ ] Admin sees user list at `/admin/users`
+- [ ] Non-admin gets 403
+- [ ] CRUD operations work from web UI
+- [ ] Invite generation shows copyable registration URL
+- [ ] Last-admin protection
+- [ ] Consistent Dracula theme styling
+
+### Dependencies
+
+Tickets 1, 3, 4
+
+---
+
+## Ticket 8: Deprecate `AUTHORIZED_USER_IDS` as sole auth source
+
+**Summary**: Make env var fully optional once users table is populated. Clean up the fallback.
+
+### Changes
+
+- `authorization.userIds` defaults to `[]`
+- Remove env-var fallback from authorize middleware (DB is sole source of truth)
+- Startup validation:
+  - Users table populated + env var set → INFO: "User accounts active. AUTHORIZED_USER_IDS can be removed."
+  - Users table empty + env var set → normal bootstrap (Ticket 2)
+  - Both empty → ERROR, fail startup with clear message
+
+### Files
+
+- `src/config/schema.ts`
+- `src/config/index.ts`
+- `src/middleware/authorize.ts` (remove fallback)
+- `src/app.ts` (startup validation)
+- `docs/configuration.md` (migration guide)
+
+### Acceptance Criteria
+
+- [ ] App starts without `AUTHORIZED_USER_IDS` if users table populated
+- [ ] App fails with clear error if both empty
+- [ ] No regression for existing deployments with env var set
+- [ ] Docs updated with migration path
+
+### Dependencies
+
+Tickets 1, 2 (must be deployed first)
+
+---
+
+## Ticket 9: Per-user conversation scoping
+
+**Summary**: Non-admin users see only their own conversations in the web UI. Admin sees all.
+
+### Conversation Store Changes
+
+Add `userId?: string | string[]` parameter to all list/count/search methods:
+
+| Method | Change |
+|--------|--------|
+| `listRecentSessions` | Add userId filter |
+| `countSessions` | Add userId filter |
+| `searchConversations` | Add userId filter |
+| `countSearchResults` | Add userId filter |
+| `listFavoriteSessions` | Add userId filter |
+| `countFavoriteSessions` | Add userId filter |
+| `listSessionsByTag` | Add userId filter |
+| `countSessionsByTag` | Add userId filter |
+| `listArchivedSessions` | Add userId filter |
+| `countArchivedSessions` | Add userId filter |
+| `listAllTags` | Add userId filter |
+| `getSessionStats` | Add userId filter |
+
+### Implementation
 
 Private helper to reduce duplication:
 
@@ -193,306 +491,145 @@ private buildUserFilter(userId?: string | string[]): { clause: string; params: R
   if (typeof userId === 'string') {
     return { clause: 'AND c.user_id = $userId', params: { userId } };
   }
-  // Array: AND c.user_id IN ($u0, $u1, ...)
   const params: Record<string, unknown> = {};
-  const placeholders = userId.map((id, i) => {
-    params[`u${i}`] = id;
-    return `$u${i}`;
-  });
+  const placeholders = userId.map((id, i) => { params[`u${i}`] = id; return `$u${i}`; });
   return { clause: `AND c.user_id IN (${placeholders.join(',')})`, params };
 }
 ```
 
-Each method appends the clause and spreads the params into its existing query.
+### Web Server Integration
 
-### Tests
-
-**Modified file:** `tests/services/conversation-store.test.ts`
-
-- Query with no userId returns all
-- Query with single userId filters correctly
-- Query with array of userIds returns conversations from all listed IDs
-- Empty array returns nothing (edge case)
-
----
-
-## Phase 5: Web Templates
-
-**Modified file:** `src/web/templates.ts`
-
-### 5a: Login Page — Modify `renderLogin`
-
-Replace single token field with tabbed interface:
-
-- **Tab 1: "Username & Password"** (default active)
-  - Username text input
-  - Password input
-  - Submit button
-- **Tab 2: "Access Token"**
-  - Existing password/token field (unchanged)
-  - Submit button
-- Link below form: "Don't have an account? Register" → `/register`
-- Tab switching via vanilla JS (no framework)
-
-### 5b: Registration Page — NEW `renderRegister(error?, inviteCode?, returnTo?)`
-
-- Same Dracula theme as login
-- Fields:
-  - Invite code (pre-filled if `?code=` in URL)
-  - Username (3-32 chars, alphanumeric + underscore + hyphen)
-  - Password (min 8 chars)
-  - Confirm password
-  - Display name (optional)
-- Client-side validation: passwords match, min length indicator
-- Error display area (server-side validation errors)
-
-### 5c: Admin User Management — NEW `renderAdminUsers(users[], invites[])`
-
-Full CRUD page with two sections:
-
-**Users section:**
-- Table: username, display name, linked Slack ID, admin badge, created date
-- Per-row actions: Edit, Delete (with confirmation)
-- Edit form (inline or modal): display name, Slack ID, admin toggle, reset password
-- Create user form at top
-
-**Invites section:**
-- Generate invite form: admin toggle, optional Slack ID pre-link, TTL selector
-- Active invites table: code (copyable), created by, admin flag, expires, copy registration link, delete
-- Show full registration URL: `{baseUrl}/register?code={code}`
-
-### 5d: Navbar Update
-
-- Show logged-in user: username for web users, Slack ID for token users, "Admin" for admin token
-- "Users" link (admin only) → `/admin/users`
-- "Logout" link
-
-### 5e: 403 Page — NEW `render403()`
-
-- "403 Forbidden" heading
-- "You don't have permission to access this page"
-- Link back to dashboard
-
----
-
-## Phase 6: Web Server Routes
-
-**Modified file:** `src/web/server.ts`
-
-### New Public Routes (before auth middleware)
-
-| Method | Path | Handler |
-|--------|------|---------|
-| `GET` | `/register` | Render registration form. If `WEB_REGISTRATION_ENABLED=false`, return 404. Accept `?code=` to pre-fill. |
-| `POST` | `/register` | Validate invite code → redeem → create user → create session → redirect to `/` |
-
-#### POST /register flow:
-1. Rate limit check (5 per IP per 15 min)
-2. Validate all fields (Zod schema)
-3. Verify passwords match
-4. `inviteStore.redeemInvite(code)` — atomic, returns null if invalid/used/expired
-5. `userStore.createUser(username, password, { isAdmin: invite.isAdmin, slackUserId: invite.slackUserId })`
-6. `sessionStore.createSession('web:<username>', isAdmin)`
-7. Set cookie, redirect to `/`
-
-### Modified: POST /login
-
-Check for `username` field to determine auth mode:
-
-```
-if (body.username && body.password) → resolveUserPassword() (async)
-else if (body.token) → resolveToken() (existing sync path)
-```
-
-Both paths create session identically. The userId for web users is `web:<username>`.
-
-### Modified: All /c routes — User Filtering
-
-Add a helper middleware or function:
-
+Helper middleware:
 ```typescript
 function getUserFilterIds(res: Response): string[] | undefined {
   if (res.locals.isAdmin) return undefined; // admin sees all
-  // resolveUserIdentities looks up linked Slack ID if web user
-  return resolveUserIdentities(res.locals.userId, dbPath);
+  return userStore.resolveIdentities(res.locals.userId);
 }
 ```
 
-Apply to every store call in every route:
+Apply to all `/c` routes + dashboard.
 
-- `GET /c` — `store.listRecentSessions(pageSize, offset, filterIds)`
-- `GET /c/search` — `store.searchConversations(query, pageSize, offset, filterIds)`
-- `GET /c/favorites` — `store.listFavoriteSessions(pageSize, offset, filterIds)`
-- `GET /c/archived` — `store.listArchivedSessions(pageSize, offset, filterIds)`
-- `GET /c/tag/:tag` — `store.listSessionsByTag(tag, pageSize, offset, filterIds)`
-- `GET /` (dashboard) — filter stats, recent, favorites
+### Conversation Detail Ownership
 
-### Modified: Conversation Detail — Ownership Check
+- Non-admin accessing a conversation they don't own → 404 (don't leak existence)
+- Same check on mutation endpoints (favorite, tag, archive, ask)
 
-`GET /c/:threadTs/:channelId`:
-- Load conversation
-- If not admin: verify `conversation.userId` is in user's identity set
-- If not authorized: return 404 (don't leak existence)
+### Files
 
-Same ownership check for mutation endpoints: `POST /c/:id/favorite`, `POST /c/:id/tag`, `DELETE /c/:id/tag/:tag`, `POST /c/:id/archive`, `POST /c/:threadTs/:channelId/ask`
+- `src/services/conversation-store.ts` (add filtering)
+- `src/web/server.ts` (apply filters to all routes)
+- `tests/services/conversation-store.test.ts` (filter tests)
 
-### New Admin Routes (behind auth middleware + admin guard)
+### Acceptance Criteria
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/admin/users` | Render user management page |
-| `POST` | `/admin/users` | Create user (form submit) |
-| `PUT` | `/admin/users/:username` | Update user (JSON) |
-| `DELETE` | `/admin/users/:username` | Delete user (JSON) |
-| `POST` | `/admin/users/:username/reset-password` | Reset password (JSON) |
-| `POST` | `/admin/invites` | Generate invite code (form/JSON) |
-| `DELETE` | `/admin/invites/:code` | Delete invite code (JSON) |
+- [ ] Non-admin sees only own conversations
+- [ ] Admin sees all conversations
+- [ ] Linked Slack+web identities see conversations from both
+- [ ] Accessing someone else's conversation returns 404
+- [ ] Search, favorites, tags, archives all respect scoping
+- [ ] Dashboard stats scoped to user
 
-Admin guard middleware:
-```typescript
-function requireAdmin(req, res, next) {
-  if (!res.locals.isAdmin) return res.status(403).send(render403());
-  next();
-}
-app.use('/admin', requireAdmin);
-```
+### Dependencies
 
-### Auth Rate Limiting
-
-In-memory map, separate from Slack command rate limiter:
-
-```typescript
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
-// 5 attempts per IP per 15 minutes
-```
-
-Apply to `POST /login` and `POST /register`.
+Tickets 1, 4
 
 ---
 
-## Phase 7: CLI for User Management
+## Ticket 10: CLI for user management
 
-**New file:** `src/cli/manage-users.ts`
+**Summary**: `npm run manage-users` CLI for bootstrapping and managing users outside of Slack/web.
 
-Uses `@clack/prompts` (already a dev dependency). Subcommands via first CLI argument:
+### Commands
 
-| Command | Interactive Prompts | Action |
-|---------|-------------------|--------|
-| `create-user` | username, password (hidden), admin? | Create user in DB |
-| `create-invite` | admin?, TTL hours, Slack ID? | Generate code, display it + registration URL |
-| `list-users` | — | Table of all users |
-| `list-invites` | — | Table of active invites |
-| `link-slack` | username, Slack user ID | Link web user to Slack identity |
-| `set-admin` | username, true/false | Toggle admin flag |
-| `delete-user` | username, confirm | Delete user + their sessions |
-| `reset-password` | username, new password (hidden) | Update password hash |
+| Command | Prompts | Action |
+|---------|---------|--------|
+| `create-user` | username, password, admin? | Create user in DB |
+| `create-invite` | role, TTL, Slack ID? | Generate code + registration URL |
+| `list-users` | -- | Table of all users |
+| `list-invites` | -- | Table of active invites |
+| `link-slack` | username, Slack ID | Link web user to Slack identity |
+| `set-role` | username, role | Change user role |
+| `delete-user` | username, confirm | Delete user + sessions |
+| `reset-password` | username, new password | Update password hash |
 
-**Add to `package.json`:**
-```json
-"manage-users": "tsx src/cli/manage-users.ts"
-```
+Uses `@clack/prompts` for interactive input.
 
-### Tests
+### Files
 
-**New file:** `tests/cli/manage-users.test.ts`
+- `src/cli/manage-users.ts` (new)
+- `package.json` (add script)
+- `tests/cli/manage-users.test.ts` (new -- test core functions, not interactive prompts)
 
-- Test core functions (user creation, invite generation) directly
-- Don't test interactive prompts
+### Acceptance Criteria
 
----
+- [ ] All commands work against SQLite DB
+- [ ] Interactive prompts for required fields
+- [ ] Can be used for initial setup before Slack is connected
+- [ ] Last-admin protection on role change and delete
 
-## Phase 8: Config Updates
+### Dependencies
 
-### `src/config/schema.ts` — MODIFY
-
-Add to WebConfigSchema:
-```typescript
-registrationEnabled: z.boolean().default(true),
-```
-
-### `src/config/index.ts` — MODIFY
-
-Parse `WEB_REGISTRATION_ENABLED` env var into `web.registrationEnabled`
-
-### `.env.example` — MODIFY
-
-```bash
-# Set to false to disable /register (invite codes can still be created, just can't be redeemed)
-# WEB_REGISTRATION_ENABLED=true
-```
+Tickets 1, 3
 
 ---
 
 ## Implementation Order
 
 ```
-1. src/services/user-store.ts + tests           (no deps)
-2. src/services/invite-store.ts + tests          (no deps)
-3. src/web/auth.ts updates + tests               (depends on 1)
-4. src/services/conversation-store.ts + tests    (independent)
-5. src/config/schema.ts + src/config/index.ts    (small, independent)
-6. src/web/templates.ts                          (login, register, admin, navbar, 403)
-7. src/web/server.ts                             (routes, filtering, rate limiting, admin)
-8. src/cli/manage-users.ts + package.json        (depends on 1, 2)
-9. .env.example + CLAUDE.md docs                 (last)
-```
+Phase 1 (parallel):
+  Ticket 1 - users table + UserStore
 
-Steps 1, 2, and 4 can be done in parallel. Step 3 depends on 1. Steps 6-7 are the largest chunk. Step 8 is independent once stores exist.
+Phase 2 (parallel after 1):
+  Ticket 2 - bootstrap + Slack auth migration
+  Ticket 3 - invite store
+  Ticket 4 - web sessions
+
+Phase 3 (parallel after deps):
+  Ticket 5 - /user-admin Slack command (after 2, 3)
+  Ticket 6 - web registration + login (after 3, 4)
+  Ticket 7 - admin web UI (after 3, 4)
+  Ticket 9 - conversation scoping (after 4)
+  Ticket 10 - CLI (after 3)
+
+Phase 4 (last):
+  Ticket 8 - deprecate env var
+```
 
 ---
 
 ## Files Summary
 
-| File | Action | Size Estimate |
-|------|--------|---------------|
-| `src/services/user-store.ts` | NEW | ~200 lines |
-| `src/services/invite-store.ts` | NEW | ~150 lines |
-| `src/cli/manage-users.ts` | NEW | ~200 lines |
-| `tests/services/user-store.test.ts` | NEW | ~150 lines |
-| `tests/services/invite-store.test.ts` | NEW | ~100 lines |
-| `tests/cli/manage-users.test.ts` | NEW | ~80 lines |
-| `src/web/auth.ts` | MODIFY | +60 lines |
-| `src/web/server.ts` | MODIFY | +200 lines |
-| `src/web/templates.ts` | MODIFY | +400 lines |
-| `src/services/conversation-store.ts` | MODIFY | +80 lines |
-| `src/config/schema.ts` | MODIFY | +3 lines |
-| `src/config/index.ts` | MODIFY | +3 lines |
-| `package.json` | MODIFY | +1 line |
-| `.env.example` | MODIFY | +3 lines |
-| `CLAUDE.md` | MODIFY | +30 lines |
-| `tests/web/auth.test.ts` | MODIFY | +50 lines |
-| `tests/services/conversation-store.test.ts` | MODIFY | +60 lines |
-
----
-
-## Verification
-
-1. **Unit tests:** `npm test` — all new and existing tests pass
-2. **Type check:** `npm run typecheck` — no errors
-3. **Lint:** `npm run lint` — clean
-4. **Manual flow:**
-   - `npm run manage-users create-user` → create admin user
-   - `npm run manage-users create-invite` → get invite code
-   - Navigate to `/register?code=<code>` → create account
-   - Login with username/password → lands on dashboard
-   - Non-admin sees only their own conversations
-   - Admin sees all conversations
-   - Existing HMAC link tokens from Slack still work
-   - Emergency admin token login still works
-   - Admin panel: create/edit/delete users, generate/delete invites
-   - Rate limiting: 6 failed logins → 429 response
-   - Disabled registration: set `WEB_REGISTRATION_ENABLED=false` → `/register` returns 404
+| File | Action | Ticket |
+|------|--------|--------|
+| `src/services/user-store.ts` | NEW | 1 |
+| `src/types/user.ts` | NEW | 1 |
+| `src/services/invite-store.ts` | NEW | 3 |
+| `src/commands/user-admin.ts` | NEW | 5 |
+| `src/web/templates/register.ts` | NEW | 6 |
+| `src/web/templates/admin-users.ts` | NEW | 7 |
+| `src/cli/manage-users.ts` | NEW | 10 |
+| `src/middleware/authorize.ts` | MODIFY | 2, 8 |
+| `src/services/session-store.ts` | MODIFY | 4 |
+| `src/services/conversation-store.ts` | MODIFY | 9 |
+| `src/web/auth.ts` | MODIFY | 4 |
+| `src/web/server.ts` | MODIFY | 4, 6, 7, 9 |
+| `src/web/templates/shell.ts` | MODIFY | 7 |
+| `src/web/templates/errors.ts` | MODIFY | 7 |
+| `src/config/schema.ts` | MODIFY | 2, 6, 8 |
+| `src/config/index.ts` | MODIFY | 6, 8 |
+| `src/app.ts` | MODIFY | 2, 8 |
+| `src/commands/index.ts` | MODIFY | 5 |
 
 ---
 
 ## Security Considerations
 
-- **scrypt** with 32-byte salt prevents rainbow table attacks
-- **Timing-safe comparison** on password verification prevents timing attacks
-- **Invite codes are single-use** with expiry — leaked codes expire and can't be reused
-- **Rate limiting** on login/register prevents brute force
-- **`web:` namespace** prevents userId collision with Slack IDs
-- **Ownership checks** return 404 (not 403) to prevent information leakage
-- **Admin guard** on all `/admin` routes
-- **No new dependencies** — `crypto.scrypt` is Node built-in
-- **Backward compatible** — all existing auth methods continue working unchanged
+- `crypto.scrypt` with 32-byte salt prevents rainbow tables
+- Timing-safe comparison on password verification
+- Invite codes are single-use with expiry
+- Rate limiting on login/register (5/15min per IP)
+- `web:` namespace prevents userId collision with Slack IDs
+- Ownership checks return 404 (not 403) to prevent info leakage
+- Admin guard on all `/admin/*` routes
+- No new dependencies -- `crypto.scrypt` is Node built-in
+- Backward compatible -- all existing auth methods continue working
