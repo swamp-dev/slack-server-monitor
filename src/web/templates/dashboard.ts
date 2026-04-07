@@ -519,6 +519,9 @@ export function renderDashboard(
 
   // Stats cards
   const avgDuration = stats.avgToolDurationMs != null ? `${String(Math.round(stats.avgToolDurationMs))}ms avg` : '';
+  const msgsPerSession = stats.totalSessions > 0 ? (stats.totalMessages / stats.totalSessions).toFixed(1) : '0.0';
+  const successRate = stats.totalToolCalls > 0 ? Math.min(100, Math.max(0, Math.round((1 - stats.toolFailureRate) * 100))) : 100;
+  const successDetail = stats.totalToolCalls > 0 ? `${String(successRate)}% success` : '';
   const statsHtml = `
     <div class="stats-row">
       <div class="stat-card">
@@ -529,11 +532,12 @@ export function renderDashboard(
       <div class="stat-card">
         <div class="stat-value" data-count="${String(stats.totalMessages)}">${String(stats.totalMessages)}</div>
         <div class="stat-label">Messages</div>
+        <div class="stat-detail">${msgsPerSession} per session</div>
       </div>
       <div class="stat-card">
         <div class="stat-value" data-count="${String(stats.totalToolCalls)}">${String(stats.totalToolCalls)}</div>
         <div class="stat-label">Tool Calls</div>
-        ${avgDuration ? `<div class="stat-detail">${avgDuration}</div>` : ''}
+        <div class="stat-detail">${[avgDuration, successDetail].filter(Boolean).join(' · ')}</div>
       </div>
     </div>`;
 

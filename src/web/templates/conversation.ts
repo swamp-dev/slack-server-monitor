@@ -86,7 +86,7 @@ function renderMessage(message: ConversationMessage, index: number, opts?: {
     : '';
 
   // Copy button on every message
-  const copyBtn = `<button class="copy-msg-btn" data-index="${String(index)}" title="Copy message">${icon('copy', 14)}</button>`;
+  const copyBtn = `<button class="copy-msg-btn" data-index="${String(index)}" title="Copy message">${icon('copy', 14)} <span class="copy-label">Copy</span></button>`;
 
   // Fork button: shown on assistant messages except the last one (forking from last is just continuing)
   const forkBtn = opts?.canFork && message.role === 'assistant' && !opts.isLast
@@ -819,27 +819,37 @@ const conversationDetailStyles = `
     border-color: var(--accent);
   }
 
-  /* Copy message button */
+  /* Copy message button — always visible for discoverability */
   .copy-msg-btn {
     background: none;
     border: 1px solid var(--border);
     color: var(--text-muted);
     font-size: 0.75rem;
-    padding: 2px 8px;
+    padding: 4px 10px;
     border-radius: 4px;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    opacity: 0;
+    opacity: 0.5;
     transition: opacity 0.2s, color 0.2s, border-color 0.2s;
   }
   .message:hover .copy-msg-btn {
-    opacity: 1;
+    opacity: 0.8;
   }
   .copy-msg-btn:hover {
+    opacity: 1;
     color: var(--cyan);
     border-color: var(--cyan);
+  }
+  /* Touch devices: always show at full readable opacity (no hover available) */
+  @media (hover: none) {
+    .copy-msg-btn {
+      opacity: 0.7;
+    }
+  }
+  @media (max-width: 640px) {
+    .copy-label { display: none; }
   }
 
   /* Expand/collapse long messages */
@@ -1220,8 +1230,8 @@ export function renderConversation(
       if (!content) return;
       var text = content.textContent || '';
       navigator.clipboard.writeText(text).then(function() {
-        btn.innerHTML = '${icon('check', 14)}';
-        setTimeout(function() { btn.innerHTML = '${icon('copy', 14)}'; }, 1500);
+        btn.innerHTML = '${icon('check', 14)} <span class="copy-label">Copied</span>';
+        setTimeout(function() { btn.innerHTML = '${icon('copy', 14)} <span class="copy-label">Copy</span>'; }, 1500);
       }).catch(function() {
         if (typeof showToast === 'function') showToast('Copy failed');
       });
