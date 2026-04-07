@@ -30,6 +30,7 @@ import type { PluginDatabase } from '../src/services/plugin-database.js';
 import { header, section, divider, context, buildChannelResponse } from '../src/formatters/blocks.js';
 import { logger } from '../src/utils/logger.js';
 import { registerHealthWebRoutes, getHealthWidgets, setSSE } from './health/web.js';
+import { seedHealthScreenshotData } from './health/screenshot-fixtures.js';
 
 // =============================================================================
 // Module-level state
@@ -1586,6 +1587,16 @@ const healthPlugin: Plugin = {
   destroy: async (ctx: PluginContext) => {
     pluginDb = null;
     logger.info('Health plugin destroyed', { name: ctx.name });
+  },
+
+  screenshotPages: [
+    { name: 'dashboard', path: '/' },
+    { name: 'medications', path: '/medications' },
+    { name: 'member-detail', path: '/member/Emma' },
+  ],
+
+  screenshotSetup: async (ctx: PluginContext) => {
+    await seedHealthScreenshotData(ctx);
   },
 };
 

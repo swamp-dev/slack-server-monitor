@@ -63,6 +63,7 @@ import { registerLiftWebRoutes, getLiftWidgets } from './lift/web.js';
 import { registerLiftCommand } from './lift/commands.js';
 import { createLiftTools } from './lift/tools.js';
 import { migrateToRealColumns } from './lift/migration.js';
+import { seedLiftScreenshotData } from './lift/screenshot-fixtures.js';
 import { logger } from '../src/utils/logger.js';
 
 // Re-export all public APIs so existing consumers keep working
@@ -249,6 +250,19 @@ const liftPlugin: Plugin = {
     pluginClaude = undefined;
     // Note: destroy() must complete within 5 seconds
     logger.info('Lift plugin destroyed', { name: ctx.name });
+  },
+
+  screenshotPages: [
+    { name: 'dashboard', path: '/' },
+    { name: 'workouts', path: '/workouts' },
+    { name: 'prs', path: '/prs' },
+    { name: 'macros', path: '/macros' },
+    { name: 'bodyweight', path: '/bodyweight' },
+    { name: 'calculator', path: '/calculator' },
+  ],
+
+  screenshotSetup: async (ctx: PluginContext) => {
+    await seedLiftScreenshotData(ctx);
   },
 };
 

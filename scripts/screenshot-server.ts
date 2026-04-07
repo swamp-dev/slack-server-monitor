@@ -163,6 +163,12 @@ export async function startScreenshotServer(): Promise<number> {
   return new Promise((resolve, reject) => {
     const app = express();
 
+    // Set a consistent userId for plugin routes (plugins read res.locals.userId)
+    app.use((_req, res, next) => {
+      res.locals.userId = 'web-user';
+      next();
+    });
+
     // Static CSS (needed for the shell's <link> tag)
     app.get('/static/styles.css', (_req, res) => {
       res.type('text/css').send(getStaticCss());
