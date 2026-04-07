@@ -134,6 +134,18 @@ export function parseFrequency(input: string): Frequency | null {
  * Dates >30 days in the past assume next year (M/D only)
  */
 export function parseAppointmentDate(str: string): Date | null {
+  // YYYY-MM-DD (ISO format from native date inputs)
+  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    const date = new Date(year, month - 1, day);
+    if (date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+    return date;
+  }
+
   // M/D/YYYY or M/D/YY
   const fullMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (fullMatch) {
@@ -180,6 +192,18 @@ export function parseAppointmentDate(str: string): Date | null {
  */
 export function parseVaxDate(str: string | undefined): Date | null {
   if (!str) return new Date();
+
+  // YYYY-MM-DD (ISO format from native date inputs)
+  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    const date = new Date(year, month - 1, day);
+    if (date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+    return date;
+  }
 
   // M/D/YYYY or M/D/YY
   const fullMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);

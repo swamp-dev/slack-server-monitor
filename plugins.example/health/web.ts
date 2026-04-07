@@ -296,8 +296,8 @@ const healthCSS = `
   display: flex; gap: 4px; margin: 8px 0;
 }
 .adherence-cell {
-  width: 28px; height: 28px; border-radius: 4px; display: flex; align-items: center;
-  justify-content: center; font-size: 0.7rem; color: var(--text-muted);
+  width: 36px; height: 36px; border-radius: 4px; display: flex; align-items: center;
+  justify-content: center; font-size: 0.8rem; color: var(--text-muted);
 }
 .adherence-green { background: var(--green); color: #fff; }
 .adherence-yellow { background: var(--yellow); color: #000; }
@@ -319,6 +319,45 @@ const healthCSS = `
 
 .plugin-table { width: 100%; }
 .plugin-table th { text-align: left; }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+.quick-actions .btn-log-all {
+  background: var(--green); color: #fff; border: none; border-radius: 6px;
+  padding: 4px 10px; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+}
+.quick-actions .btn-log-all:hover { opacity: 0.85; }
+
+.btn-log-dose-done {
+  background: var(--surface); color: var(--text-muted); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 10px; font-size: 0.8rem; cursor: default; opacity: 0.6;
+}
+
+.summary-strip {
+  display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;
+}
+.summary-stat {
+  flex: 1; min-width: 120px; padding: 12px 16px; background: var(--card-bg);
+  border: 1px solid var(--border); border-radius: 8px; text-align: center;
+}
+.summary-stat-value { font-size: 1.5rem; font-weight: 700; color: var(--text); }
+.summary-stat-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
+
+.member-card.needs-attention { border-left: 3px solid var(--red); }
+
+.adherence-header {
+  display: flex; gap: 4px; margin-bottom: 2px;
+}
+.adherence-header-cell {
+  width: 36px; text-align: center; font-size: 0.6875rem; color: var(--text-muted); font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .adherence-cell { width: 28px; height: 28px; font-size: 0.7rem; }
+  .adherence-header-cell { width: 28px; font-size: 0.625rem; }
+  .summary-strip { gap: 8px; }
+  .summary-stat { padding: 8px 12px; }
+  .summary-stat-value { font-size: 1.25rem; }
+}
 `;
 
 // =============================================================================
@@ -336,6 +375,12 @@ function avatarColor(name: string): string {
     hash = name.charCodeAt(i) + ((hash << 5) - hash);
   }
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+/** Today's date as YYYY-MM-DD using local time (not UTC) */
+function localDateISO(): string {
+  const d = new Date();
+  return `${String(d.getFullYear())}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function progressColor(taken: number, expected: number): string {
@@ -404,15 +449,19 @@ function renderDashboard(db: PluginDatabase, userId: string): string {
     apptByMember.set(a.member_id, arr);
   }
 
-  // Family member cards
-  let cards = '<div class="family-grid">';
-  for (const member of members) {
+  // Calculate per-member dose progress for summary + sorting
+  interface MemberProgress {
+    member: Member;
+    meds: MedStatus[];
+    memberAppts: (Appointment & { member_name: string })[];
+    totalExpected: number;
+    totalTaken: number;
+    ratio: number;
+  }
+
+  const memberProgress: MemberProgress[] = members.map(member => {
     const meds = statusByMember.get(member.id) || [];
     const memberAppts = apptByMember.get(member.id) || [];
-    const initial = member.name.charAt(0).toUpperCase();
-    const color = avatarColor(member.name);
-
-    // Calculate dose progress
     let totalExpected = 0;
     let totalTaken = 0;
     for (const m of meds) {
@@ -420,12 +469,53 @@ function renderDashboard(db: PluginDatabase, userId: string): string {
       totalExpected += expected;
       totalTaken += Math.min(m.doses_today, expected);
     }
+    const ratio = totalExpected > 0 ? totalTaken / totalExpected : 1;
+    return { member, meds, memberAppts, totalExpected, totalTaken, ratio };
+  });
+
+  // Sort by attention needed (lowest adherence first)
+  memberProgress.sort((a, b) => a.ratio - b.ratio);
+
+  // Summary banner
+  const totalDosesTaken = memberProgress.reduce((sum, m) => sum + m.totalTaken, 0);
+  const totalDosesExpected = memberProgress.reduce((sum, m) => sum + m.totalExpected, 0);
+  const upcomingAppts7d = getUpcomingAppointments(db, userId, now, 7).length;
+  const overallRatio = totalDosesExpected > 0 ? totalDosesTaken / totalDosesExpected : 1;
+  const overallStatus = overallRatio >= 1 ? 'status-green' : overallRatio > 0 ? 'status-yellow' : 'status-red';
+  const overallIcon = overallRatio >= 1 ? '&#x2705;' : overallRatio > 0 ? '&#x26A0;&#xFE0F;' : '&#x274C;';
+
+  const summaryBanner = totalDosesExpected > 0 ? `
+    <div class="summary-strip">
+      <div class="summary-stat">
+        <div class="summary-stat-value ${overallStatus}">${totalDosesTaken}/${totalDosesExpected}</div>
+        <div class="summary-stat-label">${overallIcon} Doses Today</div>
+      </div>
+      <div class="summary-stat">
+        <div class="summary-stat-value">${upcomingAppts7d}</div>
+        <div class="summary-stat-label">Appts This Week</div>
+      </div>
+    </div>
+  ` : '';
+
+  // Family member cards (sorted by attention needed)
+  let cards = '<div class="family-grid">';
+  for (const mp of memberProgress) {
+    const { member, meds, memberAppts, totalExpected, totalTaken, ratio } = mp;
+    const initial = member.name.charAt(0).toUpperCase();
+    const color = avatarColor(member.name);
 
     const pct = totalExpected > 0 ? Math.round((totalTaken / totalExpected) * 100) : 0;
     const barColor = progressColor(totalTaken, totalExpected);
     const sClass = statusClass(totalTaken, totalExpected);
+    const needsAttention = totalExpected > 0 && ratio === 0;
 
-    cards += `<div class="member-card">
+    // Check if there are undosed scheduled meds (for Log All Doses button)
+    const hasUndosedMeds = meds.some(m => {
+      if (m.frequency === 'as-needed') return false;
+      return m.doses_today < dosesExpectedToday(m.frequency);
+    });
+
+    cards += `<div class="member-card${needsAttention ? ' needs-attention' : ''}">
       <div class="member-card-header">
         <div class="avatar" style="background:${color}">${initial}</div>
         <div>
@@ -445,6 +535,11 @@ function renderDashboard(db: PluginDatabase, userId: string): string {
       ` : ''}
       <div class="quick-actions">
         <a href="/p/health/member/${encodeURIComponent(member.name)}">View</a>
+        ${hasUndosedMeds ? `
+          <form method="POST" action="/p/health/dose-all/${member.id}" style="display:inline">
+            <button type="submit" class="btn-log-all">Log All Doses</button>
+          </form>
+        ` : ''}
       </div>
     </div>`;
   }
@@ -475,7 +570,7 @@ function renderDashboard(db: PluginDatabase, userId: string): string {
     </form>
   `;
 
-  return navPills('dashboard') + cards + apptSection + addMemberForm;
+  return navPills('dashboard') + summaryBanner + cards + apptSection + addMemberForm;
 }
 
 // =============================================================================
@@ -521,16 +616,27 @@ function renderMemberDetail(db: PluginDatabase, userId: string, memberName: stri
         </td>
       </tr>`);
     }
-    medsHtml = `<table class="plugin-table">
+    medsHtml = `<div class="table-scroll"><table class="plugin-table">
       <thead><tr><th>Medication</th><th>Dosage</th><th>Frequency</th><th>Today</th><th>Actions</th></tr></thead>
       <tbody>${medRows.join('')}</tbody>
-    </table>`;
+    </table></div>`;
   }
 
   // --- Dose adherence grid (last 7 days) ---
   let adherenceHtml = '';
   if (meds.length > 0) {
     adherenceHtml = '<div class="section-title">7-Day Adherence</div>';
+
+    // Day-of-week header row
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    let headerCells = '';
+    for (let i = 6; i >= 0; i--) {
+      const dayStart = startOfDay - i * 24 * 60 * 60 * 1000;
+      const dayOfWeek = new Date(dayStart).getDay();
+      headerCells += `<div class="adherence-header-cell">${dayNames[dayOfWeek]}</div>`;
+    }
+    adherenceHtml += `<div class="adherence-header">${headerCells}</div>`;
+
     for (const med of meds) {
       if (med.frequency === 'as-needed') continue;
       const expected = dosesExpectedToday(med.frequency);
@@ -555,7 +661,7 @@ function renderMemberDetail(db: PluginDatabase, userId: string, memberName: stri
         }
 
         const displayExpected = isWeekly ? (count > 0 ? 1 : 0) : expected;
-        cells += `<div class="adherence-cell ${cellClass}" title="${escapeHtml(dayLabel)}: ${count}/${displayExpected}">${escapeHtml(dayLabel.split('/')[1])}</div>`;
+        cells += `<div class="adherence-cell ${cellClass}" title="${escapeHtml(med.name)} \u2014 ${escapeHtml(formatDateWithDay(dayStart))}: ${count}/${displayExpected}">${escapeHtml(dayLabel.split('/')[1])}</div>`;
       }
       adherenceHtml += `<div style="margin-bottom:8px">
         <span style="font-size:0.85rem;color:var(--text-muted)">${escapeHtml(med.name)}</span>
@@ -624,7 +730,7 @@ function renderMemberDetail(db: PluginDatabase, userId: string, memberName: stri
     <div class="section-title">Add Appointment</div>
     <form method="POST" action="/p/health/appointments" class="inline-form">
       <input type="hidden" name="memberId" value="${member.id}">
-      <label>Date <input type="text" name="date" required placeholder="M/D or M/D/YY"></label>
+      <label>Date <input type="date" name="date" required></label>
       <label>Type <input type="text" name="type" required maxlength="100" placeholder="e.g. Dentist"></label>
       <label>Notes <input type="text" name="notes" maxlength="200" placeholder="optional"></label>
       <button type="submit" class="btn btn-primary">Add</button>
@@ -636,7 +742,7 @@ function renderMemberDetail(db: PluginDatabase, userId: string, memberName: stri
     <form method="POST" action="/p/health/vaccinations" class="inline-form">
       <input type="hidden" name="memberId" value="${member.id}">
       <label>Vaccine <input type="text" name="vaccine" required maxlength="100" placeholder="e.g. Flu Shot"></label>
-      <label>Date <input type="text" name="date" placeholder="M/D or M/D/YY (default: today)"></label>
+      <label>Date <input type="date" name="date" value="${localDateISO()}"></label>
       <button type="submit" class="btn btn-primary">Log</button>
     </form>
   `;
@@ -678,26 +784,29 @@ function renderMedicationsOverview(db: PluginDatabase, userId: string): string {
       ? `${s.doses_today} taken`
       : `${s.doses_today}/${expected}`;
 
+    const fullyDosed = s.frequency !== 'as-needed' && s.doses_today >= expected;
+    const doseBtn = fullyDosed
+      ? `<span class="btn-log-dose-done">Logged</span>`
+      : `<form method="POST" action="/p/health/dose" style="display:inline">
+          <input type="hidden" name="memberId" value="${s.member_id}">
+          <input type="hidden" name="medicationId" value="${s.med_id}">
+          <button type="submit" class="btn btn-success btn-small">Log Dose</button>
+        </form>`;
+
     return `<tr>
       <td><a href="/p/health/member/${encodeURIComponent(s.member_name)}">${escapeHtml(s.member_name)}</a></td>
       <td>${escapeHtml(s.med_name)}</td>
       <td>${escapeHtml(s.dosage)}</td>
       <td>${escapeHtml(s.frequency)}</td>
       <td class="${sClass}">${statusText}</td>
-      <td>
-        <form method="POST" action="/p/health/dose" style="display:inline">
-          <input type="hidden" name="memberId" value="${s.member_id}">
-          <input type="hidden" name="medicationId" value="${s.med_id}">
-          <button type="submit" class="btn btn-success btn-small">Log Dose</button>
-        </form>
-      </td>
+      <td>${doseBtn}</td>
     </tr>`;
   });
 
-  const tableHtml = `<table class="plugin-table">
+  const tableHtml = `<div class="table-scroll"><table class="plugin-table">
     <thead><tr><th>Member</th><th>Medication</th><th>Dosage</th><th>Frequency</th><th>Today</th><th>Action</th></tr></thead>
     <tbody>${rows.join('')}</tbody>
-  </table>`;
+  </table></div>`;
 
   return navPills('medications') + pluginCard('All Medications', tableHtml);
 }
@@ -821,6 +930,52 @@ export function registerHealthWebRoutes(router: PluginRouter): void {
 
     // Redirect back to member page (never use Referer header — open redirect risk)
     res.redirect(`/p/health/member/${encodeURIComponent(member.name)}`);
+  });
+
+  // --- POST: Log all remaining doses for a member ---
+  router.post('/dose-all/:memberId', (req, res, ctx) => {
+    const userId = getUserId(res);
+    const db = getDb(ctx);
+    const mId = parseInt(String(req.params.memberId), 10);
+    if (isNaN(mId)) {
+      res.redirect('/p/health/');
+      return;
+    }
+
+    const member = getMemberById(db, mId, userId);
+    if (!member) {
+      res.redirect('/p/health/');
+      return;
+    }
+
+    const now = Date.now();
+    const startOfDay = getStartOfDay(null);
+    const meds = getActiveMeds(db, member.id);
+    let doseCount = 0;
+
+    for (const med of meds) {
+      if (med.frequency === 'as-needed') continue;
+      const expected = dosesExpectedToday(med.frequency);
+      const taken = getDoseCountForDay(db, med.id, startOfDay);
+      const remaining = expected - taken;
+      for (let i = 0; i < remaining; i++) {
+        const ts = now + doseCount; // space doses 1ms apart to avoid duplicate timestamps
+        db.prepare(
+          `INSERT INTO plugin_health_doses (user_id, medication_id, taken_at, created_at) VALUES (?, ?, ?, ?)`
+        ).run(userId, med.id, ts, ts);
+        doseCount++;
+      }
+    }
+
+    if (sseBroadcast && doseCount > 0) {
+      sseBroadcast.broadcast('dose-logged', {
+        memberName: member.name,
+        medicationName: `${String(doseCount)} medications (batch)`,
+        timestamp: now,
+      });
+    }
+
+    res.redirect('/p/health/');
   });
 
   // --- POST: Add member ---

@@ -264,6 +264,22 @@ describe('health plugin', () => {
       expect(parseAppointmentDate('')).toBeNull();
     });
 
+    it('should parse YYYY-MM-DD ISO format', () => {
+      const result = parseAppointmentDate('2026-04-15');
+      expect(result).not.toBeNull();
+      if (result) {
+        expect(result.getFullYear()).toBe(2026);
+        expect(result.getMonth()).toBe(3); // April
+        expect(result.getDate()).toBe(15);
+      }
+    });
+
+    it('should reject invalid ISO dates like 2026-02-30', () => {
+      expect(parseAppointmentDate('2026-02-30')).toBeNull();
+      expect(parseAppointmentDate('2026-13-01')).toBeNull();
+      expect(parseAppointmentDate('2026-00-15')).toBeNull();
+    });
+
     it('should return null for overflowed dates', () => {
       expect(parseAppointmentDate('2/30')).toBeNull(); // Feb has <30 days
     });
@@ -310,6 +326,21 @@ describe('health plugin', () => {
         expect(result.getDate()).toBe(10);
         expect(result.getFullYear()).toBe(2025);
       }
+    });
+
+    it('should parse YYYY-MM-DD ISO format', () => {
+      const result = parseVaxDate('2026-03-20');
+      expect(result).not.toBeNull();
+      if (result) {
+        expect(result.getFullYear()).toBe(2026);
+        expect(result.getMonth()).toBe(2); // March
+        expect(result.getDate()).toBe(20);
+      }
+    });
+
+    it('should reject invalid ISO dates', () => {
+      expect(parseVaxDate('2026-02-30')).toBeNull();
+      expect(parseVaxDate('2026-00-15')).toBeNull();
     });
 
     it('should return null for invalid dates', () => {
@@ -578,6 +609,82 @@ describe('health plugin', () => {
         `SELECT * FROM plugin_health_doses WHERE medication_id = ? ORDER BY taken_at`
       ).all(medId);
       expect(doses).toHaveLength(2);
+    });
+  });
+
+  describe('batch dose-all logic (DB)', () => {
+    beforeEach(setupTestDb);
+    afterEach(teardownTestDb);
+
+    function batchLogDoses(memberId: number, userId = TEST_USER): number {
+      const startOfDay = getStartOfDay(null);
+      const meds = pluginDb.prepare(
+        `SELECT * FROM plugin_health_medications WHERE member_id = ? AND active = 1`
+      ).all(memberId) as { id: number; frequency: Frequency }[];
+      const now = Date.now();
+      let count = 0;
+      for (const med of meds) {
+        if (med.frequency === 'as-needed') continue;
+        const expected = dosesExpectedToday(med.frequency);
+        const taken = (pluginDb.prepare(
+          `SELECT COUNT(*) as cnt FROM plugin_health_doses WHERE medication_id = ? AND taken_at >= ?`
+        ).get(med.id, startOfDay) as { cnt: number }).cnt;
+        const remaining = expected - taken;
+        for (let i = 0; i < remaining; i++) {
+          pluginDb.prepare(
+            `INSERT INTO plugin_health_doses (user_id, medication_id, taken_at, created_at) VALUES (?, ?, ?, ?)`
+          ).run(userId, med.id, now, now);
+          count++;
+        }
+      }
+      return count;
+    }
+
+    it('should insert doses for all undosed scheduled meds', () => {
+      const memberId = addMember('Emma');
+      addMedication(memberId, 'Vitamin D', '2000 IU', 'daily');
+      addMedication(memberId, 'Iron', '65mg', 'daily');
+
+      const count = batchLogDoses(memberId);
+      expect(count).toBe(2);
+
+      const doses = pluginDb.prepare(
+        `SELECT COUNT(*) as cnt FROM plugin_health_doses WHERE user_id = ?`
+      ).get(TEST_USER) as { cnt: number };
+      expect(doses.cnt).toBe(2);
+    });
+
+    it('should skip as-needed medications', () => {
+      const memberId = addMember('Emma');
+      addMedication(memberId, 'Vitamin D', '2000 IU', 'daily');
+      addMedication(memberId, 'Ibuprofen', '200mg', 'as-needed');
+
+      const count = batchLogDoses(memberId);
+      expect(count).toBe(1); // only the daily med
+    });
+
+    it('should skip already-fully-dosed medications', () => {
+      const memberId = addMember('Emma');
+      const medId = addMedication(memberId, 'Vitamin D', '2000 IU', 'daily');
+      addDose(medId, Date.now());
+
+      const count = batchLogDoses(memberId);
+      expect(count).toBe(0);
+    });
+
+    it('should fill remaining doses for partially-dosed 2x-daily', () => {
+      const memberId = addMember('Emma');
+      const medId = addMedication(memberId, 'Amoxicillin', '250mg', '2x-daily');
+      addDose(medId, Date.now()); // 1 of 2 taken
+
+      const count = batchLogDoses(memberId);
+      expect(count).toBe(1); // fills the remaining 1
+    });
+
+    it('should return 0 when no meds exist', () => {
+      const memberId = addMember('Emma');
+      const count = batchLogDoses(memberId);
+      expect(count).toBe(0);
     });
   });
 
