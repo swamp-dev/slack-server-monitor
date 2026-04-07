@@ -53,6 +53,8 @@ export default myPlugin;
 | `tools` | No | Array of Claude AI tool definitions |
 | `init` | No | Async setup hook with `PluginContext` (10s timeout) |
 | `destroy` | No | Cleanup hook with `PluginContext` (5s timeout) |
+| `screenshotPages` | No | Pages for automated screenshot capture |
+| `screenshotSetup` | No | Seed mock data for screenshots (in-memory DB) |
 
 ## Slash Commands
 
@@ -287,6 +289,51 @@ If any step fails (validation, init, command registration), the entire plugin is
 4. **Log appropriately** -- use `logger` from `../src/utils/logger.js`
 5. **Handle errors gracefully** -- don't leak stack traces
 6. **Test your plugin** -- colocate tests as `my-plugin.test.ts` (excluded from plugin loading)
+
+## Screenshot Hooks
+
+Plugins can register pages for automated screenshot capture, used during UI development to verify visual output across themes and viewports.
+
+Add two fields to your plugin:
+
+```typescript
+const myPlugin: Plugin = {
+  name: 'my-plugin',
+  // ...
+
+  screenshotPages: [
+    { name: 'dashboard', path: '/' },
+    { name: 'settings', path: '/settings' },
+  ],
+
+  screenshotSetup: async (ctx) => {
+    // Seed mock data -- runs before init() and route registration
+    ctx.db.exec(`CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}items (...)`);
+    ctx.db.prepare(`INSERT INTO ${ctx.db.prefix}items ...`).run(...);
+  },
+};
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `screenshotPages` | `{ name: string; path: string }[]` | Pages to capture. `path` is relative to `/p/{pluginName}/` |
+| `screenshotSetup` | `(ctx: PluginContext) => Promise<void>` | Seed mock data. Gets an in-memory DB -- no external deps |
+
+**Requirements:**
+- Plugin must be in `plugins.example/` (the screenshot server discovers from there, not `plugins.local/`)
+- `screenshotPages` must be present; `screenshotSetup` is optional (only needed if pages require mock data)
+- `path` must start with `/`
+
+**Capture with:**
+
+```bash
+npm run screenshots                              # All pages including plugins
+npx tsx scripts/take-screenshots.ts my-plugin-dashboard  # Single plugin page
+```
+
+Screenshots are saved as `{pluginName}-{pageName}-{theme}-{viewport}.png` in `screenshots/`.
+
+See [Developer Guide - Screenshot Server](developing.md#screenshot-server) for the full workflow and architecture.
 
 ## Example Plugins
 

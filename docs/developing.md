@@ -14,6 +14,7 @@ npm run typecheck       # TypeScript type checking
 npm run lint            # ESLint
 npm run lint:fix        # ESLint with auto-fix
 npm run build           # Production build
+npm run screenshots     # Capture web UI screenshots
 npm run deploy:check    # Deployment validation
 ```
 
@@ -51,6 +52,161 @@ This repo is a git submodule of `swamp-dev/ansible`. When code merges to `main`,
 **Required secret:** `PARENT_REPO_TOKEN` -- a GitHub PAT with `repo` scope for `swamp-dev/ansible`. Add it in Settings > Secrets and variables > Actions.
 
 The workflow skips runs triggered by `github-actions[bot]` to prevent loops.
+
+## Screenshot Server
+
+A standalone screenshot server captures the web UI in all theme/viewport combinations using Playwright and seed data. No Slack connection, database, or external services needed -- everything runs locally with mock data.
+
+### Quick Start
+
+```bash
+npm run screenshots                                    # Capture all pages (core + plugins)
+npx tsx scripts/take-screenshots.ts dashboard          # Capture one page by name
+npx tsx scripts/take-screenshots.ts hue-dashboard      # Capture a plugin page
+```
+
+### How It Works
+
+```
+npm run screenshots
+  |
+  +--> scripts/screenshot-server.ts     Express app on port 18970
+  |      |- Renders core pages (dashboard, sessions, conversation, etc.)
+  |      |- Discovers plugins from plugins.example/
+  |      |- Calls screenshotSetup() to seed mock data
+  |      |- Mounts plugin routes at /p/{name}/
+  |      `- Serves API stubs (/api/notifications, /api/health/server, etc.)
+  |
+  +--> scripts/screenshot-fixtures.ts   Typed seed data for core pages
+  |
+  +--> scripts/take-screenshots.ts      Playwright browser automation
+         |- Launches headless Chromium
+         |- For each page x theme x viewport:
+         |    Create fresh context -> set localStorage theme -> navigate -> capture PNG
+         `- Saves to screenshots/
+```
+
+The server uses **in-memory SQLite** databases for plugins, so nothing touches disk. Each plugin gets an isolated `PluginContext` with a scoped `PluginDatabase`.
+
+### UI Development Workflow
+
+When modifying web templates (`src/web/templates/`):
+
+1. Make your template changes
+2. Run screenshots (target the page you changed):
+   ```bash
+   npx tsx scripts/take-screenshots.ts dashboard
+   ```
+3. View the PNGs in `screenshots/` to verify both themes and viewports
+4. Iterate until it looks right
+
+This is especially useful for:
+- Verifying Dracula and light theme consistency
+- Checking mobile layout doesn't break
+- Reviewing empty/error/degraded states
+- Catching CSS regressions after template refactors
+
+### Pages and Variants
+
+Each page has a default state plus variant states that exercise edge cases:
+
+| Page | Variants | Purpose |
+|------|----------|---------|
+| Dashboard | `empty`, `degraded` | Welcome screen, critical health alerts |
+| Sessions | `empty`, `search-no-results`, `favorites`, `archived` | Empty states, filtered views |
+| Conversation | `branched` | Fork indicators |
+| Notifications | `empty` | No notifications |
+| Login | `error` | Invalid token |
+| 404 | -- | Not found page |
+
+Variants are triggered via query params (e.g., `?variant=empty`). The screenshot server renders different fixture data based on the variant.
+
+### Themes and Viewports
+
+Every page/variant combination is captured in:
+
+| Theme | Viewport | Resolution |
+|-------|----------|------------|
+| `dracula` | `desktop` | 1280x720 |
+| `dracula` | `mobile` | 375x812 |
+| `light` | `desktop` | 1280x720 |
+| `light` | `mobile` | 375x812 |
+
+Theme is set via `localStorage('ssm-theme')` on each browser context, matching how the real UI works.
+
+### Output
+
+Screenshots are saved to `screenshots/` (gitignored):
+
+```
+screenshots/
+  dashboard-dracula-desktop.png           # default state
+  dashboard-degraded-light-mobile.png     # variant state
+  hue-dashboard-dracula-desktop.png       # plugin page
+```
+
+Naming: `{page}-{variant?}-{theme}-{viewport}.png`
+
+### Adding Plugin Screenshots
+
+Plugins opt into the screenshot system by exporting `screenshotPages` and `screenshotSetup`:
+
+```typescript
+const myPlugin: Plugin = {
+  name: 'my-plugin',
+  // ...
+
+  // Pages to capture (path relative to /p/my-plugin/)
+  screenshotPages: [
+    { name: 'dashboard', path: '/' },
+    { name: 'details', path: '/details' },
+  ],
+
+  // Seed mock data before screenshots
+  screenshotSetup: async (ctx) => {
+    ctx.db.exec(`
+      CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}items (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL
+      )
+    `);
+    ctx.db.prepare(`INSERT INTO ${ctx.db.prefix}items (name) VALUES (?)`).run('Sample');
+  },
+};
+```
+
+The screenshot server:
+1. Creates an in-memory `PluginContext` for each plugin
+2. Calls `screenshotSetup(ctx)` to populate mock data
+3. Calls `init(ctx)` if present (for runtime state)
+4. Registers web routes, then captures each `screenshotPages` entry
+
+Plugin screenshots are named `{pluginName}-{pageName}-{theme}-{viewport}.png`.
+
+**Fixture patterns from existing plugins:**
+
+| Plugin | Strategy | File |
+|--------|----------|------|
+| **health** | Creates tables and inserts seed rows | `plugins.example/health/screenshot-fixtures.ts` |
+| **lift** | Creates tables with 14 days of workout data | `plugins.example/lift/screenshot-fixtures.ts` |
+| **hue** | Populates response cache (no DB) | `plugins.example/hue/screenshot-fixtures.ts` |
+
+For complex plugins, extract fixtures into a separate file and import from `screenshotSetup`.
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SCREENSHOT_PORT` | `18970` | Port for the mock server |
+
+### Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| `Error: browserType.launch: Executable doesn't exist` | Run `npx playwright install chromium` |
+| Screenshots look wrong | Check that `screenshotSetup` creates realistic seed data |
+| Plugin pages missing | Verify plugin is in `plugins.example/` (not `plugins.local/`) and exports `screenshotPages` |
+| Theme not applied | The server sets `localStorage('ssm-theme')` -- check your template reads from it |
 
 ## AgentBox Integration
 
