@@ -11,7 +11,7 @@
 
 import type { Request, Response } from 'express';
 import type { PluginContext, PluginRouter } from '../../src/plugins/index.js';
-import { renderPluginPage, pluginCard, pluginStyles, escapeHtml } from '../../src/plugins/index.js';
+import { renderPluginPage, pluginCard, escapeHtml } from '../../src/plugins/index.js';
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
 import type { DashboardWidget } from '../../src/plugins/types.js';
 import { KG_TO_LBS, lbsToKg } from './units.js';
@@ -384,7 +384,7 @@ function renderDashboard(db: PluginDatabase, userId: string): string {
     ${pluginCard('Bodyweight Trend', bwHtml, { icon: 'activity', link: '/p/lift/bodyweight' })}
   `;
 
-  return renderPluginPage({ title: 'Lift Dashboard', pluginName: 'lift', body, styles: pluginStyles('lift', liftCSS) });
+  return renderPluginPage({ title: 'Lift Dashboard', pluginName: 'lift', body, styles: liftCSS });
 }
 
 // ─── Page: Workouts ───────────────────────────────────────────────────
@@ -460,7 +460,7 @@ function renderWorkouts(db: PluginDatabase, userId: string, dateOffset: number):
     ${pluginCard(`Workout — ${dateLabel}`, setsHtml, { icon: 'activity' })}
   `;
 
-  return renderPluginPage({ title: 'Workouts — Lift', pluginName: 'lift', body, styles: pluginStyles('lift', liftCSS) });
+  return renderPluginPage({ title: 'Workouts — Lift', pluginName: 'lift', body, styles: liftCSS });
 }
 
 // ─── Page: PRs ────────────────────────────────────────────────────────
@@ -495,7 +495,7 @@ function renderPRs(db: PluginDatabase, userId: string): string {
     ${prCards}
   `;
 
-  return renderPluginPage({ title: 'PRs — Lift', pluginName: 'lift', body, styles: pluginStyles('lift', liftCSS) });
+  return renderPluginPage({ title: 'PRs — Lift', pluginName: 'lift', body, styles: liftCSS });
 }
 
 // ─── Page: Macros ─────────────────────────────────────────────────────
@@ -573,7 +573,7 @@ function renderMacros(db: PluginDatabase, userId: string): string {
     ${pluginCard("Today's Entries", entriesHtml)}
   `;
 
-  return renderPluginPage({ title: 'Macros — Lift', pluginName: 'lift', body, styles: pluginStyles('lift', liftCSS) });
+  return renderPluginPage({ title: 'Macros — Lift', pluginName: 'lift', body, styles: liftCSS });
 }
 
 // ─── Page: Bodyweight ─────────────────────────────────────────────────
@@ -620,7 +620,7 @@ function renderBodyweight(db: PluginDatabase, userId: string): string {
     </form>
   `;
 
-  return renderPluginPage({ title: 'Bodyweight — Lift', pluginName: 'lift', body, styles: pluginStyles('lift', liftCSS) });
+  return renderPluginPage({ title: 'Bodyweight — Lift', pluginName: 'lift', body, styles: liftCSS });
 }
 
 // ─── Page: Calculator ────────────────────────────────────────────────
@@ -674,7 +674,13 @@ function parsePlateStr(plateStr: string): { size: number; count: number }[] {
   return plates;
 }
 
-/** Render a CSS plate diagram showing one side of the barbell */
+/** SVG color values for plates (must be literal hex/rgb, not CSS vars) */
+const SVG_PLATE_COLORS: Record<number, string> = {
+  55: '#ff5555', 45: '#ff5555', 35: '#ffb86c', 25: '#f1fa8c',
+  15: '#8be9fd', 10: '#50fa7b', 5: '#8be9fd', 2.5: '#bd93f9', 1.25: '#6272a4',
+};
+
+/** Render an inline SVG barbell diagram showing one side */
 function renderPlateDiagram(parsedPlates: { size: number; count: number }[], plateStr: string, unit: string): string {
   if (parsedPlates.length === 0) return '';
 
@@ -689,20 +695,69 @@ function renderPlateDiagram(parsedPlates: { size: number; count: number }[], pla
 
   if (oneSide.length === 0) return '';
 
-  const plateEls = oneSide.map((p) => {
-    const color = PLATE_COLORS[p.size] ?? 'var(--text-muted)';
-    const width = PLATE_WIDTHS[p.size] ?? 20;
-    return `<div class="plate-block" style="background:${color};height:${String(width)}px;" title="${String(p.size)} ${unit}">${String(p.size)}</div>`;
-  }).join('');
+  // SVG dimensions
+  const barH = 8;
+  const sleeveW = 50;
+  const collarW = 10;
+  const collarH = 18;
+  const plateGap = 2;
+  const plateW = 22;
+  const endCapW = 16;
+  const maxPlateH = 52;
+  const padY = 6;
 
-  return `<div class="plate-diagram">
-    <div class="plate-bar-sleeve"></div>
-    <div class="plate-collar"></div>
-    ${plateEls}
-    <div class="plate-bar-end"></div>
-    <div class="plate-mirror">&#x2194; same on other side</div>
-  </div>
-  <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">${escapeHtml(plateStr)}</div>`;
+  // Calculate total width
+  const platesW = oneSide.length * (plateW + plateGap);
+  const totalW = sleeveW + collarW + platesW + endCapW + 8;
+  const totalH = maxPlateH + padY * 2;
+  const midY = totalH / 2;
+
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${String(totalW)} ${String(totalH)}" width="100%" style="max-width:${String(totalW)}px;display:block;margin:12px 0 4px;" role="img" aria-label="Barbell plate loading diagram">`;
+
+  // Defs: metallic gradient + drop shadow
+  svg += `<defs>
+    <linearGradient id="bar-metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#b8b8b8"/>
+      <stop offset="40%" stop-color="#d4d4d4"/>
+      <stop offset="60%" stop-color="#a0a0a0"/>
+      <stop offset="100%" stop-color="#888"/>
+    </linearGradient>
+    <filter id="plate-shadow" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="1" dy="1" stdDeviation="1" flood-opacity="0.25"/>
+    </filter>
+  </defs>`;
+
+  let x = 0;
+
+  // Bar sleeve (rounded left end)
+  svg += `<rect x="${String(x)}" y="${String(midY - barH / 2)}" width="${String(sleeveW)}" height="${String(barH)}" rx="4" fill="url(#bar-metal)"/>`;
+  x += sleeveW;
+
+  // Collar
+  svg += `<rect x="${String(x)}" y="${String(midY - collarH / 2)}" width="${String(collarW)}" height="${String(collarH)}" rx="2" fill="url(#bar-metal)" stroke="#999" stroke-width="0.5"/>`;
+  x += collarW;
+
+  // Plates
+  for (const p of oneSide) {
+    const h = PLATE_WIDTHS[p.size] ?? 20;
+    const color = SVG_PLATE_COLORS[p.size] ?? '#6272a4';
+    const y = midY - h / 2;
+    svg += `<rect x="${String(x)}" y="${String(y)}" width="${String(plateW)}" height="${String(h)}" rx="3" fill="${color}" filter="url(#plate-shadow)"/>`;
+    // Weight label
+    const fontSize = h < 20 ? 7 : 9;
+    svg += `<text x="${String(x + plateW / 2)}" y="${String(midY + fontSize / 3)}" text-anchor="middle" font-size="${String(fontSize)}" font-weight="700" fill="#fff" style="text-shadow:0 1px 1px rgba(0,0,0,0.4);">${String(p.size)}</text>`;
+    x += plateW + plateGap;
+  }
+
+  // End cap
+  svg += `<rect x="${String(x)}" y="${String(midY - barH / 2)}" width="${String(endCapW)}" height="${String(barH)}" rx="4" fill="url(#bar-metal)"/>`;
+
+  svg += '</svg>';
+
+  return `<div style="margin:12px 0;">
+    ${svg}
+    <div style="font-size:0.6875rem;color:var(--text-muted);margin-top:4px;">&#x2194; same on other side &middot; ${escapeHtml(plateStr)}</div>
+  </div>`;
 }
 
 /** Query params for persisting calculator state */
@@ -880,7 +935,7 @@ function renderCalculator(db: PluginDatabase, userId: string, params: CalcParams
     `, { icon: 'chart' })}
   `;
 
-  return renderPluginPage({ title: 'Calculator — Lift', pluginName: 'lift', body, styles: pluginStyles('lift', liftCSS) });
+  return renderPluginPage({ title: 'Calculator — Lift', pluginName: 'lift', body, styles: liftCSS });
 }
 
 // ─── Route Registration ───────────────────────────────────────────────
