@@ -243,6 +243,14 @@ const liftCSS = `
   .warmup-table th, .warmup-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
   .warmup-table th { color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; }
   .warmup-table td:first-child { font-weight: 600; }
+  .warmup-target-row td { font-weight: 700; color: var(--text); border-left: 3px solid var(--accent); }
+
+  .plate-diagram { display: flex; align-items: center; gap: 0; margin: 12px 0 4px; padding: 8px 0; }
+  .plate-bar-sleeve { width: 40px; height: 10px; background: var(--text-muted); border-radius: 3px 0 0 3px; }
+  .plate-collar { width: 8px; height: 16px; background: var(--text-muted); border-radius: 2px; }
+  .plate-block { display: flex; align-items: center; justify-content: center; width: 20px; border-radius: 2px; font-size: 0.5625rem; font-weight: 700; color: #fff; margin: 0 1px; text-shadow: 0 1px 1px rgba(0,0,0,0.3); }
+  .plate-bar-end { width: 20px; height: 6px; background: var(--text-muted); border-radius: 0 3px 3px 0; flex-shrink: 0; }
+  .plate-mirror { font-size: 0.6875rem; color: var(--text-muted); margin-left: 8px; }
 
   @media (max-width: 640px) {
     .plugin-lift .lift-grid { grid-template-columns: 1fr; gap: 12px; }
@@ -623,11 +631,152 @@ interface CalculatorResult {
   label?: string;
   sub?: string;
   warmupRows?: { pct: string; weight: string; plates: string }[];
+  targets?: PlateTarget[];
 }
 
-function renderCalculator(db: PluginDatabase, userId: string, result?: CalculatorResult): string {
+/** Parsed plate result for a single target weight */
+interface PlateTarget {
+  target: number;
+  plateStr: string;
+  parsedPlates: { size: number; count: number }[];
+  warmupRows: { pct: string; weight: string; plates: string }[];
+}
+
+/** Map plate sizes to theme CSS colors for the diagram */
+const PLATE_COLORS: Record<number, string> = {
+  55: 'var(--red)',
+  45: 'var(--red)',
+  35: 'var(--orange)',
+  25: 'var(--yellow)',
+  15: 'var(--cyan)',
+  10: 'var(--green)',
+  5: 'var(--cyan)',
+  2.5: 'var(--accent)',
+  1.25: 'var(--text-muted)',
+};
+
+/** Map plate sizes to widths for visual proportionality */
+const PLATE_WIDTHS: Record<number, number> = {
+  55: 48, 45: 48, 35: 42, 25: 36, 15: 30, 10: 26, 5: 22, 2.5: 18, 1.25: 14,
+};
+
+/** Parse plate config string like "Bar + 45x2 + 10x2" into structured data */
+function parsePlateStr(plateStr: string): { size: number; count: number }[] {
+  const plates: { size: number; count: number }[] = [];
+  const parts = plateStr.split('+').map((s) => s.trim());
+  for (const part of parts) {
+    if (part === 'Bar' || part.endsWith('bar') || part.endsWith('only') || part.includes('DB')) continue;
+    const match = part.match(/^([\d.]+)x(\d+)$/);
+    if (match) {
+      plates.push({ size: parseFloat(match[1]), count: parseInt(match[2], 10) });
+    }
+  }
+  return plates;
+}
+
+/** Render a CSS plate diagram showing one side of the barbell */
+function renderPlateDiagram(parsedPlates: { size: number; count: number }[], plateStr: string, unit: string): string {
+  if (parsedPlates.length === 0) return '';
+
+  // Show plates for one side (count / 2)
+  const oneSide: { size: number }[] = [];
+  for (const p of parsedPlates) {
+    const perSide = Math.floor(p.count / 2);
+    for (let i = 0; i < perSide; i++) {
+      oneSide.push({ size: p.size });
+    }
+  }
+
+  if (oneSide.length === 0) return '';
+
+  const plateEls = oneSide.map((p) => {
+    const color = PLATE_COLORS[p.size] ?? 'var(--text-muted)';
+    const width = PLATE_WIDTHS[p.size] ?? 20;
+    return `<div class="plate-block" style="background:${color};height:${String(width)}px;" title="${String(p.size)} ${unit}">${String(p.size)}</div>`;
+  }).join('');
+
+  return `<div class="plate-diagram">
+    <div class="plate-bar-sleeve"></div>
+    <div class="plate-collar"></div>
+    ${plateEls}
+    <div class="plate-bar-end"></div>
+    <div class="plate-mirror">&#x2194; same on other side</div>
+  </div>
+  <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">${escapeHtml(plateStr)}</div>`;
+}
+
+/** Query params for persisting calculator state */
+interface CalcParams {
+  calc?: string;
+  // 1RM
+  weight?: string;
+  reps?: string;
+  // Wilks/DOTS
+  total?: string;
+  bodyweight?: string;
+  gender?: string;
+  // Plates
+  target?: string;
+  config?: string;
+}
+
+function computeResult(params: CalcParams, unit: 'lbs' | 'kg'): CalculatorResult | undefined {
+  const calc = params.calc;
+
+  if (calc === 'rm') {
+    const weight = parseFloat(params.weight ?? '');
+    const reps = parseInt(params.reps ?? '', 10);
+    if (!isNaN(weight) && !isNaN(reps) && weight > 0 && weight <= 2000 && reps > 0 && reps <= 100) {
+      const rm = calculate1rm(weight, reps);
+      return { type: 'rm', value: `${rm % 1 === 0 ? String(Math.round(rm)) : rm.toFixed(1)} ${unit}`, label: 'Estimated 1 Rep Max' };
+    }
+  } else if (calc === 'wilks') {
+    const total = parseFloat(params.total ?? '');
+    const bw = parseFloat(params.bodyweight ?? '');
+    const isMale = params.gender === 'male';
+    if ((params.gender === 'male' || params.gender === 'female') && !isNaN(total) && !isNaN(bw) && total > 0 && bw > 0) {
+      const totalKg = unit === 'lbs' ? total / KG_TO_LBS : total;
+      const bwKg = unit === 'lbs' ? bw / KG_TO_LBS : bw;
+      const score = calculateWilks(totalKg, bwKg, isMale);
+      return { type: 'wilks', value: score.toFixed(2), label: 'Wilks Score', sub: getWilksClassification(score) };
+    }
+  } else if (calc === 'dots') {
+    const total = parseFloat(params.total ?? '');
+    const bw = parseFloat(params.bodyweight ?? '');
+    const isMale = params.gender === 'male';
+    if ((params.gender === 'male' || params.gender === 'female') && !isNaN(total) && !isNaN(bw) && total > 0 && bw > 0) {
+      const totalKg = unit === 'lbs' ? total / KG_TO_LBS : total;
+      const bwKg = unit === 'lbs' ? bw / KG_TO_LBS : bw;
+      const score = calculateDots(totalKg, bwKg, isMale);
+      return { type: 'dots', value: score.toFixed(2), label: 'DOTS Score' };
+    }
+  } else if (calc === 'plates') {
+    const targetStr = params.target ?? '';
+    // Support multiple targets separated by commas or spaces
+    const targetValues = targetStr.split(/[,\s]+/).map((s) => parseFloat(s.trim())).filter((n) => !isNaN(n) && n > 0 && n <= 1000).slice(0, 10);
+    if (targetValues.length > 0) {
+      const config = params.config === 'home' ? HOME_PLATES : GYM_PLATES;
+      const targets: PlateTarget[] = targetValues.map((target) => {
+        const plateStr = calculatePlateConfig(target, config);
+        const parsedPlates = parsePlateStr(plateStr);
+        const warmupRows = WARMUP_PERCENTAGES.map((pct) => {
+          const w = Math.round(target * pct);
+          return { pct: `${Math.round(pct * 100)}%`, weight: `${String(w)} ${unit}`, plates: calculatePlateConfig(w, config) };
+        });
+        return { target, plateStr, parsedPlates, warmupRows };
+      });
+      return { type: 'plates', targets };
+    }
+  }
+
+  return undefined;
+}
+
+function renderCalculator(db: PluginDatabase, userId: string, params: CalcParams = {}): string {
   const unit = getUserUnit(db, userId);
   const unitLabel = unit;
+
+  const result = computeResult(params, unit);
 
   // 1RM result
   let rmResultHtml = '';
@@ -647,26 +796,43 @@ function renderCalculator(db: PluginDatabase, userId: string, result?: Calculato
     dotsResultHtml = `<div class="calc-result"><div class="calc-result-value">${escapeHtml(result.value ?? '')}</div><div class="calc-result-label">${escapeHtml(result.label ?? '')}</div></div>`;
   }
 
-  // Plate/warmup result
+  // Plate/warmup result (supports multiple targets)
   let platesResultHtml = '';
-  if (result?.type === 'plates' && result.warmupRows) {
-    const rows = result.warmupRows.map((r) =>
-      `<tr><td>${escapeHtml(r.pct)}</td><td>${escapeHtml(r.weight)}</td><td>${escapeHtml(r.plates)}</td></tr>`
-    ).join('');
-    platesResultHtml = `<div class="calc-result">
-      <div class="calc-result-value">${escapeHtml(result.value ?? '')}</div>
-      <div class="calc-result-label">${escapeHtml(result.label ?? '')}</div>
-      <table class="warmup-table"><thead><tr><th>%</th><th>Weight</th><th>Plates</th></tr></thead><tbody>${rows}</tbody></table>
-    </div>`;
+  if (result?.type === 'plates' && result.targets) {
+    platesResultHtml = result.targets.map((t) => {
+      const rows = t.warmupRows.map((r, i) =>
+        `<tr class="${i === t.warmupRows.length - 1 ? 'warmup-target-row' : ''}">${
+          `<td>${escapeHtml(r.pct)}</td><td>${escapeHtml(r.weight)}</td><td>${escapeHtml(r.plates)}</td>`
+        }</tr>`
+      ).join('');
+      return `<div class="calc-result">
+        <div class="calc-result-value">${escapeHtml(t.plateStr)}</div>
+        <div class="calc-result-label">Plate loading for ${String(Math.round(t.target))} ${escapeHtml(unitLabel)}</div>
+        ${renderPlateDiagram(t.parsedPlates, t.plateStr, unitLabel)}
+        <table class="warmup-table"><thead><tr><th>%</th><th>Weight</th><th>Plates</th></tr></thead><tbody>${rows}</tbody></table>
+      </div>`;
+    }).join('');
   }
+
+  // Pre-fill form values from params
+  const rmWeight = params.calc === 'rm' ? (params.weight ?? '') : '';
+  const rmReps = params.calc === 'rm' ? (params.reps ?? '') : '';
+  const wilksTotal = params.calc === 'wilks' ? (params.total ?? '') : '';
+  const wilksBw = params.calc === 'wilks' ? (params.bodyweight ?? '') : '';
+  const wilksGender = params.calc === 'wilks' ? (params.gender ?? 'male') : 'male';
+  const dotsTotal = params.calc === 'dots' ? (params.total ?? '') : '';
+  const dotsBw = params.calc === 'dots' ? (params.bodyweight ?? '') : '';
+  const dotsGender = params.calc === 'dots' ? (params.gender ?? 'male') : 'male';
+  const platesTarget = params.calc === 'plates' ? (params.target ?? '') : '';
+  const platesConfig = params.calc === 'plates' ? (params.config ?? 'gym') : 'gym';
 
   const body = `
     ${liftNav('calculator')}
     ${pluginCard('1RM Estimator', `
       <form class="inline-form" method="POST" action="/p/lift/calculator">
         <input type="hidden" name="calc" value="rm">
-        <input name="weight" type="number" step="0.5" min="1" placeholder="Weight (${unitLabel})" required style="width:120px;">
-        <input name="reps" type="number" min="1" max="100" placeholder="Reps" required style="width:80px;">
+        <input name="weight" type="number" step="0.5" min="1" placeholder="Weight (${unitLabel})" value="${escapeHtml(rmWeight)}" required style="width:120px;">
+        <input name="reps" type="number" min="1" max="100" placeholder="Reps" value="${escapeHtml(rmReps)}" required style="width:80px;">
         <button type="submit">Calculate</button>
       </form>
       ${rmResultHtml}
@@ -675,11 +841,11 @@ function renderCalculator(db: PluginDatabase, userId: string, result?: Calculato
     ${pluginCard('Wilks Score', `
       <form class="inline-form" method="POST" action="/p/lift/calculator">
         <input type="hidden" name="calc" value="wilks">
-        <input name="total" type="number" step="0.5" min="1" placeholder="Total S+B+D (${unitLabel})" required style="width:160px;">
-        <input name="bodyweight" type="number" step="0.1" min="1" placeholder="Bodyweight (${unitLabel})" required style="width:140px;">
+        <input name="total" type="number" step="0.5" min="1" placeholder="Total S+B+D (${unitLabel})" value="${escapeHtml(wilksTotal)}" required style="width:160px;">
+        <input name="bodyweight" type="number" step="0.1" min="1" placeholder="Bodyweight (${unitLabel})" value="${escapeHtml(wilksBw)}" required style="width:140px;">
         <select name="gender" required>
-          <option value="male">Male</option>
-          <option value="female">Female</option>
+          <option value="male"${wilksGender === 'male' ? ' selected' : ''}>Male</option>
+          <option value="female"${wilksGender === 'female' ? ' selected' : ''}>Female</option>
         </select>
         <button type="submit">Calculate</button>
       </form>
@@ -689,11 +855,11 @@ function renderCalculator(db: PluginDatabase, userId: string, result?: Calculato
     ${pluginCard('DOTS Score', `
       <form class="inline-form" method="POST" action="/p/lift/calculator">
         <input type="hidden" name="calc" value="dots">
-        <input name="total" type="number" step="0.5" min="1" placeholder="Total S+B+D (${unitLabel})" required style="width:160px;">
-        <input name="bodyweight" type="number" step="0.1" min="1" placeholder="Bodyweight (${unitLabel})" required style="width:140px;">
+        <input name="total" type="number" step="0.5" min="1" placeholder="Total S+B+D (${unitLabel})" value="${escapeHtml(dotsTotal)}" required style="width:160px;">
+        <input name="bodyweight" type="number" step="0.1" min="1" placeholder="Bodyweight (${unitLabel})" value="${escapeHtml(dotsBw)}" required style="width:140px;">
         <select name="gender" required>
-          <option value="male">Male</option>
-          <option value="female">Female</option>
+          <option value="male"${dotsGender === 'male' ? ' selected' : ''}>Male</option>
+          <option value="female"${dotsGender === 'female' ? ' selected' : ''}>Female</option>
         </select>
         <button type="submit">Calculate</button>
       </form>
@@ -703,10 +869,10 @@ function renderCalculator(db: PluginDatabase, userId: string, result?: Calculato
     ${pluginCard('Plate Calculator & Warmup', `
       <form class="inline-form" method="POST" action="/p/lift/calculator">
         <input type="hidden" name="calc" value="plates">
-        <input name="target" type="number" step="0.5" min="1" max="1000" placeholder="Target weight (lbs)" required style="width:140px;">
+        <input name="target" type="text" placeholder="Target weight (${unitLabel})" value="${escapeHtml(platesTarget)}" required style="width:180px;" title="Enter one or more weights, e.g. 225 or 225, 315">
         <select name="config">
-          <option value="gym">Gym plates</option>
-          <option value="home">Home plates</option>
+          <option value="gym"${platesConfig === 'gym' ? ' selected' : ''}>Gym plates</option>
+          <option value="home"${platesConfig === 'home' ? ' selected' : ''}>Home plates</option>
         </select>
         <button type="submit">Calculate</button>
       </form>
@@ -751,61 +917,30 @@ export function registerLiftWebRoutes(router: PluginRouter): void {
     res.type('html').send(renderBodyweight(ctx.db, userId));
   });
 
-  // Calculator page
-  router.get('/calculator', (_req: Request, res: Response, ctx: PluginContext) => {
+  // Calculator page — GET renders with optional query params for persisted results
+  router.get('/calculator', (req: Request, res: Response, ctx: PluginContext) => {
     const userId = (res.locals.userId as string) ?? 'web-user';
-    res.type('html').send(renderCalculator(ctx.db, userId));
+    const params: CalcParams = {
+      calc: String(req.query.calc ?? ''),
+      weight: String(req.query.weight ?? ''),
+      reps: String(req.query.reps ?? ''),
+      total: String(req.query.total ?? ''),
+      bodyweight: String(req.query.bodyweight ?? ''),
+      gender: String(req.query.gender ?? ''),
+      target: String(req.query.target ?? ''),
+      config: String(req.query.config ?? ''),
+    };
+    res.type('html').send(renderCalculator(ctx.db, userId, params.calc ? params : {}));
   });
 
-  router.post('/calculator', (req: Request, res: Response, ctx: PluginContext) => {
-    const userId = (res.locals.userId as string) ?? 'web-user';
+  // Calculator POST — redirect to GET with query params (results survive reload)
+  router.post('/calculator', (req: Request, res: Response) => {
     const body = req.body as Record<string, string>;
-    const calc = body.calc;
-    const unit = getUserUnit(ctx.db, userId);
-
-    let result: CalculatorResult | undefined;
-
-    if (calc === 'rm') {
-      const weight = parseFloat(body.weight ?? '');
-      const reps = parseInt(body.reps ?? '', 10);
-      if (!isNaN(weight) && !isNaN(reps) && weight > 0 && weight <= 2000 && reps > 0 && reps <= 100) {
-        const rm = calculate1rm(weight, reps);
-        result = { type: 'rm', value: `${rm % 1 === 0 ? String(Math.round(rm)) : rm.toFixed(1)} ${unit}`, label: 'Estimated 1 Rep Max' };
-      }
-    } else if (calc === 'wilks') {
-      const total = parseFloat(body.total ?? '');
-      const bw = parseFloat(body.bodyweight ?? '');
-      const isMale = body.gender === 'male';
-      if ((body.gender === 'male' || body.gender === 'female') && !isNaN(total) && !isNaN(bw) && total > 0 && bw > 0) {
-        const totalKg = unit === 'lbs' ? total / KG_TO_LBS : total;
-        const bwKg = unit === 'lbs' ? bw / KG_TO_LBS : bw;
-        const score = calculateWilks(totalKg, bwKg, isMale);
-        result = { type: 'wilks', value: score.toFixed(2), label: 'Wilks Score', sub: getWilksClassification(score) };
-      }
-    } else if (calc === 'dots') {
-      const total = parseFloat(body.total ?? '');
-      const bw = parseFloat(body.bodyweight ?? '');
-      const isMale = body.gender === 'male';
-      if ((body.gender === 'male' || body.gender === 'female') && !isNaN(total) && !isNaN(bw) && total > 0 && bw > 0) {
-        const totalKg = unit === 'lbs' ? total / KG_TO_LBS : total;
-        const bwKg = unit === 'lbs' ? bw / KG_TO_LBS : bw;
-        const score = calculateDots(totalKg, bwKg, isMale);
-        result = { type: 'dots', value: score.toFixed(2), label: 'DOTS Score' };
-      }
-    } else if (calc === 'plates') {
-      const target = parseFloat(body.target ?? '');
-      const config = body.config === 'home' ? HOME_PLATES : GYM_PLATES;
-      if (!isNaN(target) && target > 0 && target <= 1000) {
-        const plateStr = calculatePlateConfig(target, config);
-        const warmupRows = WARMUP_PERCENTAGES.map((pct) => {
-          const w = Math.round(target * pct);
-          return { pct: `${Math.round(pct * 100)}%`, weight: `${String(w)} lbs`, plates: calculatePlateConfig(w, config) };
-        });
-        result = { type: 'plates', value: plateStr, label: `Plate loading for ${String(Math.round(target))} lbs`, warmupRows };
-      }
+    const qs = new URLSearchParams();
+    for (const key of ['calc', 'weight', 'reps', 'total', 'bodyweight', 'gender', 'target', 'config']) {
+      if (body[key]) qs.set(key, body[key].slice(0, 200));
     }
-
-    res.type('html').send(renderCalculator(ctx.db, userId, result));
+    res.redirect(`/p/lift/calculator?${qs.toString()}`);
   });
 
   // ─── POST: Log workout set ──────────────────────────────────────────
