@@ -240,10 +240,11 @@ const liftCSS = `
   .calc-result-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px; }
   .calc-result-sub { font-size: 0.8125rem; color: var(--text-muted); margin-top: 4px; }
   .warmup-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; margin-top: 8px; }
-  .warmup-table th, .warmup-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-  .warmup-table th { color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; }
-  .warmup-table td:first-child { font-weight: 600; }
-  .warmup-target-row td { font-weight: 700; color: var(--text); border-left: 3px solid var(--accent); }
+  .warmup-table th, .warmup-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .warmup-table th { color: var(--text-muted); font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.5px; }
+  .warmup-table td:first-child { font-weight: 600; font-family: 'SF Mono', monospace; }
+  .warmup-table tbody tr:hover { background: rgba(139,233,253,0.04); }
+  .warmup-table tbody tr:last-child td { font-weight: 700; color: var(--text); }
 
   .plate-diagram { display: flex; align-items: center; gap: 0; margin: 12px 0 4px; padding: 8px 0; }
   .plate-bar-sleeve { width: 40px; height: 10px; background: var(--text-muted); border-radius: 3px 0 0 3px; }
@@ -270,15 +271,17 @@ const liftCSS = `
   }
 
   @media print {
-    .plugin-lift ~ header, .plugin-lift ~ footer, .plugin-lift ~ nav { display: none !important; }
-    .plugin-lift .nav-pills, .plugin-lift .inline-form, .plugin-lift .no-print { display: none !important; }
-    .plugin-lift .plugin-card:not(:has(.calc-result)) { display: none !important; }
-    .plugin-lift { padding: 0; background: #fff !important; }
-    .plugin-lift .calc-result { background: #fff; border: 1px solid #ddd; padding: 12px; margin: 8px 0; page-break-inside: avoid; }
-    .plugin-lift .calc-result + .calc-result { page-break-before: auto; }
-    .plugin-lift .warmup-table { border: 1px solid #ccc; }
-    .plugin-lift .warmup-table th, .plugin-lift .warmup-table td { border: 1px solid #ddd; }
-    .plugin-lift .warmup-target-row td { border-left: 3px solid #333; font-weight: 700; }
+    .nav-bar, .bottom-nav, footer,
+    .plugin-lift .nav-pills, .plugin-lift .inline-form, .plugin-lift .no-print,
+    .plugin-lift .plugin-card:not(.plugin-card:has(.calc-result)),
+    .plugin-lift .calc-result-label { display: none !important; }
+    .plugin-lift { padding: 0 !important; margin: 0 !important; background: #fff !important; }
+    .plugin-lift .plugin-card { background: none !important; border: none !important; box-shadow: none !important; padding: 0 !important; margin: 0 !important; }
+    .plugin-lift .calc-result { background: none; border: none; padding: 4px 0; margin: 0; page-break-inside: avoid; }
+    .plugin-lift .calc-result-value { font-size: 1rem; color: #000; margin-bottom: 2px; }
+    .plugin-lift .warmup-table { border: 1px solid #ccc; margin: 0; }
+    .plugin-lift .warmup-table th, .plugin-lift .warmup-table td { border: 1px solid #ddd; padding: 4px 8px; font-size: 0.75rem; }
+    .plugin-lift .warmup-table tbody tr:last-child td { font-weight: 700; }
     .plugin-lift svg { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   }
 `;
@@ -707,9 +710,12 @@ interface PlateTarget {
 /** Monotonic counter for unique SVG element IDs (avoids collision risk of Math.random) */
 let svgSeq = 0;
 
-/** Map plate sizes to widths for visual proportionality */
+/** Reference height that PLATE_HEIGHTS values are calibrated against */
+const PLATE_HEIGHT_REF = 56;
+
+/** Map plate sizes to heights for visual proportionality (calibrated to PLATE_HEIGHT_REF) */
 const PLATE_WIDTHS: Record<number, number> = {
-  55: 48, 45: 48, 35: 42, 25: 36, 15: 30, 10: 26, 5: 22, 2.5: 18, 1.25: 14,
+  55: 56, 45: 56, 35: 48, 25: 40, 15: 34, 10: 28, 5: 24, 2.5: 20, 1.25: 16,
 };
 
 /** Parse plate config string like "Bar + 45x2 + 10x2" into structured data */
@@ -751,7 +757,7 @@ function renderPlateDiagram(parsedPlates: { size: number; count: number }[], pla
   if (oneSide.length === 0) return '';
 
   const uid = `bb${String(++svgSeq)}`;
-  return buildBarbellSvg(oneSide, uid, { showLabels: true, sleeveW: 50 }, `${plateStr} barbell loading diagram`)
+  return buildBarbellSvg(oneSide, uid, BARBELL_FULL, `${plateStr} barbell loading diagram`)
     + `<div style="font-size:0.6875rem;color:var(--text-muted);margin-top:4px;">&#x2194; same on other side &middot; ${escapeHtml(plateStr)}</div>`;
 }
 
@@ -770,32 +776,43 @@ function renderMiniBarbell(plateStr: string, unit: string): string {
   if (oneSide.length === 0) return `<span style="color:var(--text-muted);font-size:0.75rem;">${escapeHtml(plateStr)}</span>`;
 
   const uid = `mb${String(++svgSeq)}`;
-  return `<div title="${escapeHtml(plateStr)}" style="display:inline-block;vertical-align:middle;">${buildBarbellSvg(oneSide, uid, { showLabels: false, sleeveW: 20 }, plateStr)}</div>`;
+  return `<div title="${escapeHtml(plateStr)}" style="display:inline-block;vertical-align:middle;">${buildBarbellSvg(oneSide, uid, BARBELL_ROW, plateStr)}</div>`;
 }
 
-/** Shared SVG barbell builder for full and mini variants */
+/** Barbell SVG sizing presets */
+interface BarbellOpts {
+  sleeveW: number; barH: number; collarW: number; collarH: number;
+  plateW: number; plateGap: number; endCapW: number; maxPlateH: number;
+  padY: number; showLabels: boolean; fontSize: number; responsive: boolean;
+}
+
+const BARBELL_FULL: BarbellOpts = {
+  sleeveW: 50, barH: 8, collarW: 10, collarH: 18,
+  plateW: 14, plateGap: 2, endCapW: 14, maxPlateH: 56,
+  padY: 6, showLabels: true, fontSize: 8, responsive: true,
+};
+
+const BARBELL_ROW: BarbellOpts = {
+  sleeveW: 14, barH: 5, collarW: 6, collarH: 14,
+  plateW: 10, plateGap: 1, endCapW: 6, maxPlateH: 38,
+  padY: 3, showLabels: true, fontSize: 6, responsive: false,
+};
+
+/** Shared SVG barbell builder */
 function buildBarbellSvg(
   oneSide: { size: number }[],
   uid: string,
-  opts: { showLabels: boolean; sleeveW: number },
+  opts: BarbellOpts,
   plateDescription?: string
 ): string {
-  const barH = opts.showLabels ? 8 : 5;
-  const sleeveW = opts.sleeveW;
-  const collarW = opts.showLabels ? 10 : 6;
-  const collarH = opts.showLabels ? 18 : 12;
-  const plateGap = opts.showLabels ? 2 : 1;
-  const plateW = opts.showLabels ? 22 : 10;
-  const endCapW = opts.showLabels ? 16 : 8;
-  const maxPlateH = opts.showLabels ? 52 : 24;
-  const padY = opts.showLabels ? 6 : 3;
+  const { barH, sleeveW, collarW, collarH, plateGap, plateW, endCapW, maxPlateH, padY } = opts;
 
   const platesW = oneSide.length * (plateW + plateGap);
   const totalW = sleeveW + collarW + platesW + endCapW + 4;
   const totalH = maxPlateH + padY * 2;
   const midY = totalH / 2;
 
-  const style = opts.showLabels
+  const style = opts.responsive
     ? `width="100%" style="max-width:${String(totalW)}px;display:block;margin:12px 0 4px;"`
     : `width="${String(totalW)}" height="${String(totalH)}" style="display:block;"`;
 
@@ -818,16 +835,16 @@ function buildBarbellSvg(
   svg += `<rect x="${String(x)}" y="${String(midY - collarH / 2)}" width="${String(collarW)}" height="${String(collarH)}" rx="1" fill="url(#${uid}-m)" stroke="#999" stroke-width="0.3"/>`;
   x += collarW;
 
+  const heightScale = maxPlateH / PLATE_HEIGHT_REF;
   for (const p of oneSide) {
-    const h = Math.round((PLATE_WIDTHS[p.size] ?? 20) * (opts.showLabels ? 1 : 0.46));
+    const h = Math.round((PLATE_WIDTHS[p.size] ?? 20) * heightScale);
     const color = SVG_PLATE_COLORS[p.size] ?? '#a0aec0';
     const isLight = LIGHT_PLATES.has(p.size);
     const y = midY - h / 2;
-    svg += `<rect x="${String(x)}" y="${String(y)}" width="${String(plateW)}" height="${String(h)}" rx="${opts.showLabels ? '3' : '1'}" fill="${color}" filter="url(#${uid}-s)"${isLight ? ' stroke="#cbd5e0" stroke-width="0.5"' : ''}/>`;
-    if (opts.showLabels) {
-      const fontSize = h < 20 ? 7 : 9;
+    svg += `<rect x="${String(x)}" y="${String(y)}" width="${String(plateW)}" height="${String(h)}" rx="2" fill="${color}" filter="url(#${uid}-s)"${isLight ? ' stroke="#cbd5e0" stroke-width="0.5"' : ''}/>`;
+    if (opts.showLabels && h >= opts.fontSize + 2) {
       const textColor = isLight ? '#2d3748' : '#fff';
-      svg += `<text x="${String(x + plateW / 2)}" y="${String(midY + fontSize / 3)}" text-anchor="middle" font-size="${String(fontSize)}" font-weight="700" fill="${textColor}">${String(p.size)}</text>`;
+      svg += `<text x="${String(x + plateW / 2)}" y="${String(midY + opts.fontSize / 3)}" text-anchor="middle" font-size="${String(opts.fontSize)}" font-weight="700" fill="${textColor}">${String(p.size)}</text>`;
     }
     x += plateW + plateGap;
   }
@@ -932,10 +949,8 @@ function renderCalculator(db: PluginDatabase, userId: string, params: CalcParams
   let platesResultHtml = '';
   if (result?.type === 'plates' && result.targets) {
     platesResultHtml = result.targets.map((t) => {
-      const rows = t.warmupRows.map((r, i) =>
-        `<tr class="${i === t.warmupRows.length - 1 ? 'warmup-target-row' : ''}">${
-          `<td>${escapeHtml(r.pct)}</td><td>${escapeHtml(r.weight)}</td><td>${renderMiniBarbell(r.plates, unitLabel)}</td>`
-        }</tr>`
+      const rows = t.warmupRows.map((r) =>
+        `<tr><td>${escapeHtml(r.pct)}</td><td>${escapeHtml(r.weight)}</td><td>${renderMiniBarbell(r.plates, unitLabel)}</td></tr>`
       ).join('');
       return `<div class="calc-result">
         <div class="calc-result-value">${escapeHtml(t.plateStr)}</div>

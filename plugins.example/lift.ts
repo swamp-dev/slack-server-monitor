@@ -252,6 +252,15 @@ const liftPlugin: Plugin = {
     logger.info('Lift plugin destroyed', { name: ctx.name });
   },
 
+  webPages: [
+    { name: 'Dashboard', path: '/' },
+    { name: 'Workouts', path: '/workouts' },
+    { name: 'PRs', path: '/prs' },
+    { name: 'Macros', path: '/macros' },
+    { name: 'Bodyweight', path: '/bodyweight' },
+    { name: 'Calculator', path: '/calculator' },
+  ],
+
   screenshotPages: [
     { name: 'dashboard', path: '/' },
     { name: 'workouts', path: '/workouts' },
