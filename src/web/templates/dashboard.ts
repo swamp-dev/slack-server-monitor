@@ -959,7 +959,7 @@ export function renderDashboard(
     var steps = [
       { icon: '${icon('home', 36)}', title: 'Welcome to Server Monitor', text: 'This is your dashboard. See server health, recent conversations, and quick stats at a glance.' },
       { icon: '${icon('message-circle', 36)}', title: 'Chat with Claude via Slack', text: 'Use /ask in Slack to start a conversation. Claude can check containers, read logs, and diagnose issues.' },
-      { icon: '${icon('search', 36)}', title: 'Keyboard Power User', text: 'Press ? for keyboard shortcuts. Cmd+K opens the command palette. Navigate conversations with j/k keys.' }
+      { icon: '${icon('search', 36)}', title: 'Keyboard Power User', text: 'Press ? for keyboard shortcuts. Ctrl+K opens the command palette. Navigate conversations with j/k keys.' }
     ];
     var titleEl = document.getElementById('onboarding-title');
     var textEl = document.getElementById('onboarding-text');

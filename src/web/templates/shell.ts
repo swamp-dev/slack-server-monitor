@@ -129,7 +129,7 @@ export function wrapInShell(opts: ShellOptions): string {
 <body>
   ${navHtml}
   ${showNav ? `<div id="hint-banner" class="hint-banner" style="display:none">
-    <span>Pro tip: Press <kbd>\u2318K</kbd> to quickly search and navigate, or <kbd>?</kbd> for all keyboard shortcuts.</span>
+    <span>Pro tip: Press <kbd>Ctrl+K</kbd> to quickly search and navigate, or <kbd>?</kbd> for all keyboard shortcuts.</span>
     <button class="hint-banner-dismiss" id="hint-banner-dismiss" type="button" aria-label="Dismiss">${icon('x', 16)}</button>
   </div>` : ''}
   ${body}
@@ -525,7 +525,7 @@ export function wrapInShell(opts: ShellOptions): string {
   })();
   </script>
   <script>
-  // Command palette (Cmd+K / Ctrl+K)
+  // Command palette (Ctrl+K)
   (function() {
     var palette = document.getElementById('cmd-palette');
     var input = document.getElementById('cmd-palette-input');
@@ -657,7 +657,7 @@ export function wrapInShell(opts: ShellOptions): string {
       activeIndex = idx;
     }
 
-    // Open on Cmd+K / Ctrl+K
+    // Open on Ctrl+K
     document.addEventListener('keydown', function(e) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
