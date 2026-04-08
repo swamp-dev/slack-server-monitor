@@ -418,7 +418,10 @@ export function renderSessionList(
         <input type="text" name="q" placeholder="Search conversations..." value="${escapeHtml(searchQuery)}" class="search-input">
       </div>
       <button type="submit" class="search-btn">${icon('search', 16)} <span class="search-btn-text">Search</span></button>
-    </form>`;
+    </form>
+    <div class="search-hint" id="search-hint" style="display:none">
+      ${icon('search', 12)} You can also press <kbd>\u2318K</kbd> for the command palette \u2014 it searches conversations too.
+    </div>`;
 
   let emptyHtml = '';
   if (sessions.length === 0) {
@@ -444,7 +447,7 @@ export function renderSessionList(
       emptySubtext = 'Add tags from the conversation detail page';
     }
 
-    emptyHtml = `<div class="empty-state">${emptyIcon}<div class="empty-title">${emptyTitle}</div><div class="empty-subtext">${emptySubtext}</div></div>`;
+    emptyHtml = `<div class="empty-state">${emptyIcon}<div class="empty-title">${emptyTitle}</div><div class="empty-subtext">${emptySubtext}</div><p class="empty-hint">Tip: Press <kbd>\u2318K</kbd> to quickly search and navigate</p></div>`;
   }
 
   // Group sessions by date section
@@ -706,11 +709,23 @@ export function renderSessionList(
   })();
   </script>`;
 
+  const searchHintScript = `
+  <script>
+  (function() {
+    var hint = document.getElementById('search-hint');
+    if (!hint) return;
+    try {
+      var dismissed = localStorage.getItem('ssm-hints-dismissed') === 'true';
+      if (!dismissed) hint.style.display = '';
+    } catch(e) {}
+  })();
+  </script>`;
+
   return wrapInShell({
     title,
     styles: sessionListStyles,
     body: bodyHtml,
-    scripts: starScript + timeUpdateScript + swipeScript + tagToggleScript,
+    scripts: starScript + timeUpdateScript + swipeScript + tagToggleScript + searchHintScript,
     currentPath: '/c',
   });
 }

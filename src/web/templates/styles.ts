@@ -1394,5 +1394,65 @@ export function getAnimationStyles(): string {
       margin: 8vh 12px 0;
     }
   }
+
+  /* ─── Hint system ──────────────────────────────────────────────── */
+  .hint-banner kbd,
+  .empty-hint kbd,
+  .search-hint kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    font-size: 0.75rem;
+    font-family: inherit;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+  }
+  .hint-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    max-width: 960px;
+    margin: 12px auto 0;
+    padding: 10px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    animation: toast-in 0.3s ease forwards;
+  }
+  .hint-banner-dismiss {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    border-radius: 4px;
+    transition: color 0.15s;
+  }
+  .hint-banner-dismiss:hover {
+    color: var(--text);
+  }
+  .empty-hint {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    opacity: 0.7;
+    margin-top: 8px;
+  }
+  .search-hint {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    opacity: 0.7;
+    margin-top: 6px;
+  }
+  .search-hint kbd { font-size: 0.6875rem; }
   `;
 }

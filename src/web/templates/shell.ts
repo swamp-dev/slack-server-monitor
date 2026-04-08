@@ -114,6 +114,10 @@ export function wrapInShell(opts: ShellOptions): string {
 </head>
 <body>
   ${navHtml}
+  ${showNav ? `<div id="hint-banner" class="hint-banner" style="display:none">
+    <span>Pro tip: Press <kbd>\u2318K</kbd> to quickly search and navigate, or <kbd>?</kbd> for all keyboard shortcuts.</span>
+    <button class="hint-banner-dismiss" id="hint-banner-dismiss" type="button" aria-label="Dismiss">${icon('x', 16)}</button>
+  </div>` : ''}
   ${body}
   <footer>
     <div class="container">
@@ -160,6 +164,23 @@ export function wrapInShell(opts: ShellOptions): string {
       var next = current === 'dracula' ? 'light' : 'dracula';
       document.documentElement.setAttribute('data-theme', next);
       localStorage.setItem('ssm-theme', next);
+    });
+  })();
+  // Hint banner: show after onboarding, dismiss permanently
+  (function() {
+    var banner = document.getElementById('hint-banner');
+    var dismiss = document.getElementById('hint-banner-dismiss');
+    if (!banner || !dismiss) return;
+    try {
+      var onboarded = localStorage.getItem('ssm-onboarded') === 'true';
+      var dismissed = localStorage.getItem('ssm-hints-dismissed') === 'true';
+      if (onboarded && !dismissed) {
+        banner.style.display = '';
+      }
+    } catch(e) {}
+    dismiss.addEventListener('click', function() {
+      banner.style.display = 'none';
+      try { localStorage.setItem('ssm-hints-dismissed', 'true'); } catch(e) {}
     });
   })();
   // Hamburger menu

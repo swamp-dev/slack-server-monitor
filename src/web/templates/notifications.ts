@@ -246,13 +246,26 @@ export function renderNotificationPage(
         ${icon('bell', 48)}
         <h2>No notifications yet</h2>
         <p>Notifications from plugins and the system will appear here.</p>
+        <p class="empty-hint" id="notif-empty-hint" style="display:none">Tip: Press <kbd>?</kbd> to see all keyboard shortcuts</p>
       </div>
     </main>`;
+
+    const hintScript = `
+    <script>
+    (function() {
+      var hint = document.getElementById('notif-empty-hint');
+      if (!hint) return;
+      try {
+        if (localStorage.getItem('ssm-hints-dismissed') !== 'true') hint.style.display = '';
+      } catch(e) {}
+    })();
+    </script>`;
 
     return wrapInShell({
       title: 'Notifications',
       styles: notificationPageStyles,
       body: bodyHtml,
+      scripts: hintScript,
       unreadCount,
       currentPath: '/notifications',
     });
