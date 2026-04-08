@@ -21,6 +21,9 @@ interface PageDef {
   name: string;
   path: string;
   variants?: { name: string; query: string }[];
+  fullPage?: boolean;
+  /** Run after navigation but before screenshot (e.g., open a modal) */
+  setup?: (page: Awaited<ReturnType<Awaited<ReturnType<typeof chromium.launch>>['newPage']>>) => Promise<void>;
 }
 
 const PAGES: PageDef[] = [
@@ -44,6 +47,15 @@ const PAGES: PageDef[] = [
     { name: 'error', query: '?variant=error' },
   ]},
   { name: '404', path: '/nonexistent-page' },
+  { name: 'command-palette', path: '/', setup: async (pw) => {
+    await pw.keyboard.press('Control+k');
+    await pw.waitForSelector('#cmd-palette .cmd-palette-item', { timeout: 3000 });
+    // Scroll results to show Plugins group
+    await pw.evaluate(() => {
+      const results = document.querySelector('.cmd-palette-results');
+      if (results) results.scrollTop = results.scrollHeight;
+    });
+  }},
 ];
 
 const THEMES = ['dracula', 'light'] as const;
@@ -65,6 +77,7 @@ async function main() {
     allPages.push({
       name: `${pp.pluginName}-${pp.name}`,
       path: `/p/${pp.pluginName}${pp.path}`,
+      fullPage: pp.fullPage,
     });
   }
 
@@ -78,7 +91,7 @@ async function main() {
 
   let captured = 0;
 
-  async function capture(browser: Awaited<ReturnType<typeof chromium.launch>>, pageName: string, url: string, theme: string, viewport: typeof VIEWPORTS[number]) {
+  async function capture(browser: Awaited<ReturnType<typeof chromium.launch>>, pageName: string, url: string, theme: string, viewport: typeof VIEWPORTS[number], fullPage = false, setup?: PageDef['setup']) {
     // Fresh context per combo ensures localStorage (theme) is cleanly set
     const context = await browser.newContext({
       viewport: { width: viewport.width, height: viewport.height },
@@ -97,11 +110,12 @@ async function main() {
     try {
       const pw = await context.newPage();
       await pw.goto(url, { waitUntil: 'networkidle' });
+      if (setup) await setup(pw);
 
       const filename = `${pageName}-${theme}-${viewport.name}.png`;
       await pw.screenshot({
         path: path.join(OUTPUT_DIR, filename),
-        fullPage: false,
+        fullPage,
       });
 
       captured++;
@@ -118,7 +132,7 @@ async function main() {
         for (const theme of THEMES) {
           for (const viewport of VIEWPORTS) {
             // Default state
-            await capture(browser, page.name, `${baseUrl}${page.path}`, theme, viewport);
+            await capture(browser, page.name, `${baseUrl}${page.path}`, theme, viewport, page.fullPage);
 
             // Variant states
             if (page.variants) {
@@ -129,6 +143,7 @@ async function main() {
                   `${baseUrl}${page.path}${variant.query}`,
                   theme,
                   viewport,
+                  page.fullPage,
                 );
               }
             }

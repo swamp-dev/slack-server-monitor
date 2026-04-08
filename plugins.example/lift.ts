@@ -259,6 +259,7 @@ const liftPlugin: Plugin = {
     { name: 'macros', path: '/macros' },
     { name: 'bodyweight', path: '/bodyweight' },
     { name: 'calculator', path: '/calculator' },
+    { name: 'calculator-results', path: '/calculator?calc=plates&target=225%2C+315&config=home', fullPage: true },
   ],
 
   screenshotSetup: async (ctx: PluginContext) => {

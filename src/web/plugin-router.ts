@@ -37,6 +37,7 @@ export interface PluginNavEntry {
   pluginName: string;
   label: string;
   icon?: string;
+  pages?: { name: string; path: string }[];
 }
 
 /**
@@ -45,6 +46,7 @@ export interface PluginNavEntry {
 export interface WebNavEntryOptions {
   label: string;
   icon?: string;
+  pages?: { name: string; path: string }[];
 }
 
 // Shared Express router for all plugin routes
@@ -86,6 +88,7 @@ export function createPluginRouter(
       pluginName,
       label: navEntry.label,
       icon: navEntry.icon,
+      pages: navEntry.pages ?? [],
     });
   }
 

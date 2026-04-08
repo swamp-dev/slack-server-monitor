@@ -372,4 +372,78 @@ describe('isValidPlugin', () => {
       })).toBe(false);
     });
   });
+
+  describe('webPages', () => {
+    it('should accept plugin with valid webPages', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        webPages: [{ name: 'dashboard', path: '/' }],
+      })).toBe(true);
+    });
+
+    it('should accept plugin with multiple webPages', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        webPages: [{ name: 'dashboard', path: '/' }, { name: 'scenes', path: '/scenes' }],
+      })).toBe(true);
+    });
+
+    it('should accept empty webPages array', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        webPages: [],
+      })).toBe(true);
+    });
+
+    it('should reject non-array webPages', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        webPages: 'not-an-array',
+      })).toBe(false);
+    });
+
+    it('should reject webPages with invalid entries', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        webPages: [{ name: 123, path: '/' }],
+      })).toBe(false);
+    });
+
+    it('should reject webPages with empty name', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        webPages: [{ name: '', path: '/' }],
+      })).toBe(false);
+    });
+
+    it('should reject webPages missing name', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        webPages: [{ path: '/' }],
+      })).toBe(false);
+    });
+
+    it('should reject webPages missing path', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        webPages: [{ name: 'dashboard' }],
+      })).toBe(false);
+    });
+
+    it('should reject webPages path without leading slash', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        webPages: [{ name: 'dashboard', path: 'no-slash' }],
+      })).toBe(false);
+    });
+  });
 });

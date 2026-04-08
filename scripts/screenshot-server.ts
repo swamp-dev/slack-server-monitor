@@ -57,7 +57,7 @@ const PLUGINS_EXAMPLE_DIR = path.join(ROOT_DIR, 'plugins.example');
 let server: Server | null = null;
 
 /** Plugin pages discovered during startup, exported for the harness. */
-export let pluginPages: Array<{ pluginName: string; name: string; path: string }> = [];
+export let pluginPages: Array<{ pluginName: string; name: string; path: string; fullPage?: boolean }> = [];
 
 /** Track initialized plugins for cleanup. */
 const initializedPlugins: Array<{ plugin: Plugin; ctx: PluginContext }> = [];
@@ -138,13 +138,14 @@ async function loadScreenshotPlugins(app: ReturnType<typeof express>): Promise<v
 
     // Register web routes
     if (plugin.registerWebRoutes) {
-      const router = createPluginRouter(plugin.name, ctx, plugin.webNavEntry);
+      const webPages = plugin.webPages ?? plugin.screenshotPages ?? [];
+      const router = createPluginRouter(plugin.name, ctx, plugin.webNavEntry ? { ...plugin.webNavEntry, pages: webPages } : undefined);
       plugin.registerWebRoutes(router);
     }
 
     // Collect screenshot pages
     for (const page of plugin.screenshotPages) {
-      pages.push({ pluginName: plugin.name, name: page.name, path: page.path });
+      pages.push({ pluginName: plugin.name, name: page.name, path: page.path, fullPage: page.fullPage });
     }
   }
 

@@ -67,6 +67,20 @@ export function wrapInShell(opts: ShellOptions): string {
       }).join('')
     : '';
 
+  // Generate plugin palette entries for command palette
+  const pluginPaletteEntries = pluginNavEntries.flatMap((entry) => {
+    const root = { title: entry.label, url: `/p/${entry.pluginName}/`, icon: entry.icon ?? 'grid', group: 'Plugins' };
+    const subPages = (entry.pages ?? [])
+      .filter((p) => p.path !== '/')
+      .map((page) => ({
+        title: `${entry.label} \u203a ${page.name.charAt(0).toUpperCase() + page.name.slice(1)}`,
+        url: `/p/${entry.pluginName}${page.path}`,
+        icon: entry.icon ?? 'grid',
+        group: 'Plugins',
+      }));
+    return [root, ...subPages];
+  });
+
   const navHtml = showNav ? `
   <nav class="nav-bar">
     <a href="/" class="nav-brand">${icon('robot', 22)} Server Monitor</a>
@@ -531,7 +545,7 @@ export function wrapInShell(opts: ShellOptions): string {
       { title: 'Favorites', url: '/c/favorites', icon: 'star', group: 'Navigate' },
       { title: 'Notifications', url: '/notifications', icon: 'bell', group: 'Navigate' },
       { title: 'Archived', url: '/c/archived', icon: 'archive', group: 'Navigate' },
-    ];
+    ].concat(${JSON.stringify(pluginPaletteEntries).replace(/<\//g, '<\\/')});
 
     function esc(s) {
       return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -562,6 +576,14 @@ export function wrapInShell(opts: ShellOptions): string {
       commands.filter(function(c) { return c.group === 'Navigate'; }).forEach(function(c) {
         html += '<a href="' + esc(c.url) + '" class="cmd-palette-item"><span class="cmd-item-title">' + esc(c.title) + '</span></a>';
       });
+      // Show Plugins group if any
+      var pluginCmds = commands.filter(function(c) { return c.group === 'Plugins'; });
+      if (pluginCmds.length > 0) {
+        html += '<div class="cmd-palette-group">Plugins</div>';
+        pluginCmds.forEach(function(c) {
+          html += '<a href="' + esc(c.url) + '" class="cmd-palette-item"><span class="cmd-item-title">' + esc(c.title) + '</span></a>';
+        });
+      }
       // Fetch recent conversations
       fetch('/api/search?limit=5', { credentials: 'same-origin' })
         .then(function(r) { return r.json(); })

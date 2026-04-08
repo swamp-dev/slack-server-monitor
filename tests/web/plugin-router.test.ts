@@ -81,8 +81,8 @@ describe('plugin router', () => {
 
       const entries = getPluginNavEntries();
       expect(entries).toHaveLength(2);
-      expect(entries[0]).toEqual({ pluginName: 'lift', label: 'Lift', icon: 'dumbbell' });
-      expect(entries[1]).toEqual({ pluginName: 'health', label: 'Health', icon: undefined });
+      expect(entries[0]).toEqual({ pluginName: 'lift', label: 'Lift', icon: 'dumbbell', pages: [] });
+      expect(entries[1]).toEqual({ pluginName: 'health', label: 'Health', icon: undefined, pages: [] });
     });
 
     it('should not add nav entry when not provided', () => {

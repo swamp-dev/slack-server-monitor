@@ -95,6 +95,13 @@ export const PLATE_SIZES = [45, 35, 25, 10, 5, 2.5] as const; // descending orde
 export const HOME_PLATE_SIZES = [55, 45, 35, 25, 15, 10, 5, 5, 2.5, 1.25] as const; // 5 appears twice (2 pairs)
 export const HOME_LIGHT_PLATE_SIZES = [25, 15, 10, 5, 2.5, 1.25] as const; // plates that fit on 5lb bar
 export const WARMUP_PERCENTAGES = [0.4, 0.6, 0.8, 1.0] as const;
+
+/** Common barbell exercises for quick-log suggestions */
+export const EXERCISE_PRESETS = [
+  'deadlift', 'squat', 'bench press', 'overhead press',
+  'power clean', 'barbell row', 'chin ups',
+  'barbell curl', 'barbell tricep extension',
+] as const;
 export const MAX_TARGET_WEIGHT = 1000; // lbs - safety limit to prevent unbounded output
 
 export interface PlateConfig {

@@ -245,6 +245,13 @@ export interface Plugin {
   webNavEntry?: { label: string; icon?: string };
 
   /**
+   * Web pages for command palette navigation.
+   * Each page gets a palette entry: "PluginName > PageName".
+   * Falls back to screenshotPages if not specified.
+   */
+  webPages?: PluginWebPage[];
+
+  /**
    * Cleanup hook called on app shutdown
    *
    * Receives the same PluginContext as init().
@@ -276,6 +283,18 @@ export interface PluginScreenshotPage {
   /** Page name used in filename (e.g., "dashboard", "scenes") */
   name: string;
   /** Route path relative to plugin root (e.g., "/", "/scenes") */
+  path: string;
+  /** Capture full page height instead of viewport only (default: false) */
+  fullPage?: boolean;
+}
+
+/**
+ * A web page for command palette navigation
+ */
+export interface PluginWebPage {
+  /** Display name for the palette (e.g., "Scenes") */
+  name: string;
+  /** Route path relative to plugin root (e.g., "/scenes") */
   path: string;
 }
 
@@ -363,6 +382,17 @@ export function isValidPlugin(obj: unknown): obj is Plugin {
       if (typeof page !== 'object' || page === null) return false;
       const p = page as Record<string, unknown>;
       if (typeof p.name !== 'string' || typeof p.path !== 'string' || !p.path.startsWith('/')) return false;
+    }
+  }
+
+  if (plugin.webPages !== undefined) {
+    if (!Array.isArray(plugin.webPages)) {
+      return false;
+    }
+    for (const page of plugin.webPages) {
+      if (typeof page !== 'object' || page === null) return false;
+      const p = page as Record<string, unknown>;
+      if (typeof p.name !== 'string' || p.name === '' || typeof p.path !== 'string' || !p.path.startsWith('/')) return false;
     }
   }
 

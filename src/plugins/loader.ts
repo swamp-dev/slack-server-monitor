@@ -323,7 +323,8 @@ export async function registerPlugins(app: App, pluginsDir?: string): Promise<vo
       // Register web routes if plugin provides them
       if (plugin.registerWebRoutes) {
         try {
-          const pluginRouter = createPluginRouter(plugin.name, ctx, plugin.webNavEntry);
+          const pages = plugin.webPages ?? plugin.screenshotPages ?? [];
+          const pluginRouter = createPluginRouter(plugin.name, ctx, plugin.webNavEntry ? { ...plugin.webNavEntry, pages } : undefined);
           plugin.registerWebRoutes(pluginRouter);
         } catch (routeError) {
           logger.error('Plugin web route registration failed', {
