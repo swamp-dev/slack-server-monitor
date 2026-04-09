@@ -71,6 +71,7 @@ export type { WeightUnit, MacroTotals, QuerySpec, PendingEstimate, MacroEstimate
 export { BAR_WEIGHT, PLATE_SIZES, HOME_PLATE_SIZES, HOME_LIGHT_PLATE_SIZES, WARMUP_PERCENTAGES, MAX_TARGET_WEIGHT, GYM_PLATES, HOME_PLATES, PENDING_ESTIMATE_TTL, FOOD_ANALYSIS_PROMPT } from './lift/types.js';
 export { LBS_TO_KG, KG_TO_LBS, lbsToKg, kgToLbs, formatWeight, getUserUnit, setUserUnit } from './lift/units.js';
 export { calculatePlateConfig } from './lift/calculations.js';
+export type { PlateResult } from './lift/calculations.js';
 export { parseLogArgs, parseMacroArgs, parseDate, parseQueryArgs } from './lift/parsing.js';
 export { logWorkoutSet, getWorkoutForDate, checkForPR, getPersonalRecords, getAllPersonalRecords, logBodyweight, getLatestBodyweight, getBodyweightHistory, formatBodyweightTrend } from './lift/data.js';
 export { titleCase, formatWorkoutSummary, formatPersonalRecords, formatDateLabel, formatMacroSummary } from './lift/formatting.js';
@@ -269,6 +270,8 @@ const liftPlugin: Plugin = {
     { name: 'bodyweight', path: '/bodyweight' },
     { name: 'calculator', path: '/calculator' },
     { name: 'calculator-results', path: '/calculator?calc=plates&target=225%2C+315&config=home', fullPage: true },
+    { name: 'calculator-rounded', path: '/calculator?calc=plates&target=46%2C+227.5&config=gym', fullPage: true },
+    { name: 'calculator-lightbar', path: '/calculator?calc=plates&target=30%2C+40&config=home', fullPage: true },
   ],
 
   screenshotSetup: async (ctx: PluginContext) => {

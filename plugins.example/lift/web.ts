@@ -239,6 +239,7 @@ const liftCSS = `
   .calc-result-value { font-size: 1.5rem; font-weight: 700; color: var(--cyan); }
   .calc-result-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px; }
   .calc-result-sub { font-size: 0.8125rem; color: var(--text-muted); margin-top: 4px; }
+  .calc-note { font-size: 0.75rem; color: var(--yellow); margin-top: 4px; padding: 4px 8px; background: rgba(241,250,140,0.08); border-radius: 4px; display: inline-block; }
   .warmup-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; margin-top: 8px; }
   .warmup-table th, .warmup-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
   .warmup-table th { color: var(--text-muted); font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -691,10 +692,11 @@ function renderBodyweight(db: PluginDatabase, userId: string): string {
 // ─── Page: Calculator ────────────────────────────────────────────────
 
 interface CalculatorResult {
-  type: 'rm' | 'wilks' | 'dots' | 'plates';
+  type: 'rm' | 'wilks' | 'dots' | 'plates' | 'error';
   value?: string;
   label?: string;
   sub?: string;
+  message?: string;
   warmupRows?: { pct: string; weight: string; plates: string }[];
   targets?: PlateTarget[];
 }
@@ -705,6 +707,7 @@ interface PlateTarget {
   plateStr: string;
   parsedPlates: { size: number; count: number }[];
   warmupRows: { pct: string; weight: string; plates: string }[];
+  note?: string;
 }
 
 /** Monotonic counter for unique SVG element IDs (avoids collision risk of Math.random) */
@@ -713,9 +716,9 @@ let svgSeq = 0;
 /** Reference height that PLATE_HEIGHTS values are calibrated against */
 const PLATE_HEIGHT_REF = 56;
 
-/** Map plate sizes to heights for visual proportionality (calibrated to PLATE_HEIGHT_REF) */
+/** Map plate sizes to heights — bumper plates (10+ lbs) are all full diameter, change plates (5 and below) are smaller */
 const PLATE_WIDTHS: Record<number, number> = {
-  55: 56, 45: 56, 35: 48, 25: 40, 15: 34, 10: 28, 5: 24, 2.5: 20, 1.25: 16,
+  55: 56, 45: 56, 35: 56, 25: 56, 15: 56, 10: 56, 5: 32, 2.5: 24, 1.25: 18,
 };
 
 /** Parse plate config string like "Bar + 45x2 + 10x2" into structured data */
@@ -757,7 +760,9 @@ function renderPlateDiagram(parsedPlates: { size: number; count: number }[], pla
   if (oneSide.length === 0) return '';
 
   const uid = `bb${String(++svgSeq)}`;
-  return buildBarbellSvg(oneSide, uid, BARBELL_FULL, `${plateStr} barbell loading diagram`)
+  const isLightBar = plateStr.includes('lb bar');
+  const opts = isLightBar ? { ...BARBELL_FULL, lightBar: true } : BARBELL_FULL;
+  return buildBarbellSvg(oneSide, uid, opts, `${plateStr} barbell loading diagram`)
     + `<div style="font-size:0.6875rem;color:var(--text-muted);margin-top:4px;">&#x2194; same on other side &middot; ${escapeHtml(plateStr)}</div>`;
 }
 
@@ -776,7 +781,9 @@ function renderMiniBarbell(plateStr: string, unit: string): string {
   if (oneSide.length === 0) return `<span style="color:var(--text-muted);font-size:0.75rem;">${escapeHtml(plateStr)}</span>`;
 
   const uid = `mb${String(++svgSeq)}`;
-  return `<div title="${escapeHtml(plateStr)}" style="display:inline-block;vertical-align:middle;">${buildBarbellSvg(oneSide, uid, BARBELL_ROW, plateStr)}</div>`;
+  const isLightBar = plateStr.includes('lb bar');
+  const opts = isLightBar ? { ...BARBELL_ROW, lightBar: true } : BARBELL_ROW;
+  return `<div title="${escapeHtml(plateStr)}" style="display:inline-block;vertical-align:middle;">${buildBarbellSvg(oneSide, uid, opts, plateStr)}</div>`;
 }
 
 /** Barbell SVG sizing presets */
@@ -784,18 +791,19 @@ interface BarbellOpts {
   sleeveW: number; barH: number; collarW: number; collarH: number;
   plateW: number; plateGap: number; endCapW: number; maxPlateH: number;
   padY: number; showLabels: boolean; fontSize: number; responsive: boolean;
+  lightBar?: boolean;
 }
 
 const BARBELL_FULL: BarbellOpts = {
   sleeveW: 50, barH: 8, collarW: 10, collarH: 18,
   plateW: 14, plateGap: 2, endCapW: 14, maxPlateH: 56,
-  padY: 6, showLabels: true, fontSize: 8, responsive: true,
+  padY: 6, showLabels: true, fontSize: 10, responsive: true,
 };
 
 const BARBELL_ROW: BarbellOpts = {
   sleeveW: 14, barH: 5, collarW: 6, collarH: 14,
   plateW: 10, plateGap: 1, endCapW: 6, maxPlateH: 38,
-  padY: 3, showLabels: true, fontSize: 6, responsive: false,
+  padY: 3, showLabels: true, fontSize: 7, responsive: false,
 };
 
 /** Shared SVG barbell builder */
@@ -819,20 +827,24 @@ function buildBarbellSvg(
   const ariaLabel = plateDescription ? ` aria-label="${escapeHtml(plateDescription)}"` : '';
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${String(totalW)} ${String(totalH)}" ${style} role="img"${ariaLabel}>${plateDescription ? `<title>${escapeHtml(plateDescription)}</title>` : ''}`;
 
+  const isLight = opts.lightBar === true;
+  const barGrad = isLight
+    ? `<stop offset="0%" stop-color="#ef4444"/><stop offset="40%" stop-color="#dc2626"/><stop offset="60%" stop-color="#b91c1c"/><stop offset="100%" stop-color="#991b1b"/>`
+    : `<stop offset="0%" stop-color="#b8b8b8"/><stop offset="40%" stop-color="#d4d4d4"/><stop offset="60%" stop-color="#a0a0a0"/><stop offset="100%" stop-color="#888"/>`;
+  const lightBarH = isLight ? Math.max(barH - 1, 4) : barH;
+  const lightCollarH = isLight ? Math.max(collarH - 2, 10) : collarH;
+
   svg += `<defs>
-    <linearGradient id="${uid}-m" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#b8b8b8"/><stop offset="40%" stop-color="#d4d4d4"/>
-      <stop offset="60%" stop-color="#a0a0a0"/><stop offset="100%" stop-color="#888"/>
-    </linearGradient>
+    <linearGradient id="${uid}-m" x1="0" y1="0" x2="0" y2="1">${barGrad}</linearGradient>
     <filter id="${uid}-s" x="-4%" y="-4%" width="108%" height="108%">
       <feDropShadow dx="0.5" dy="0.5" stdDeviation="0.5" flood-opacity="0.2"/>
     </filter>
   </defs>`;
 
   let x = 0;
-  svg += `<rect x="${String(x)}" y="${String(midY - barH / 2)}" width="${String(sleeveW)}" height="${String(barH)}" rx="3" fill="url(#${uid}-m)"/>`;
+  svg += `<rect x="${String(x)}" y="${String(midY - lightBarH / 2)}" width="${String(sleeveW)}" height="${String(lightBarH)}" rx="3" fill="url(#${uid}-m)"/>`;
   x += sleeveW;
-  svg += `<rect x="${String(x)}" y="${String(midY - collarH / 2)}" width="${String(collarW)}" height="${String(collarH)}" rx="1" fill="url(#${uid}-m)" stroke="#999" stroke-width="0.3"/>`;
+  svg += `<rect x="${String(x)}" y="${String(midY - lightCollarH / 2)}" width="${String(collarW)}" height="${String(lightCollarH)}" rx="1" fill="url(#${uid}-m)" stroke="${isLight ? '#7f1d1d' : '#999'}" stroke-width="0.3"/>`;
   x += collarW;
 
   const heightScale = maxPlateH / PLATE_HEIGHT_REF;
@@ -849,7 +861,7 @@ function buildBarbellSvg(
     x += plateW + plateGap;
   }
 
-  svg += `<rect x="${String(x)}" y="${String(midY - barH / 2)}" width="${String(endCapW)}" height="${String(barH)}" rx="3" fill="url(#${uid}-m)"/>`;
+  svg += `<rect x="${String(x)}" y="${String(midY - lightBarH / 2)}" width="${String(endCapW)}" height="${String(lightBarH)}" rx="3" fill="url(#${uid}-m)"/>`;
   svg += '</svg>';
   return svg;
 }
@@ -902,17 +914,28 @@ function computeResult(params: CalcParams, unit: 'lbs' | 'kg'): CalculatorResult
   } else if (calc === 'plates') {
     const targetStr = params.target ?? '';
     // Support multiple targets separated by commas or spaces
-    const targetValues = targetStr.split(/[,\s]+/).map((s) => parseFloat(s.trim())).filter((n) => !isNaN(n) && n > 0 && n <= MAX_TARGET_WEIGHT).slice(0, 10);
+    const rawValues = targetStr.split(/[,\s]+/).map((s) => parseFloat(s.trim())).filter((n) => !isNaN(n));
+    // Validate bounds
+    const negative = rawValues.filter((n) => n <= 0);
+    const tooHigh = rawValues.filter((n) => n > MAX_TARGET_WEIGHT);
+    if (rawValues.length > 0 && negative.length + tooHigh.length === rawValues.length) {
+      if (negative.length > 0) return { type: 'error', message: 'Weight must be a positive number.' };
+      return { type: 'error', message: `Weight must be ${MAX_TARGET_WEIGHT} ${unit} or less.` };
+    }
+    const targetValues = rawValues.filter((n) => n > 0 && n <= MAX_TARGET_WEIGHT).slice(0, 10);
     if (targetValues.length > 0) {
       const config = params.config === 'home' ? HOME_PLATES : GYM_PLATES;
       const targets: PlateTarget[] = targetValues.map((target) => {
-        const plateStr = calculatePlateConfig(target, config);
-        const parsedPlates = parsePlateStr(plateStr);
+        const result = calculatePlateConfig(target, config);
+        const parsedPlates = parsePlateStr(result.plateStr);
         const warmupRows = WARMUP_PERCENTAGES.map((pct) => {
           const w = Math.round(target * pct);
-          return { pct: `${Math.round(pct * 100)}%`, weight: `${String(w)} ${unit}`, plates: calculatePlateConfig(w, config) };
+          return { pct: `${Math.round(pct * 100)}%`, weight: `${String(w)} ${unit}`, plates: calculatePlateConfig(w, config).plateStr };
         });
-        return { target, plateStr, parsedPlates, warmupRows };
+        const note = result.loadedWeight !== target
+          ? `Rounded to ${result.loadedWeight} ${unit} (closest loadable weight)`
+          : undefined;
+        return { target, plateStr: result.plateStr, parsedPlates, warmupRows, note };
       });
       return { type: 'plates', targets };
     }
@@ -947,14 +970,25 @@ function renderCalculator(db: PluginDatabase, userId: string, params: CalcParams
 
   // Plate/warmup result (supports multiple targets)
   let platesResultHtml = '';
+  // Error result
+  let errorResultHtml = '';
+  if (result?.type === 'error' && result.message) {
+    errorResultHtml = `<div class="calc-result" style="border-left:3px solid var(--red);"><div style="color:var(--red);font-size:0.875rem;">${escapeHtml(result.message)}</div></div>`;
+  }
+
   if (result?.type === 'plates' && result.targets) {
     platesResultHtml = result.targets.map((t) => {
       const rows = t.warmupRows.map((r) =>
         `<tr><td>${escapeHtml(r.pct)}</td><td>${escapeHtml(r.weight)}</td><td>${renderMiniBarbell(r.plates, unitLabel)}</td></tr>`
       ).join('');
+      const targetStr = Number.isInteger(t.target) ? String(t.target) : t.target.toFixed(1);
+      const noteHtml = t.note
+        ? `<div class="calc-note">${escapeHtml(t.note)}</div>`
+        : '';
       return `<div class="calc-result">
         <div class="calc-result-value">${escapeHtml(t.plateStr)}</div>
-        <div class="calc-result-label">Plate loading for ${String(Math.round(t.target))} ${escapeHtml(unitLabel)}</div>
+        <div class="calc-result-label">Plate loading for ${escapeHtml(targetStr)} ${escapeHtml(unitLabel)}</div>
+        ${noteHtml}
         ${renderPlateDiagram(t.parsedPlates, t.plateStr, unitLabel)}
         <table class="warmup-table"><thead><tr><th>%</th><th>Weight</th><th>Loading</th></tr></thead><tbody>${rows}</tbody></table>
       </div>`;
@@ -976,11 +1010,24 @@ function renderCalculator(db: PluginDatabase, userId: string, params: CalcParams
 
   const body = `
     ${liftNav('calculator')}
+    ${pluginCard('Plate Calculator & Warmup', `
+      <form class="inline-form" method="POST" action="/p/lift/calculator">
+        <input type="hidden" name="calc" value="plates">
+        <input name="target" type="text" inputmode="decimal" placeholder="e.g. 225 or 225, 315" value="${escapeHtml(platesTarget)}" required style="width:200px;" title="Enter one or more weights separated by commas">
+        <select name="config">
+          <option value="home"${platesConfig === 'home' ? ' selected' : ''}>Home plates</option>
+          <option value="gym"${platesConfig === 'gym' ? ' selected' : ''}>Gym plates</option>
+        </select>
+        <button type="submit">Calculate</button>
+      </form>
+      ${errorResultHtml}${platesResultHtml}
+    `, { icon: 'chart' })}
+
     ${pluginCard('1RM Estimator', `
       <form class="inline-form" method="POST" action="/p/lift/calculator">
         <input type="hidden" name="calc" value="rm">
-        <input name="weight" type="number" step="0.5" min="1" placeholder="Weight (${unitLabel})" value="${escapeHtml(rmWeight)}" required style="width:120px;">
-        <input name="reps" type="number" min="1" max="100" placeholder="Reps" value="${escapeHtml(rmReps)}" required style="width:80px;">
+        <input name="weight" type="number" inputmode="decimal" step="0.5" min="1" placeholder="Weight (${unitLabel})" value="${escapeHtml(rmWeight)}" required style="width:120px;">
+        <input name="reps" type="number" inputmode="numeric" min="1" max="100" placeholder="Reps" value="${escapeHtml(rmReps)}" required style="width:80px;">
         <button type="submit">Calculate</button>
       </form>
       ${rmResultHtml}
@@ -989,8 +1036,8 @@ function renderCalculator(db: PluginDatabase, userId: string, params: CalcParams
     ${pluginCard('Wilks Score', `
       <form class="inline-form" method="POST" action="/p/lift/calculator">
         <input type="hidden" name="calc" value="wilks">
-        <input name="total" type="number" step="0.5" min="1" placeholder="Total S+B+D (${unitLabel})" value="${escapeHtml(wilksTotal)}" required style="width:160px;">
-        <input name="bodyweight" type="number" step="0.1" min="1" placeholder="Bodyweight (${unitLabel})" value="${escapeHtml(wilksBw)}" required style="width:140px;">
+        <input name="total" type="number" inputmode="decimal" step="0.5" min="1" placeholder="Total S+B+D (${unitLabel})" value="${escapeHtml(wilksTotal)}" required style="width:160px;">
+        <input name="bodyweight" type="number" inputmode="decimal" step="0.1" min="1" placeholder="Bodyweight (${unitLabel})" value="${escapeHtml(wilksBw)}" required style="width:140px;">
         <select name="gender" required>
           <option value="male"${wilksGender === 'male' ? ' selected' : ''}>Male</option>
           <option value="female"${wilksGender === 'female' ? ' selected' : ''}>Female</option>
@@ -1003,8 +1050,8 @@ function renderCalculator(db: PluginDatabase, userId: string, params: CalcParams
     ${pluginCard('DOTS Score', `
       <form class="inline-form" method="POST" action="/p/lift/calculator">
         <input type="hidden" name="calc" value="dots">
-        <input name="total" type="number" step="0.5" min="1" placeholder="Total S+B+D (${unitLabel})" value="${escapeHtml(dotsTotal)}" required style="width:160px;">
-        <input name="bodyweight" type="number" step="0.1" min="1" placeholder="Bodyweight (${unitLabel})" value="${escapeHtml(dotsBw)}" required style="width:140px;">
+        <input name="total" type="number" inputmode="decimal" step="0.5" min="1" placeholder="Total S+B+D (${unitLabel})" value="${escapeHtml(dotsTotal)}" required style="width:160px;">
+        <input name="bodyweight" type="number" inputmode="decimal" step="0.1" min="1" placeholder="Bodyweight (${unitLabel})" value="${escapeHtml(dotsBw)}" required style="width:140px;">
         <select name="gender" required>
           <option value="male"${dotsGender === 'male' ? ' selected' : ''}>Male</option>
           <option value="female"${dotsGender === 'female' ? ' selected' : ''}>Female</option>
@@ -1013,19 +1060,6 @@ function renderCalculator(db: PluginDatabase, userId: string, params: CalcParams
       </form>
       ${dotsResultHtml}
     `, { icon: 'star' })}
-
-    ${pluginCard('Plate Calculator & Warmup', `
-      <form class="inline-form" method="POST" action="/p/lift/calculator">
-        <input type="hidden" name="calc" value="plates">
-        <input name="target" type="text" placeholder="Target weight (${unitLabel})" value="${escapeHtml(platesTarget)}" required style="width:180px;" title="Enter one or more weights, e.g. 225 or 225, 315">
-        <select name="config">
-          <option value="home"${platesConfig === 'home' ? ' selected' : ''}>Home plates</option>
-          <option value="gym"${platesConfig === 'gym' ? ' selected' : ''}>Gym plates</option>
-        </select>
-        <button type="submit">Calculate</button>
-      </form>
-      ${platesResultHtml}
-    `, { icon: 'chart' })}
   `;
 
   return renderPluginPage({ title: 'Calculator — Lift', pluginName: 'lift', body, styles: liftCSS });

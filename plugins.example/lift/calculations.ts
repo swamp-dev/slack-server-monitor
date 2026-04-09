@@ -74,7 +74,12 @@ export function calculate1rm(weight: number, reps: number): number {
  * @param config Plate configuration (gym or home)
  * @returns String describing the plate configuration
  */
-export function calculatePlateConfig(targetWeight: number, config: PlateConfig = GYM_PLATES): string {
+export interface PlateResult {
+  plateStr: string;
+  loadedWeight: number;
+}
+
+export function calculatePlateConfig(targetWeight: number, config: PlateConfig = GYM_PLATES): PlateResult {
   // Resolve effective bar and plates (light bar for low weights if available)
   let barWt = config.barWeight;
   let plateSizes: readonly number[] = config.plateSizes;
@@ -87,10 +92,10 @@ export function calculatePlateConfig(targetWeight: number, config: PlateConfig =
     if (barWt === BAR_WEIGHT) {
       // Gym: dumbbell fallback
       const perHandWeight = Math.round(targetWeight / 10) * 5;
-      return `2x${perHandWeight}lb DBs`;
+      return { plateStr: `2x${perHandWeight}lb DBs`, loadedWeight: perHandWeight * 2 };
     }
     // Home light bar: bar only (no dumbbells)
-    return `${barWt}lb bar only`;
+    return { plateStr: `${barWt}lb bar only`, loadedWeight: barWt };
   }
 
   // Greedy algorithm: fill with largest plates first
@@ -127,7 +132,9 @@ export function calculatePlateConfig(targetWeight: number, config: PlateConfig =
   }
 
   const barLabel = barWt === BAR_WEIGHT ? 'Bar' : `${barWt}lb bar`;
-  return plates.length > 0 ? `${barLabel} + ${plates.join(' + ')}` : `${barLabel} only`;
+  const plateStr = plates.length > 0 ? `${barLabel} + ${plates.join(' + ')}` : `${barLabel} only`;
+  const loadedWeight = targetWeight - remaining;
+  return { plateStr, loadedWeight };
 }
 
 // =============================================================================
@@ -144,7 +151,7 @@ export function calculatePlateConfig(targetWeight: number, config: PlateConfig =
 export function formatWarmupTable(targetWeight: number, config: PlateConfig, displayLabel?: string): ReturnType<typeof header | typeof section>[] {
   const rows = WARMUP_PERCENTAGES.map((pct) => {
     const weight = Math.round(targetWeight * pct);
-    const plateConfig = calculatePlateConfig(weight, config);
+    const plateConfig = calculatePlateConfig(weight, config).plateStr;
     const pctStr = `${Math.round(pct * 100)}%`.padEnd(4);
     const weightStr = `${weight} lbs`.padEnd(8);
     return `${pctStr} │ ${weightStr} │ ${plateConfig}`;

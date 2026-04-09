@@ -183,7 +183,7 @@ export const warmupTool: ToolDefinition = {
       const lines: string[] = [`${config.label} for ${label}:`];
       for (const pct of WARMUP_PERCENTAGES) {
         const weight = Math.round(weightLbs * pct);
-        const plateConfig = calculatePlateConfig(weight, config);
+        const plateConfig = calculatePlateConfig(weight, config).plateStr;
         lines.push(`  ${Math.round(pct * 100)}%: ${weight} lbs - ${plateConfig}`);
       }
       results.push(lines.join('\n'));
