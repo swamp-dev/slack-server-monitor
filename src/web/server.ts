@@ -15,6 +15,7 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import type { Server } from 'http';
 import { config, type WebConfig } from '../config/index.js';
+import { getSocketModeStatus } from '../services/socket-mode-status.js';
 import { getConversationStore, type SessionSummary } from '../services/conversation-store.js';
 import { getSessionStore, closeSessionStore } from '../services/session-store.js';
 import { resolveToken, parseCookies, createLinkToken } from './auth.js';
@@ -192,8 +193,13 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   });
 
   // Health check endpoint (no auth required)
+  // Returns 200 when Socket Mode is connected, 503 when disconnected.
+  // Used by Docker HEALTHCHECK to detect stale WebSocket connections.
   app.get('/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok' });
+    const socketMode = getSocketModeStatus();
+    const status = socketMode.connected ? 'ok' : 'degraded';
+    const statusCode = socketMode.connected ? 200 : 503;
+    res.status(statusCode).json({ status, socketMode });
   });
 
   // PWA manifest (no auth required, cacheable)
@@ -660,8 +666,10 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
 
       // Ownership check: verify the conversation belongs to this user before allowing continuation
+      // Admin users can continue any conversation (admin sessions have userId 'admin')
+      const isAdmin = res.locals.isAdmin as boolean | undefined;
       const existing = store.getConversation(threadTs, channelId);
-      if (existing && existing.userId !== userId) {
+      if (existing && existing.userId !== userId && !isAdmin) {
         res.status(403).json({ error: 'Access denied' });
         return;
       }
@@ -748,13 +756,15 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
 
     // Verify conversation exists and the authenticated user owns it
+    // Admin users can access any conversation's stream
+    const isAdmin = res.locals.isAdmin as boolean | undefined;
     const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
     const conversation = store.getConversation(threadTs, channelId);
     if (!conversation) {
       res.status(404).json({ error: 'Conversation not found' });
       return;
     }
-    if (conversation.userId !== userId) {
+    if (conversation.userId !== userId && !isAdmin) {
       res.status(403).json({ error: 'Access denied' });
       return;
     }

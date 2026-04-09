@@ -29,6 +29,14 @@ vi.mock('../../src/utils/logger.js', () => ({
   },
 }));
 
+vi.mock('../../src/services/socket-mode-status.js', () => ({
+  getSocketModeStatus: vi.fn(() => ({
+    connected: true,
+    lastConnectedAt: '2026-01-01T00:00:00.000Z',
+    lastDisconnectedAt: null,
+  })),
+}));
+
 // Minimal store mocks — smoke tests just need the app to start and respond
 const mockStore = {
   getConversation: vi.fn(() => null),
@@ -159,7 +167,9 @@ describe('smoke tests', () => {
       const res = await fetch(`${baseUrl}/health`);
       expect(res.status).toBe(200);
       const json = await res.json();
-      expect(json).toEqual({ status: 'ok' });
+      expect(json.status).toBe('ok');
+      expect(json.socketMode).toBeDefined();
+      expect(json.socketMode.connected).toBe(true);
     });
 
     it('should serve login page without auth', async () => {

@@ -29,6 +29,16 @@ vi.mock('../../src/utils/logger.js', () => ({
   },
 }));
 
+const mockSocketModeStatus = {
+  connected: true,
+  lastConnectedAt: '2026-01-01T00:00:00.000Z',
+  lastDisconnectedAt: null as string | null,
+};
+
+vi.mock('../../src/services/socket-mode-status.js', () => ({
+  getSocketModeStatus: vi.fn(() => ({ ...mockSocketModeStatus })),
+}));
+
 // Track mock conversation store calls
 const mockConversations = new Map<string, {
   id: number;
@@ -205,6 +215,24 @@ async function authFetch(path: string, opts: RequestInit = {}): Promise<Response
   return fetch(`${baseUrl}${path}`, { ...opts, headers, redirect: 'manual' });
 }
 
+/**
+ * Helper to make authenticated requests as an admin user
+ */
+async function adminFetch(path: string, opts: RequestInit = {}): Promise<Response> {
+  mockSessionStore.getSession.mockReturnValue({
+    sessionId: 'admin-session-id',
+    userId: 'admin',
+    isAdmin: true,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 72 * 3600 * 1000,
+  });
+
+  const headers = new Headers(opts.headers);
+  headers.set('Cookie', 'ssm_session=admin-session-id');
+
+  return fetch(`${baseUrl}${path}`, { ...opts, headers, redirect: 'manual' });
+}
+
 describe('web server routes', () => {
   beforeAll(async () => {
     const testConfig = { ...webConfig, port: 18923 };
@@ -228,11 +256,34 @@ describe('web server routes', () => {
   });
 
   describe('unauthenticated endpoints', () => {
-    it('GET /health should return ok without auth', async () => {
+    it('GET /health should return ok with socket mode status when connected', async () => {
+      const { getSocketModeStatus } = await import('../../src/services/socket-mode-status.js');
+      vi.mocked(getSocketModeStatus).mockReturnValue({
+        connected: true,
+        lastConnectedAt: '2026-01-01T00:00:00.000Z',
+        lastDisconnectedAt: null,
+      });
+
       const res = await fetch(`${baseUrl}/health`);
       expect(res.status).toBe(200);
       const json = await res.json();
-      expect(json).toEqual({ status: 'ok' });
+      expect(json.status).toBe('ok');
+      expect(json.socketMode.connected).toBe(true);
+    });
+
+    it('GET /health should return 503 when socket mode is disconnected', async () => {
+      const { getSocketModeStatus } = await import('../../src/services/socket-mode-status.js');
+      vi.mocked(getSocketModeStatus).mockReturnValue({
+        connected: false,
+        lastConnectedAt: '2026-01-01T00:00:00.000Z',
+        lastDisconnectedAt: '2026-01-01T01:00:00.000Z',
+      });
+
+      const res = await fetch(`${baseUrl}/health`);
+      expect(res.status).toBe(503);
+      const json = await res.json();
+      expect(json.status).toBe('degraded');
+      expect(json.socketMode.connected).toBe(false);
     });
 
     it('GET /login should return login page', async () => {
@@ -535,6 +586,54 @@ describe('web server routes', () => {
       const json = await res.json();
       expect(json).toEqual({ success: true });
     });
+
+    it('should return 403 for non-owner non-admin', async () => {
+      mockStore.getConversation.mockReturnValue({
+        id: 1,
+        threadTs: '1000.001',
+        channelId: 'C001',
+        userId: 'U999',
+        messages: [{ role: 'user' as const, content: 'Hello' }],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        favoritedAt: null,
+      });
+
+      const res = await authFetch('/c/1000.001/C001/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'continue' }),
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('should allow admin to continue another user conversation', async () => {
+      mockStore.getConversation.mockReturnValue({
+        id: 1,
+        threadTs: '1000.001',
+        channelId: 'C001',
+        userId: 'U999',
+        messages: [{ role: 'user' as const, content: 'Hello' }],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        favoritedAt: null,
+      });
+      mockStore.getOrCreateConversation.mockReturnValue({
+        id: 1,
+        messages: [
+          { role: 'user', content: 'original' },
+          { role: 'assistant', content: 'reply' },
+          { role: 'user', content: 'admin follow up' },
+        ],
+      });
+
+      const res = await adminFetch('/c/1000.001/C001/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'admin follow up' }),
+      });
+      expect(res.status).toBe(200);
+    });
   });
 
   describe('markdown export', () => {
@@ -738,6 +837,37 @@ describe('web server routes', () => {
       });
       const res = await authFetch('/c/1000.001/C001/stream');
       expect(res.status).toBe(403);
+    });
+
+    it('GET /c/:threadTs/:channelId/stream should allow admin to access any conversation', async () => {
+      mockStore.getConversation.mockReturnValue({
+        id: 1,
+        threadTs: '1000.001',
+        channelId: 'C001',
+        userId: 'U999',
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        favoritedAt: null,
+      });
+
+      const controller = new AbortController();
+      const resPromise = adminFetch('/c/1000.001/C001/stream', {
+        signal: controller.signal,
+      });
+
+      // Give the server time to start the SSE response
+      await new Promise((r) => setTimeout(r, 50));
+      controller.abort();
+
+      try {
+        const res = await resPromise;
+        // Admin should get SSE stream, not 403
+        expect(res.headers.get('content-type')).toContain('text/event-stream');
+        expect(res.headers.get('cache-control')).toContain('no-cache');
+      } catch {
+        // AbortError is expected — we just need the headers
+      }
     });
 
     it('GET /c/:threadTs/:channelId/stream should return SSE headers for owner', async () => {

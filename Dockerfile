@@ -23,7 +23,8 @@ WORKDIR /app
 
 # Install Docker CLI for container management commands (uses mounted docker.sock)
 # Install procps for system monitoring commands (ps, free, uptime)
-RUN apk add --no-cache docker-cli procps
+# Install curl for Docker health check (hits /health endpoint)
+RUN apk add --no-cache docker-cli procps curl
 
 # Install production dependencies only
 COPY package*.json ./
@@ -41,8 +42,9 @@ RUN addgroup -g 1001 -S appgroup && \
 
 USER appuser
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD node -e "console.log('healthy')" || exit 1
+# Health check - verifies Socket Mode WebSocket is connected via /health endpoint.
+# Requires WEB_ENABLED=true (default in production).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD curl -sf http://localhost:${WEB_PORT:-8085}/health || exit 1
 
 CMD ["node", "dist/app.js"]
