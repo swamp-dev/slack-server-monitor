@@ -828,14 +828,14 @@ function buildBarbellSvg(
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${String(totalW)} ${String(totalH)}" ${style} role="img"${ariaLabel}>${plateDescription ? `<title>${escapeHtml(plateDescription)}</title>` : ''}`;
 
   const isLight = opts.lightBar === true;
-  const barGrad = isLight
-    ? `<stop offset="0%" stop-color="#ef4444"/><stop offset="40%" stop-color="#dc2626"/><stop offset="60%" stop-color="#b91c1c"/><stop offset="100%" stop-color="#991b1b"/>`
-    : `<stop offset="0%" stop-color="#b8b8b8"/><stop offset="40%" stop-color="#d4d4d4"/><stop offset="60%" stop-color="#a0a0a0"/><stop offset="100%" stop-color="#888"/>`;
+  const barGrad = `<stop offset="0%" stop-color="#b8b8b8"/><stop offset="40%" stop-color="#d4d4d4"/><stop offset="60%" stop-color="#a0a0a0"/><stop offset="100%" stop-color="#888"/>`;
+  const collarGradId = isLight ? `${uid}-c` : `${uid}-m`;
   const lightBarH = isLight ? Math.max(barH - 1, 4) : barH;
   const lightCollarH = isLight ? Math.max(collarH - 2, 10) : collarH;
 
   svg += `<defs>
-    <linearGradient id="${uid}-m" x1="0" y1="0" x2="0" y2="1">${barGrad}</linearGradient>
+    <linearGradient id="${uid}-m" x1="0" y1="0" x2="0" y2="1">${barGrad}</linearGradient>${isLight ? `
+    <linearGradient id="${uid}-c" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#7f1d1d"/><stop offset="40%" stop-color="#991b1b"/><stop offset="60%" stop-color="#7f1d1d"/><stop offset="100%" stop-color="#651919"/></linearGradient>` : ''}
     <filter id="${uid}-s" x="-4%" y="-4%" width="108%" height="108%">
       <feDropShadow dx="0.5" dy="0.5" stdDeviation="0.5" flood-opacity="0.2"/>
     </filter>
@@ -844,18 +844,18 @@ function buildBarbellSvg(
   let x = 0;
   svg += `<rect x="${String(x)}" y="${String(midY - lightBarH / 2)}" width="${String(sleeveW)}" height="${String(lightBarH)}" rx="3" fill="url(#${uid}-m)"/>`;
   x += sleeveW;
-  svg += `<rect x="${String(x)}" y="${String(midY - lightCollarH / 2)}" width="${String(collarW)}" height="${String(lightCollarH)}" rx="1" fill="url(#${uid}-m)" stroke="${isLight ? '#7f1d1d' : '#999'}" stroke-width="0.3"/>`;
+  svg += `<rect x="${String(x)}" y="${String(midY - lightCollarH / 2)}" width="${String(collarW)}" height="${String(lightCollarH)}" rx="1" fill="url(#${collarGradId})" stroke="${isLight ? '#7f1d1d' : '#999'}" stroke-width="0.3"/>`;
   x += collarW;
 
   const heightScale = maxPlateH / PLATE_HEIGHT_REF;
   for (const p of oneSide) {
     const h = Math.round((PLATE_WIDTHS[p.size] ?? 20) * heightScale);
     const color = SVG_PLATE_COLORS[p.size] ?? '#a0aec0';
-    const isLight = LIGHT_PLATES.has(p.size);
+    const isLightPlate = LIGHT_PLATES.has(p.size);
     const y = midY - h / 2;
-    svg += `<rect x="${String(x)}" y="${String(y)}" width="${String(plateW)}" height="${String(h)}" rx="2" fill="${color}" filter="url(#${uid}-s)"${isLight ? ' stroke="#cbd5e0" stroke-width="0.5"' : ''}/>`;
+    svg += `<rect x="${String(x)}" y="${String(y)}" width="${String(plateW)}" height="${String(h)}" rx="2" fill="${color}" filter="url(#${uid}-s)"${isLightPlate ? ' stroke="#cbd5e0" stroke-width="0.5"' : ''}/>`;
     if (opts.showLabels && h >= opts.fontSize + 2) {
-      const textColor = isLight ? '#2d3748' : '#fff';
+      const textColor = isLightPlate ? '#2d3748' : '#fff';
       svg += `<text x="${String(x + plateW / 2)}" y="${String(midY + opts.fontSize / 3)}" text-anchor="middle" font-size="${String(opts.fontSize)}" font-weight="700" fill="${textColor}">${String(p.size)}</text>`;
     }
     x += plateW + plateGap;

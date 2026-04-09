@@ -36,6 +36,7 @@ export function getBaseStyles(): string {
 
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-size: 1.0625rem;
     background-color: var(--bg);
     color: var(--text);
     line-height: 1.6;
