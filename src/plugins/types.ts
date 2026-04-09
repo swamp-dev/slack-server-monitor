@@ -252,6 +252,12 @@ export interface Plugin {
   webPages?: PluginWebPage[];
 
   /**
+   * Whether this plugin's web routes are publicly accessible without authentication.
+   * Default: false (auth required). Public plugins appear in nav for all users.
+   */
+  public?: boolean;
+
+  /**
    * Cleanup hook called on app shutdown
    *
    * Receives the same PluginContext as init().
@@ -383,6 +389,10 @@ export function isValidPlugin(obj: unknown): obj is Plugin {
       const p = page as Record<string, unknown>;
       if (typeof p.name !== 'string' || typeof p.path !== 'string' || !p.path.startsWith('/')) return false;
     }
+  }
+
+  if (plugin.public !== undefined && typeof plugin.public !== 'boolean') {
+    return false;
   }
 
   if (plugin.webPages !== undefined) {

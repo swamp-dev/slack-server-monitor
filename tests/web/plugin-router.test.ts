@@ -4,7 +4,7 @@ vi.mock('../../src/utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { createPluginRouter, getPluginExpressRouter, getPluginNavEntries, clearPluginRoutes } from '../../src/web/plugin-router.js';
+import { createPluginRouter, getPluginExpressRouter, getPluginNavEntries, clearPluginRoutes, isPluginPublic } from '../../src/web/plugin-router.js';
 import type { PluginContext } from '../../src/plugins/types.js';
 import type { Request, Response } from 'express';
 
@@ -81,13 +81,53 @@ describe('plugin router', () => {
 
       const entries = getPluginNavEntries();
       expect(entries).toHaveLength(2);
-      expect(entries[0]).toEqual({ pluginName: 'lift', label: 'Lift', icon: 'dumbbell', pages: [] });
-      expect(entries[1]).toEqual({ pluginName: 'health', label: 'Health', icon: undefined, pages: [] });
+      expect(entries[0]).toEqual({ pluginName: 'lift', label: 'Lift', icon: 'dumbbell', pages: [], public: false });
+      expect(entries[1]).toEqual({ pluginName: 'health', label: 'Health', icon: undefined, pages: [], public: false });
     });
 
     it('should not add nav entry when not provided', () => {
       createPluginRouter('hidden-plugin', mockCtx);
       expect(getPluginNavEntries()).toEqual([]);
+    });
+
+    it('should include public flag in nav entry', () => {
+      createPluginRouter('lift', mockCtx, { label: 'Lift' }, true);
+      const entries = getPluginNavEntries();
+      expect(entries[0]).toEqual({ pluginName: 'lift', label: 'Lift', icon: undefined, pages: [], public: true });
+    });
+
+    it('should default public to false in nav entry', () => {
+      createPluginRouter('hue', mockCtx, { label: 'Hue' });
+      const entries = getPluginNavEntries();
+      expect(entries[0]).toEqual({ pluginName: 'hue', label: 'Hue', icon: undefined, pages: [], public: false });
+    });
+  });
+
+  describe('public plugin tracking', () => {
+    it('should return false for unknown plugin', () => {
+      expect(isPluginPublic('nonexistent')).toBe(false);
+    });
+
+    it('should return true for public plugin', () => {
+      createPluginRouter('lift', mockCtx, { label: 'Lift' }, true);
+      expect(isPluginPublic('lift')).toBe(true);
+    });
+
+    it('should return false for private plugin', () => {
+      createPluginRouter('hue', mockCtx, { label: 'Hue' }, false);
+      expect(isPluginPublic('hue')).toBe(false);
+    });
+
+    it('should return false for plugin without isPublic param', () => {
+      createPluginRouter('health', mockCtx, { label: 'Health' });
+      expect(isPluginPublic('health')).toBe(false);
+    });
+
+    it('should reset on clearPluginRoutes', () => {
+      createPluginRouter('lift', mockCtx, { label: 'Lift' }, true);
+      expect(isPluginPublic('lift')).toBe(true);
+      clearPluginRoutes();
+      expect(isPluginPublic('lift')).toBe(false);
     });
   });
 

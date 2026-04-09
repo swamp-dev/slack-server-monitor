@@ -446,4 +446,45 @@ describe('isValidPlugin', () => {
       })).toBe(false);
     });
   });
+
+  describe('public flag', () => {
+    it('should accept plugin with public: true', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        public: true,
+      })).toBe(true);
+    });
+
+    it('should accept plugin with public: false', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        public: false,
+      })).toBe(true);
+    });
+
+    it('should accept plugin without public (undefined)', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+      })).toBe(true);
+    });
+
+    it('should reject non-boolean public (string)', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        public: 'yes',
+      })).toBe(false);
+    });
+
+    it('should reject non-boolean public (number)', () => {
+      expect(isValidPlugin({
+        name: 'test-plugin',
+        version: '1.0.0',
+        public: 1,
+      })).toBe(false);
+    });
+  });
 });

@@ -38,6 +38,7 @@ export interface PluginNavEntry {
   label: string;
   icon?: string;
   pages?: { name: string; path: string }[];
+  public?: boolean;
 }
 
 /**
@@ -53,6 +54,7 @@ export interface WebNavEntryOptions {
 let sharedRouter: ReturnType<typeof Router> | null = null;
 const navEntries: PluginNavEntry[] = [];
 const registeredStreamPlugins = new Set<string>();
+const publicPlugins = new Set<string>();
 
 /**
  * Validate a route path — reject traversal attempts
@@ -80,8 +82,13 @@ export function createPluginRouter(
   pluginName: string,
   ctx: PluginContext,
   navEntry?: WebNavEntryOptions,
+  isPublic?: boolean,
 ): PluginRouter {
   const router = getOrCreateRouter();
+
+  if (isPublic) {
+    publicPlugins.add(pluginName);
+  }
 
   if (navEntry) {
     navEntries.push({
@@ -89,6 +96,7 @@ export function createPluginRouter(
       label: navEntry.label,
       icon: navEntry.icon,
       pages: navEntry.pages ?? [],
+      public: isPublic ?? false,
     });
   }
 
@@ -180,10 +188,18 @@ export function getPluginNavEntries(): PluginNavEntry[] {
 }
 
 /**
+ * Check if a plugin is marked as public (no auth required)
+ */
+export function isPluginPublic(pluginName: string): boolean {
+  return publicPlugins.has(pluginName);
+}
+
+/**
  * Clear all plugin routes and nav entries (for testing/shutdown)
  */
 export function clearPluginRoutes(): void {
   sharedRouter = null;
   navEntries.length = 0;
   registeredStreamPlugins.clear();
+  publicPlugins.clear();
 }

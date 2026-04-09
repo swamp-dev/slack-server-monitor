@@ -139,7 +139,7 @@ async function loadScreenshotPlugins(app: ReturnType<typeof express>): Promise<v
     // Register web routes
     if (plugin.registerWebRoutes) {
       const webPages = plugin.webPages ?? plugin.screenshotPages ?? [];
-      const router = createPluginRouter(plugin.name, ctx, plugin.webNavEntry ? { ...plugin.webNavEntry, pages: webPages } : undefined);
+      const router = createPluginRouter(plugin.name, ctx, plugin.webNavEntry ? { ...plugin.webNavEntry, pages: webPages } : undefined, plugin.public ?? false);
       plugin.registerWebRoutes(router);
     }
 

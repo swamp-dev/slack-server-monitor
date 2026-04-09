@@ -25,7 +25,7 @@ import { renderConversation, renderMarkdownExport, renderSessionList, renderDash
 import { formatMarkdown } from './templates/utils.js';
 import { getStaticCss } from './templates/styles.js';
 import { getPluginWidgets } from '../plugins/loader.js';
-import { getPluginExpressRouter } from './plugin-router.js';
+import { getPluginExpressRouter, isPluginPublic } from './plugin-router.js';
 import { getNotificationStore, closeNotificationStore } from '../services/notification-store.js';
 import { getQuickLinksStore, closeQuickLinksStore } from '../services/quick-links-store.js';
 import { getServerHealth } from '../services/server-health.js';
@@ -112,6 +112,50 @@ function sessionAuthMiddleware(webConfig: WebConfig, dbPath: string) {
       hasCookie: !!sessionId,
     });
     res.status(401).send(render401(req.originalUrl));
+  };
+}
+
+/**
+ * Optional auth middleware — sets res.locals.userId if authenticated,
+ * but does NOT 401 on failure. Allows pages to render public vs private views.
+ */
+function optionalAuthMiddleware(webConfig: WebConfig, dbPath: string) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const sessionStore = getSessionStore(dbPath, webConfig.sessionTtlHours);
+
+    // Check session cookie
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionId = cookies[SESSION_COOKIE];
+    if (sessionId) {
+      const session = sessionStore.getSession(sessionId);
+      if (session) {
+        res.locals.userId = session.userId;
+        res.locals.isAdmin = session.isAdmin;
+        next();
+        return;
+      }
+      res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; ${buildCookieOptions(webConfig, 0)}`);
+    }
+
+    // Check query param token
+    const queryToken = req.query.token;
+    if (typeof queryToken === 'string' && queryToken) {
+      const identity = resolveToken(queryToken, webConfig);
+      if (identity) {
+        sessionStore.deleteSessionsForUser(identity.userId);
+        const session = sessionStore.createSession(identity.userId, identity.isAdmin);
+        const maxAge = webConfig.sessionTtlHours * 60 * 60;
+        res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; ${buildCookieOptions(webConfig, maxAge)}`);
+        const url = new URL(req.originalUrl, 'http://localhost');
+        url.searchParams.delete('token');
+        const cleanPath = url.pathname + (url.search || '');
+        res.redirect(302, cleanPath);
+        return;
+      }
+    }
+
+    // No auth — continue anyway (public access)
+    next();
   };
 }
 
@@ -978,8 +1022,18 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   });
 
   // ─── Plugin Web Routes ────────────────────────────────────────────────
-  // Mount all plugin-registered web routes under /p/ with auth
-  app.use('/p', sessionAuthMiddleware(webConfig, dbPath), getPluginExpressRouter());
+  // Mount plugin routes with per-plugin auth: public plugins use optional auth,
+  // private plugins require session auth (401 on failure)
+  const pluginAuth = (req: Request, res: Response, next: NextFunction): void => {
+    const match = /^\/([^/]+)/.exec(req.path);
+    const pluginName = match?.[1];
+    if (pluginName && isPluginPublic(pluginName)) {
+      optionalAuthMiddleware(webConfig, dbPath)(req, res, next);
+    } else {
+      sessionAuthMiddleware(webConfig, dbPath)(req, res, next);
+    }
+  };
+  app.use('/p', pluginAuth, getPluginExpressRouter());
 
   // Notifications page: GET /notifications
   app.get('/notifications', sessionAuthMiddleware(webConfig, dbPath), (_req: Request, res: Response) => {
