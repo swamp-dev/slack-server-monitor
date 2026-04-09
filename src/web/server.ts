@@ -1049,25 +1049,28 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
   });
 
-  // Dashboard home: GET /
-  app.get('/', sessionAuthMiddleware(webConfig, dbPath), async (_req: Request, res: Response) => {
+  // Dashboard home: GET / (optional auth — public with reduced view)
+  app.get('/', optionalAuthMiddleware(webConfig, dbPath), async (_req: Request, res: Response) => {
     try {
-      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
-      const stats = store.getSessionStats(24);
-      const recent = store.listRecentSessions(5, 0);
-      attachTags(recent, store);
-      const favorites = store.listFavoriteSessions(3, 0);
-      const favCount = store.countFavoriteSessions();
-      const allTags = store.listAllTags();
-      const userId = (res.locals.userId as string) || 'user';
-      const widgets = getPluginWidgets();
-      const notifStore = getNotificationStore(claudeConfig.dbPath);
-      const unreadCount = notifStore.countUnread();
-      const linksStore = getQuickLinksStore(claudeConfig.dbPath);
-      const userLinks = linksStore.getLinks(userId);
+      const isAuthenticated = !!res.locals.userId;
+      const userId = (res.locals.userId as string) || 'anonymous';
       const health = await getServerHealth();
 
-      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId, widgets, unreadCount, userLinks, health);
+      // Only load private data for authenticated users
+      const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
+      const stats = isAuthenticated ? store.getSessionStats(24) : { totalSessions: 0, activeSessions: 0, totalMessages: 0, totalToolCalls: 0, avgToolDurationMs: null, toolFailureRate: 0, topTools: [] as { name: string; count: number; avgDurationMs: number | null }[] };
+      const recent = isAuthenticated ? store.listRecentSessions(5, 0) : [];
+      if (isAuthenticated) attachTags(recent, store);
+      const favorites = isAuthenticated ? store.listFavoriteSessions(3, 0) : [];
+      const favCount = isAuthenticated ? store.countFavoriteSessions() : 0;
+      const allTags = isAuthenticated ? store.listAllTags() : [];
+      const widgets = getPluginWidgets(!isAuthenticated);
+      const notifStore = getNotificationStore(claudeConfig.dbPath);
+      const unreadCount = isAuthenticated ? notifStore.countUnread() : 0;
+      const linksStore = getQuickLinksStore(claudeConfig.dbPath);
+      const userLinks = isAuthenticated ? linksStore.getLinks(userId) : [];
+
+      const html = renderDashboard(stats, recent, favorites, favCount, allTags, userId, widgets, unreadCount, userLinks, health, isAuthenticated);
       res.type('html').send(html);
     } catch (err) {
       logger.error('Error serving dashboard', { error: err instanceof Error ? err.message : String(err) });

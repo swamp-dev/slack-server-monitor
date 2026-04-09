@@ -169,9 +169,15 @@ describe('smoke tests', () => {
       expect(html).toContain('<form');
     });
 
-    it('should reject unauthenticated access to protected routes', async () => {
+    it('should allow unauthenticated access to public dashboard', async () => {
       mockSessionStore.getSession.mockReturnValue(null);
       const res = await fetch(`${baseUrl}/`, { redirect: 'manual' });
+      expect(res.status).toBe(200);
+    });
+
+    it('should reject unauthenticated access to conversations', async () => {
+      mockSessionStore.getSession.mockReturnValue(null);
+      const res = await fetch(`${baseUrl}/c`, { redirect: 'manual' });
       expect(res.status).toBe(401);
     });
   });

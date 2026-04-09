@@ -119,6 +119,7 @@ const liftPlugin: Plugin = {
     { command: '/lift m adjust c<g> p<g> f<g>', description: 'Adjust and log estimate', group: 'Lift - Macros' },
   ],
 
+  public: true,
   webNavEntry: { label: 'Lift', icon: 'activity' },
 
   registerCommands: (app) => {

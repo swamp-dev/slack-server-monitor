@@ -492,11 +492,12 @@ export function renderDashboard(
   unreadCount?: number,
   quickLinks?: QuickLink[],
   health?: ServerHealth | null,
+  isAuthenticated = true,
 ): string {
   const greeting = getGreeting();
 
   // Empty state: welcome screen for new users
-  if (stats.totalSessions === 0) {
+  if (stats.totalSessions === 0 && isAuthenticated) {
     const bodyHtml = `
     <main class="container">
       <div class="empty-welcome">
@@ -514,6 +515,7 @@ export function renderDashboard(
       styles: dashboardStyles,
       body: bodyHtml,
       unreadCount,
+      isAuthenticated,
     });
   }
 
@@ -735,20 +737,30 @@ export function renderDashboard(
   }
 
   // Build the grid: left column = tools + tags, right column = recent + favorites
-  const leftCol = [toolChartHtml, tagsHtml].filter(Boolean).join('\n');
-  const rightCol = [recentHtml, favoritesHtml].filter(Boolean).join('\n');
+  const leftCol = isAuthenticated ? [toolChartHtml, tagsHtml].filter(Boolean).join('\n') : '';
+  const rightCol = isAuthenticated ? [recentHtml, favoritesHtml].filter(Boolean).join('\n') : '';
+
+  const loginPromptHtml = !isAuthenticated ? `
+    <div class="dashboard-section" style="text-align:center;padding:24px;">
+      <p style="color:var(--text-muted);margin-bottom:12px;">Log in to see conversations, notifications, and full dashboard.</p>
+      <a href="/login" class="primary" style="display:inline-flex;align-items:center;gap:6px;">${icon('log-in', 16)} Log in</a>
+    </div>` : '';
 
   const bodyHtml = `
   <main class="container">
     <div class="dashboard-greeting">
       <h1>${greeting}${healthBadgeHtml}</h1>
-      <div class="subtitle">Last 24 hours: ${String(stats.totalSessions)} sessions, ${String(stats.totalMessages)} messages, ${String(stats.totalToolCalls)} tool calls</div>
+      ${isAuthenticated
+        ? `<div class="subtitle">Last 24 hours: ${String(stats.totalSessions)} sessions, ${String(stats.totalMessages)} messages, ${String(stats.totalToolCalls)} tool calls</div>`
+        : `<div class="subtitle">Public dashboard</div>`
+      }
     </div>
-    ${quickActionsHtml}
+    ${isAuthenticated ? quickActionsHtml : ''}
     ${healthHtml}
-    ${quickLinksHtml}
-    ${statsHtml}
+    ${isAuthenticated ? quickLinksHtml : ''}
+    ${isAuthenticated ? statsHtml : ''}
     ${widgetsHtml}
+    ${loginPromptHtml}
     <div class="dashboard-grid">
       ${leftCol || ''}
       ${rightCol || ''}
@@ -999,5 +1011,6 @@ export function renderDashboard(
     scripts: counterScript + healthRefreshScript + onboardingScript,
     unreadCount,
     currentPath: '/',
+    isAuthenticated,
   });
 }

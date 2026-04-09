@@ -451,11 +451,12 @@ export function getPluginHelpData(): PluginHelpData[] {
  *
  * @returns Flat array of widgets sorted by priority (lower first)
  */
-export function getPluginWidgets(): DashboardWidget[] {
+export function getPluginWidgets(publicOnly = false): DashboardWidget[] {
   const widgets: DashboardWidget[] = [];
 
   for (const plugin of loadedPlugins) {
     if (!plugin.getWidgets) continue;
+    if (publicOnly && !plugin.public) continue;
 
     try {
       const start = Date.now();

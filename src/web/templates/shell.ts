@@ -22,13 +22,15 @@ export interface ShellOptions {
   unreadCount?: number;
   /** Current URL path for bottom nav active state */
   currentPath?: string;
+  /** Whether the current user is authenticated (default: true for backward compat) */
+  isAuthenticated?: boolean;
 }
 
 /**
  * Wrap page content in the full HTML shell with nav, theme, fonts
  */
 export function wrapInShell(opts: ShellOptions): string {
-  const { title, styles: pageStyles, body, scripts = '', showNav = true, highlightJs = false, unreadCount = 0, currentPath = '' } = opts;
+  const { title, styles: pageStyles, body, scripts = '', showNav = true, highlightJs = false, unreadCount = 0, currentPath = '', isAuthenticated = true } = opts;
 
   const hljsLink = highlightJs
     ? `<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH" crossorigin="anonymous">`
@@ -59,7 +61,10 @@ export function wrapInShell(opts: ShellOptions): string {
   </script>`
     : '';
 
-  const pluginNavEntries = getPluginNavEntries();
+  const allPluginNavEntries = getPluginNavEntries();
+  const pluginNavEntries = isAuthenticated
+    ? allPluginNavEntries
+    : allPluginNavEntries.filter((e) => e.public);
   const pluginNavHtml = pluginNavEntries.length > 0
     ? pluginNavEntries.map((entry) => {
         const iconHtml = entry.icon ? `${icon(entry.icon, 14)} ` : '';
@@ -84,15 +89,18 @@ export function wrapInShell(opts: ShellOptions): string {
   const navHtml = showNav ? `
   <nav class="nav-bar">
     <a href="/" class="nav-brand">${icon('robot', 22)} Server Monitor</a>
-    <a href="/c" class="nav-link">${icon('message-circle', 14)} Conversations</a>
+    ${isAuthenticated ? `<a href="/c" class="nav-link">${icon('message-circle', 14)} Conversations</a>` : ''}
     ${pluginNavHtml ? `<div class="nav-plugins">${pluginNavHtml}</div>` : ''}
     <button class="nav-hamburger" id="nav-hamburger" type="button" aria-label="Menu">${icon('chevron-down', 20)}</button>
     <div class="nav-actions" id="nav-actions">
-      <div class="notif-bell-wrapper">${renderNotificationBell(unreadCount)}${renderNotificationDropdown([])}</div>
+      ${isAuthenticated ? `<div class="notif-bell-wrapper">${renderNotificationBell(unreadCount)}${renderNotificationDropdown([])}</div>` : ''}
       <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme"><span class="icon-sun">${icon('sun', 18)}</span><span class="icon-moon">${icon('moon', 18)}</span></button>
-      <form method="POST" action="/logout" style="margin:0;">
-        <button class="logout-btn" type="submit" aria-label="Log out">${icon('logout', 18)}</button>
-      </form>
+      ${isAuthenticated
+        ? `<form method="POST" action="/logout" style="margin:0;">
+            <button class="logout-btn" type="submit" aria-label="Log out">${icon('logout', 18)}</button>
+          </form>`
+        : `<a href="/login" class="nav-link">${icon('log-in', 18)} Login</a>`
+      }
     </div>
   </nav>` : '';
 
@@ -140,8 +148,8 @@ export function wrapInShell(opts: ShellOptions): string {
   </footer>
   ${showNav ? `<nav class="bottom-nav" id="bottom-nav" aria-label="App navigation">
     <a href="/" class="bottom-nav-item${currentPath === '/' ? ' active' : ''}" aria-label="Dashboard">${icon('home', 20)}<span>Dashboard</span></a>
-    <a href="/c" class="bottom-nav-item${currentPath === '/c' ? ' active' : ''}" aria-label="Conversations">${icon('message-circle', 20)}<span>Chats</span></a>
-    <a href="/notifications" class="bottom-nav-item${currentPath === '/notifications' ? ' active' : ''}" aria-label="Notifications">${icon('bell', 20)}<span>Alerts</span></a>
+    ${isAuthenticated ? `<a href="/c" class="bottom-nav-item${currentPath === '/c' ? ' active' : ''}" aria-label="Conversations">${icon('message-circle', 20)}<span>Chats</span></a>` : ''}
+    ${isAuthenticated ? `<a href="/notifications" class="bottom-nav-item${currentPath === '/notifications' ? ' active' : ''}" aria-label="Notifications">${icon('bell', 20)}<span>Alerts</span></a>` : ''}
   </nav>` : ''}
   <div id="cmd-palette" class="cmd-palette" style="display:none" role="dialog" aria-label="Command palette" aria-modal="true">
     <div class="cmd-palette-backdrop"></div>
@@ -537,14 +545,14 @@ export function wrapInShell(opts: ShellOptions): string {
     var debounceTimer = null;
     var searchSeq = 0; // Monotonic counter to discard stale fetch responses
 
-    // Static commands
+    // Static commands (filtered by auth state)
     var commands = [
-      { title: 'New Conversation', url: '/c/new', icon: 'plus', group: 'Actions' },
+      ${isAuthenticated ? "{ title: 'New Conversation', url: '/c/new', icon: 'plus', group: 'Actions' }," : ''}
       { title: 'Dashboard', url: '/', icon: 'home', group: 'Navigate' },
-      { title: 'Conversations', url: '/c', icon: 'message-circle', group: 'Navigate' },
+      ${isAuthenticated ? `{ title: 'Conversations', url: '/c', icon: 'message-circle', group: 'Navigate' },
       { title: 'Favorites', url: '/c/favorites', icon: 'star', group: 'Navigate' },
       { title: 'Notifications', url: '/notifications', icon: 'bell', group: 'Navigate' },
-      { title: 'Archived', url: '/c/archived', icon: 'archive', group: 'Navigate' },
+      { title: 'Archived', url: '/c/archived', icon: 'archive', group: 'Navigate' },` : ''}
     ].concat(${JSON.stringify(pluginPaletteEntries).replace(/<\//g, '<\\/')});
 
     function esc(s) {
@@ -584,7 +592,7 @@ export function wrapInShell(opts: ShellOptions): string {
           html += '<a href="' + esc(c.url) + '" class="cmd-palette-item"><span class="cmd-item-title">' + esc(c.title) + '</span></a>';
         });
       }
-      // Fetch recent conversations
+      ${isAuthenticated ? `// Fetch recent conversations
       fetch('/api/search?limit=5', { credentials: 'same-origin' })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -602,7 +610,8 @@ export function wrapInShell(opts: ShellOptions): string {
           if (seq !== searchSeq) return;
           results.innerHTML = html;
           items = results.querySelectorAll('.cmd-palette-item');
-        });
+        });` : `results.innerHTML = html;
+      items = results.querySelectorAll('.cmd-palette-item');`}
     }
 
     function doSearch(query) {
