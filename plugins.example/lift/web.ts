@@ -235,17 +235,32 @@ const liftCSS = `
   .bw-bar { flex: 1; background: var(--cyan); border-radius: 2px 2px 0 0; min-width: 3px; opacity: 0.7; transition: opacity 0.2s; }
   .bw-bar:hover { opacity: 1; }
 
+  .calc-tabs { display: flex; gap: 4px; margin: 12px 0 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .calc-tab { padding: 10px 18px; font-size: 0.875rem; font-family: inherit; font-weight: 500; text-decoration: none; color: var(--text-muted); border: none; background: none; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; transition: color 0.15s, border-color 0.15s; }
+  .calc-tab:hover { color: var(--text); }
+  .calc-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
   .calc-result { margin-top: 12px; padding: 16px; background: var(--surface); border-radius: 8px; }
   .calc-result-value { font-size: 1.5rem; font-weight: 700; color: var(--cyan); }
   .calc-result-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px; }
   .calc-result-sub { font-size: 0.8125rem; color: var(--text-muted); margin-top: 4px; }
   .calc-note { font-size: 0.75rem; color: var(--yellow); margin-top: 4px; padding: 4px 8px; background: rgba(241,250,140,0.08); border-radius: 4px; display: inline-block; }
+  .calc-loadable { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; }
+  .calc-loadable strong { color: var(--text); font-family: 'SF Mono', monospace; }
   .warmup-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; margin-top: 8px; }
   .warmup-table th, .warmup-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
   .warmup-table th { color: var(--text-muted); font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.5px; }
   .warmup-table td:first-child { font-weight: 600; font-family: 'SF Mono', monospace; }
-  .warmup-table tbody tr:hover { background: rgba(139,233,253,0.04); }
-  .warmup-table tbody tr:last-child td { font-weight: 700; color: var(--text); }
+  .warmup-table td:last-child { word-break: break-word; }
+  .warmup-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+  .warmup-table tbody tr:hover { background: rgba(139,233,253,0.06); }
+  .warmup-table tbody tr.warmup-row { color: var(--text-muted); }
+  .warmup-table tbody tr.warmup-row[data-pct="40"] { opacity: 0.55; }
+  .warmup-table tbody tr.warmup-row[data-pct="55"] { opacity: 0.7; }
+  .warmup-table tbody tr.warmup-row[data-pct="70"] { opacity: 0.85; }
+  .warmup-table tbody tr.warmup-row[data-pct="85"] { opacity: 0.95; color: var(--text); }
+  .warmup-table tbody tr.warmup-row.working { opacity: 1; color: var(--text); font-weight: 700; border-left: 3px solid var(--accent); }
+  .warmup-table tbody tr.warmup-row.working td:first-child { padding-left: 9px; }
 
   .plate-diagram { display: flex; align-items: center; gap: 0; margin: 12px 0 4px; padding: 8px 0; }
   .plate-bar-sleeve { width: 40px; height: 10px; background: var(--text-muted); border-radius: 3px 0 0 3px; }
@@ -269,6 +284,7 @@ const liftCSS = `
     .plugin-lift .lift-stat-value { font-size: 1.5rem; }
     .plugin-lift .warmup-table th,
     .plugin-lift .warmup-table td { padding: 6px 8px; font-size: 0.75rem; }
+    .plugin-lift .calc-tab { padding: 8px 12px; font-size: 0.8125rem; }
   }
 
   @media print {
@@ -867,7 +883,10 @@ function buildBarbellSvg(
 }
 
 /** Query params for persisting calculator state */
-interface CalcParams {
+export interface CalcParams {
+  /** Active tab (plates | rm | wilks | dots). Defaults to plates. */
+  tab?: string;
+  /** Submitted form's calc type — used for results and as a tab fallback for legacy URLs. */
   calc?: string;
   // 1RM
   weight?: string;
@@ -879,6 +898,19 @@ interface CalcParams {
   // Plates
   target?: string;
   config?: string;
+}
+
+const CALC_TABS = ['plates', 'rm', 'wilks', 'dots'] as const;
+type CalcTab = (typeof CALC_TABS)[number];
+
+/**
+ * Resolve which calculator tab is active for a given set of params.
+ * Order: explicit `tab` > legacy `calc` > 'plates' default.
+ * Unknown values fall back to 'plates'.
+ */
+export function resolveActiveTab(params: CalcParams): CalcTab {
+  const candidate = (params.tab ?? params.calc ?? '').toLowerCase();
+  return (CALC_TABS as readonly string[]).includes(candidate) ? (candidate as CalcTab) : 'plates';
 }
 
 function computeResult(params: CalcParams, unit: 'lbs' | 'kg'): CalculatorResult | undefined {
@@ -944,6 +976,46 @@ function computeResult(params: CalcParams, unit: 'lbs' | 'kg'): CalculatorResult
   return undefined;
 }
 
+/**
+ * Format a "closest loadable weight" hint when the requested target
+ * can't be perfectly loaded by the available plates. Returns null when
+ * there's no rounding or the value can't be parsed.
+ *
+ * Example: target=227, loadable=225 → "Closest loadable: 225 lbs (-2 lbs)"
+ */
+export function formatLoadableHint(
+  target: number,
+  note: string | undefined,
+  unit: string,
+): string | null {
+  const noteMatch = note?.match(/Rounded to ([\d.]+)/);
+  if (!noteMatch) return null;
+  const loadable = parseFloat(noteMatch[1]);
+  if (!Number.isFinite(loadable) || loadable === target) return null;
+  const delta = loadable - target;
+  const sign = delta > 0 ? '+' : '';
+  const loadableFmt = Number.isInteger(loadable) ? String(loadable) : loadable.toFixed(1);
+  const deltaFmt = Number.isInteger(delta) ? `${sign}${String(delta)}` : `${sign}${delta.toFixed(1)}`;
+  return `<div class="calc-loadable">Closest loadable: <strong>${escapeHtml(loadableFmt)} ${escapeHtml(unit)}</strong> (${escapeHtml(deltaFmt)} ${escapeHtml(unit)})</div>`;
+}
+
+function renderCalcTabs(active: CalcTab): string {
+  const tabs: { key: CalcTab; label: string }[] = [
+    { key: 'plates', label: 'Plates' },
+    { key: 'rm', label: '1RM' },
+    { key: 'wilks', label: 'Wilks' },
+    { key: 'dots', label: 'DOTS' },
+  ];
+  // Tabs navigate to a clean per-tab URL — submitted form values are not
+  // carried across tabs (each tab has its own form state).
+  const links = tabs.map((t) => {
+    const cls = t.key === active ? 'calc-tab active' : 'calc-tab';
+    const ariaCurrent = t.key === active ? ' aria-current="page"' : '';
+    return `<a class="${cls}" href="/p/lift/calculator?tab=${t.key}"${ariaCurrent}>${escapeHtml(t.label)}</a>`;
+  }).join('');
+  return `<nav class="calc-tabs" aria-label="Calculator">${links}</nav>`;
+}
+
 function renderCalculator(db: PluginDatabase, userId: string, params: CalcParams = {}): string {
   const unit = getUserUnit(db, userId);
   const unitLabel = unit;
@@ -978,17 +1050,17 @@ function renderCalculator(db: PluginDatabase, userId: string, params: CalcParams
 
   if (result?.type === 'plates' && result.targets) {
     platesResultHtml = result.targets.map((t) => {
-      const rows = t.warmupRows.map((r) =>
-        `<tr><td>${escapeHtml(r.pct)}</td><td>${escapeHtml(r.weight)}</td><td>${renderMiniBarbell(r.plates, unitLabel)}</td></tr>`
-      ).join('');
+      const rows = t.warmupRows.map((r, idx) => {
+        const isWorking = idx === t.warmupRows.length - 1;
+        const pctNumeric = r.pct.replace('%', '');
+        return `<tr class="warmup-row${isWorking ? ' working' : ''}" data-pct="${escapeHtml(pctNumeric)}"><td>${escapeHtml(r.pct)}</td><td>${escapeHtml(r.weight)}</td><td>${renderMiniBarbell(r.plates, unitLabel)}</td></tr>`;
+      }).join('');
       const targetStr = Number.isInteger(t.target) ? String(t.target) : t.target.toFixed(1);
-      const noteHtml = t.note
-        ? `<div class="calc-note">${escapeHtml(t.note)}</div>`
-        : '';
+      const loadableHtml = formatLoadableHint(t.target, t.note, unitLabel) ?? '';
       return `<div class="calc-result">
         <div class="calc-result-value">${escapeHtml(t.plateStr)}</div>
         <div class="calc-result-label">Plate loading for ${escapeHtml(targetStr)} ${escapeHtml(unitLabel)}</div>
-        ${noteHtml}
+        ${loadableHtml}
         ${renderPlateDiagram(t.parsedPlates, t.plateStr, unitLabel)}
         <table class="warmup-table"><thead><tr><th>%</th><th>Weight</th><th>Loading</th></tr></thead><tbody>${rows}</tbody></table>
       </div>`;
@@ -1008,58 +1080,74 @@ function renderCalculator(db: PluginDatabase, userId: string, params: CalcParams
   const platesTarget = params.calc === 'plates' ? (params.target ?? '') : '';
   const platesConfig = params.calc === 'plates' ? (params.config ?? 'home') : 'home';
 
+  const activeTab = resolveActiveTab(params);
+
+  const platesTabHtml = pluginCard('Plate Calculator & Warmup', `
+    <form class="inline-form" method="POST" action="/p/lift/calculator">
+      <input type="hidden" name="calc" value="plates">
+      <input type="hidden" name="tab" value="plates">
+      <input name="target" type="text" inputmode="decimal" placeholder="e.g. 225 or 225, 315" value="${escapeHtml(platesTarget)}" required style="width:200px;" title="Enter one or more weights separated by commas">
+      <select name="config">
+        <option value="home"${platesConfig === 'home' ? ' selected' : ''}>Home plates</option>
+        <option value="gym"${platesConfig === 'gym' ? ' selected' : ''}>Gym plates</option>
+      </select>
+      <button type="submit">Calculate</button>
+    </form>
+    ${activeTab === 'plates' ? errorResultHtml + platesResultHtml : ''}
+  `, { icon: 'chart' });
+
+  const rmTabHtml = pluginCard('1RM Estimator', `
+    <form class="inline-form" method="POST" action="/p/lift/calculator">
+      <input type="hidden" name="calc" value="rm">
+      <input type="hidden" name="tab" value="rm">
+      <input name="weight" type="number" inputmode="decimal" step="0.5" min="1" placeholder="Weight (${unitLabel})" value="${escapeHtml(rmWeight)}" required style="width:120px;">
+      <input name="reps" type="number" inputmode="numeric" min="1" max="100" placeholder="Reps" value="${escapeHtml(rmReps)}" required style="width:80px;">
+      <button type="submit">Calculate</button>
+    </form>
+    ${activeTab === 'rm' ? rmResultHtml : ''}
+  `, { icon: 'activity' });
+
+  const wilksTabHtml = pluginCard('Wilks Score', `
+    <form class="inline-form" method="POST" action="/p/lift/calculator">
+      <input type="hidden" name="calc" value="wilks">
+      <input type="hidden" name="tab" value="wilks">
+      <input name="total" type="number" inputmode="decimal" step="0.5" min="1" placeholder="Total S+B+D (${unitLabel})" value="${escapeHtml(wilksTotal)}" required style="width:160px;">
+      <input name="bodyweight" type="number" inputmode="decimal" step="0.1" min="1" placeholder="Bodyweight (${unitLabel})" value="${escapeHtml(wilksBw)}" required style="width:140px;">
+      <select name="gender" required>
+        <option value="male"${wilksGender === 'male' ? ' selected' : ''}>Male</option>
+        <option value="female"${wilksGender === 'female' ? ' selected' : ''}>Female</option>
+      </select>
+      <button type="submit">Calculate</button>
+    </form>
+    ${activeTab === 'wilks' ? wilksResultHtml : ''}
+  `, { icon: 'star' });
+
+  const dotsTabHtml = pluginCard('DOTS Score', `
+    <form class="inline-form" method="POST" action="/p/lift/calculator">
+      <input type="hidden" name="calc" value="dots">
+      <input type="hidden" name="tab" value="dots">
+      <input name="total" type="number" inputmode="decimal" step="0.5" min="1" placeholder="Total S+B+D (${unitLabel})" value="${escapeHtml(dotsTotal)}" required style="width:160px;">
+      <input name="bodyweight" type="number" inputmode="decimal" step="0.1" min="1" placeholder="Bodyweight (${unitLabel})" value="${escapeHtml(dotsBw)}" required style="width:140px;">
+      <select name="gender" required>
+        <option value="male"${dotsGender === 'male' ? ' selected' : ''}>Male</option>
+        <option value="female"${dotsGender === 'female' ? ' selected' : ''}>Female</option>
+      </select>
+      <button type="submit">Calculate</button>
+    </form>
+    ${activeTab === 'dots' ? dotsResultHtml : ''}
+  `, { icon: 'star' });
+
+  const tabContent = {
+    plates: platesTabHtml,
+    rm: rmTabHtml,
+    wilks: wilksTabHtml,
+    dots: dotsTabHtml,
+  }[activeTab];
+
   const body = `
     ${liftNav('calculator')}
-    ${pluginCard('Plate Calculator & Warmup', `
-      <form class="inline-form" method="POST" action="/p/lift/calculator">
-        <input type="hidden" name="calc" value="plates">
-        <input name="target" type="text" inputmode="decimal" placeholder="e.g. 225 or 225, 315" value="${escapeHtml(platesTarget)}" required style="width:200px;" title="Enter one or more weights separated by commas">
-        <select name="config">
-          <option value="home"${platesConfig === 'home' ? ' selected' : ''}>Home plates</option>
-          <option value="gym"${platesConfig === 'gym' ? ' selected' : ''}>Gym plates</option>
-        </select>
-        <button type="submit">Calculate</button>
-      </form>
-      ${errorResultHtml}${platesResultHtml}
-    `, { icon: 'chart' })}
-
-    ${pluginCard('1RM Estimator', `
-      <form class="inline-form" method="POST" action="/p/lift/calculator">
-        <input type="hidden" name="calc" value="rm">
-        <input name="weight" type="number" inputmode="decimal" step="0.5" min="1" placeholder="Weight (${unitLabel})" value="${escapeHtml(rmWeight)}" required style="width:120px;">
-        <input name="reps" type="number" inputmode="numeric" min="1" max="100" placeholder="Reps" value="${escapeHtml(rmReps)}" required style="width:80px;">
-        <button type="submit">Calculate</button>
-      </form>
-      ${rmResultHtml}
-    `, { icon: 'activity' })}
-
-    ${pluginCard('Wilks Score', `
-      <form class="inline-form" method="POST" action="/p/lift/calculator">
-        <input type="hidden" name="calc" value="wilks">
-        <input name="total" type="number" inputmode="decimal" step="0.5" min="1" placeholder="Total S+B+D (${unitLabel})" value="${escapeHtml(wilksTotal)}" required style="width:160px;">
-        <input name="bodyweight" type="number" inputmode="decimal" step="0.1" min="1" placeholder="Bodyweight (${unitLabel})" value="${escapeHtml(wilksBw)}" required style="width:140px;">
-        <select name="gender" required>
-          <option value="male"${wilksGender === 'male' ? ' selected' : ''}>Male</option>
-          <option value="female"${wilksGender === 'female' ? ' selected' : ''}>Female</option>
-        </select>
-        <button type="submit">Calculate</button>
-      </form>
-      ${wilksResultHtml}
-    `, { icon: 'star' })}
-
-    ${pluginCard('DOTS Score', `
-      <form class="inline-form" method="POST" action="/p/lift/calculator">
-        <input type="hidden" name="calc" value="dots">
-        <input name="total" type="number" inputmode="decimal" step="0.5" min="1" placeholder="Total S+B+D (${unitLabel})" value="${escapeHtml(dotsTotal)}" required style="width:160px;">
-        <input name="bodyweight" type="number" inputmode="decimal" step="0.1" min="1" placeholder="Bodyweight (${unitLabel})" value="${escapeHtml(dotsBw)}" required style="width:140px;">
-        <select name="gender" required>
-          <option value="male"${dotsGender === 'male' ? ' selected' : ''}>Male</option>
-          <option value="female"${dotsGender === 'female' ? ' selected' : ''}>Female</option>
-        </select>
-        <button type="submit">Calculate</button>
-      </form>
-      ${dotsResultHtml}
-    `, { icon: 'star' })}
+    ${renderCalcTabs(activeTab)}
+    ${tabContent}
   `;
 
   return renderPluginPage({ title: 'Calculator — Lift', pluginName: 'lift', body, styles: liftCSS });
@@ -1102,24 +1190,27 @@ export function registerLiftWebRoutes(router: PluginRouter): void {
   // Calculator page — GET renders with optional query params for persisted results
   router.get('/calculator', (req: Request, res: Response, ctx: PluginContext) => {
     const userId = (res.locals.userId as string) ?? 'web-user';
+    const pickQuery = (key: string): string | undefined =>
+      typeof req.query[key] === 'string' ? (req.query[key] as string) : undefined;
     const params: CalcParams = {
-      calc: String(req.query.calc ?? ''),
-      weight: String(req.query.weight ?? ''),
-      reps: String(req.query.reps ?? ''),
-      total: String(req.query.total ?? ''),
-      bodyweight: String(req.query.bodyweight ?? ''),
-      gender: String(req.query.gender ?? ''),
-      target: String(req.query.target ?? ''),
-      config: String(req.query.config ?? ''),
+      tab: pickQuery('tab'),
+      calc: pickQuery('calc'),
+      weight: pickQuery('weight'),
+      reps: pickQuery('reps'),
+      total: pickQuery('total'),
+      bodyweight: pickQuery('bodyweight'),
+      gender: pickQuery('gender'),
+      target: pickQuery('target'),
+      config: pickQuery('config'),
     };
-    res.type('html').send(renderCalculator(ctx.db, userId, params.calc ? params : {}));
+    res.type('html').send(renderCalculator(ctx.db, userId, params));
   });
 
   // Calculator POST — redirect to GET with query params (results survive reload)
   router.post('/calculator', (req: Request, res: Response) => {
     const body = req.body as Record<string, string>;
     const qs = new URLSearchParams();
-    for (const key of ['calc', 'weight', 'reps', 'total', 'bodyweight', 'gender', 'target', 'config']) {
+    for (const key of ['tab', 'calc', 'weight', 'reps', 'total', 'bodyweight', 'gender', 'target', 'config']) {
       if (body[key]) qs.set(key, body[key].slice(0, 200));
     }
     res.redirect(`/p/lift/calculator?${qs.toString()}`);
