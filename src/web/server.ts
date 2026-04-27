@@ -19,11 +19,13 @@ import { getSocketModeStatus } from '../services/socket-mode-status.js';
 import { getConversationStore, type SessionSummary } from '../services/conversation-store.js';
 import { getSessionStore, closeSessionStore } from '../services/session-store.js';
 import { getUserStore } from '../services/user-store.js';
-import { resolveTokenWithRole, parseCookies, createLinkToken } from './auth.js';
+import { getInviteStore } from '../services/invite-store.js';
+import { isAuthHitAllowed, recordAuthFailure } from '../services/auth-rate-limit.js';
+import { resolveTokenWithRole, resolveUserPassword, parseCookies, createLinkToken } from './auth.js';
 import { SSEConnectionManager, setSharedSSEManager } from './sse.js';
 import { getEventBus, resetEventBus } from '../services/event-bus.js';
 import { logger } from '../utils/logger.js';
-import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError, renderNotificationPage } from './templates/index.js';
+import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError, renderNotificationPage, renderRegister } from './templates/index.js';
 import { formatMarkdown } from './templates/utils.js';
 import { getStaticCss } from './templates/styles.js';
 import { getPluginWidgets } from '../plugins/loader.js';
@@ -276,21 +278,44 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   // Login page (no auth required)
   app.get('/login', (req: Request, res: Response) => {
     const returnTo = typeof req.query.return_to === 'string' ? req.query.return_to : undefined;
-    res.type('html').send(renderLogin(undefined, returnTo));
+    res.type('html').send(renderLogin(undefined, returnTo, webConfig.registrationEnabled));
   });
 
-  // Login form submission
+  // Login form submission. Accepts either:
+  //   - `username` + `password`  → resolveUserPassword (web account flow)
+  //   - `token`                  → resolveTokenWithRole (HMAC link / static admin)
+  // If both are sent, username/password takes precedence (explicit credentials
+  // beat a stale token in the form).
   app.post('/login', (req: Request, res: Response, next: NextFunction) => {
     (async () => {
       const body = req.body as Record<string, unknown>;
+      const username = typeof body.username === 'string' ? body.username.trim() : '';
+      const password = typeof body.password === 'string' ? body.password : '';
       const token = typeof body.token === 'string' ? body.token : '';
       const returnTo = typeof body.return_to === 'string' ? body.return_to : undefined;
+      const ip = req.ip ?? '0.0.0.0';
+
+      // Peek the rate limit before doing any expensive work (scrypt verify).
+      // We only record a failure below — successful logins don't consume budget,
+      // so a legitimate user who logs in 5 times rapidly isn't locked out.
+      if (!isAuthHitAllowed('login', ip)) {
+        logger.warn('Login rate-limited', { ip });
+        res.status(429).type('html').send(renderLogin('Too many attempts. Try again in a few minutes.', returnTo, webConfig.registrationEnabled));
+        return;
+      }
 
       const userStore = getUserStore(dbPath);
-      const identity = await resolveTokenWithRole(token, webConfig, userStore);
+      let identity: { userId: string; isAdmin: boolean } | null = null;
+      if (username && password) {
+        identity = await resolveUserPassword(username, password, userStore);
+      } else if (token) {
+        identity = await resolveTokenWithRole(token, webConfig, userStore);
+      }
+
       if (!identity) {
-        logger.warn('Failed login attempt', { ip: req.ip });
-        res.status(401).type('html').send(renderLogin('Invalid token.', returnTo));
+        recordAuthFailure('login', ip);
+        logger.warn('Failed login attempt', { ip, hasUsername: Boolean(username), hasToken: Boolean(token) });
+        res.status(401).type('html').send(renderLogin('Invalid credentials.', returnTo, webConfig.registrationEnabled));
         return;
       }
 
@@ -303,9 +328,151 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
 
       logger.info('User logged in via form', { userId: identity.userId, isAdmin: identity.isAdmin });
 
-      // Redirect to return_to or home (only allow relative paths, block protocol-relative //evil.com)
-      const redirectTo = returnTo && /^\/[^/]/.test(returnTo) ? returnTo : '/';
+      // Redirect to return_to or home. Allow only same-origin paths:
+      // must start with `/` but NOT `//` (which would be a
+      // protocol-relative URL → external host) or `/\` (a Windows-path
+      // shape some browsers also coerce). Falls back to `/` for
+      // anything else, including the empty string.
+      const redirectTo =
+        returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//') && !returnTo.startsWith('/\\')
+          ? returnTo
+          : '/';
       res.redirect(302, redirectTo);
+    })().catch(next);
+  });
+
+  // Registration page. Returns 404 when registration is disabled — no leak
+  // about whether the route exists.
+  app.get('/register', (req: Request, res: Response) => {
+    if (!webConfig.registrationEnabled) {
+      res.status(404).send(render404());
+      return;
+    }
+    const inviteCode = typeof req.query.invite === 'string' ? req.query.invite : undefined;
+    res.type('html').send(renderRegister(undefined, { inviteCode }));
+  });
+
+  // Registration form submission.
+  app.post('/register', (req: Request, res: Response, next: NextFunction) => {
+    if (!webConfig.registrationEnabled) {
+      res.status(404).send(render404());
+      return;
+    }
+    (async () => {
+      const body = req.body as Record<string, unknown>;
+      const inviteCode = typeof body.invite === 'string' ? body.invite.trim() : '';
+      const username = typeof body.username === 'string' ? body.username.trim() : '';
+      const password = typeof body.password === 'string' ? body.password : '';
+      const confirm = typeof body.confirm_password === 'string' ? body.confirm_password : '';
+      const ip = req.ip ?? '0.0.0.0';
+
+      const reject = (status: number, message: string): void => {
+        res.status(status).type('html').send(renderRegister(message, { inviteCode, username }));
+      };
+
+      if (!isAuthHitAllowed('register', ip)) {
+        logger.warn('Register rate-limited', { ip });
+        reject(429, 'Too many attempts. Try again in a few minutes.');
+        return;
+      }
+
+      if (!inviteCode || !username || !password) {
+        recordAuthFailure('register', ip);
+        reject(400, 'All fields are required.');
+        return;
+      }
+      if (password !== confirm) {
+        recordAuthFailure('register', ip);
+        reject(400, 'Passwords do not match.');
+        return;
+      }
+      if (password.length < 8) {
+        recordAuthFailure('register', ip);
+        reject(400, 'Password must be at least 8 characters.');
+        return;
+      }
+
+      const userStore = getUserStore(dbPath);
+      const inviteStore = getInviteStore(dbPath);
+
+      // Pre-flight: check the invite is currently valid. Atomicity comes
+      // from `redeemInvite` later; we peek here to give a friendly error
+      // for the common bad-code / expired-code cases. The expiry check
+      // mirrors `redeemInvite`'s `expires_at > ?` predicate exactly so a
+      // future change to the peek doesn't drift from the atomic redeem.
+      const peek = inviteStore.getInvite(inviteCode);
+      if (!peek) {
+        recordAuthFailure('register', ip);
+        logger.warn('Register attempted with unknown invite', { ip });
+        reject(400, 'Invite code is invalid, expired, or already used.');
+        return;
+      }
+      if (peek.usedAt !== null || peek.expiresAt <= Date.now()) {
+        recordAuthFailure('register', ip);
+        logger.warn('Register attempted with used or expired invite', { ip });
+        reject(400, 'Invite code is invalid, expired, or already used.');
+        return;
+      }
+
+      // Atomicity note: this sequence (create user → redeem invite) is
+      // not transactional across the two stores. If the process crashes
+      // between the two steps, a stranded user row exists with no
+      // redemption record. Recovery: an admin removes the stranded user
+      // via `npm run manage-users delete-user`. The invite is still
+      // redeemable until it expires. Acceptable for a home-server
+      // deployment; if this ever moves to multi-tenant, wrap both stores
+      // in a single SQLite database and use a transaction.
+      let user;
+      try {
+        user = await userStore.create({
+          username,
+          password,
+          slackId: peek.slackUserId ?? undefined,
+          role: peek.role,
+        });
+      } catch (err) {
+        recordAuthFailure('register', ip);
+        // Unified error message — don't reveal which usernames are taken
+        // (low-value enumeration vector even with invite gating).
+        logger.warn('Register validation failed', {
+          ip,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        reject(400, 'Username or password did not pass validation.');
+        return;
+      }
+
+      // Atomic redeem — losses to a concurrent redeem return null. If we
+      // lose, roll back the user we just created so the invite owner
+      // isn't burned and the username isn't squatted.
+      const redeemed = inviteStore.redeemInvite(inviteCode, user.id);
+      if (!redeemed) {
+        userStore.deleteById(user.id);
+        recordAuthFailure('register', ip);
+        logger.warn('Lost invite redeem race; rolled back created user', { ip, userId: user.id });
+        reject(400, 'Invite code was just consumed. Please request a new one.');
+        return;
+      }
+
+      // The store-canonical username (post-Zod validation, lowercase
+      // canonicalization etc.) is the identity we mint sessions under.
+      // If for any reason it's null we refuse to create a session rather
+      // than silently fall back to the user-supplied form value.
+      if (!user.username) {
+        userStore.deleteById(user.id);
+        logger.error('User created without a canonical username — rolled back', { ip, userId: user.id });
+        reject(400, 'Could not create account.');
+        return;
+      }
+      const identityUserId = `web:${user.username}`;
+      const sessionStore = getSessionStore(dbPath, webConfig.sessionTtlHours);
+      sessionStore.deleteSessionsForUser(identityUserId);
+      const session = sessionStore.createSession(identityUserId, user.role === 'admin');
+      const maxAge = webConfig.sessionTtlHours * 60 * 60;
+      res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; ${buildCookieOptions(webConfig, maxAge)}`);
+
+      logger.info('User registered via invite', { userId: identityUserId, role: user.role });
+      res.redirect(302, '/');
     })().catch(next);
   });
 

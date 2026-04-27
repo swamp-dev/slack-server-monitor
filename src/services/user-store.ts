@@ -228,6 +228,15 @@ export class UserStore {
       .run(hash, Date.now(), id);
   }
 
+  /**
+   * Hard-delete a user by primary key. Used by routes that have already
+   * decided the deletion is safe (e.g. rolling back a half-finished
+   * registration when an invite redeem races and loses).
+   */
+  deleteById(id: number): void {
+    this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  }
+
   deactivate(id: number): void {
     this.db
       .prepare('UPDATE users SET is_active = 0, updated_at = ? WHERE id = ?')

@@ -171,6 +171,7 @@ function loadConfig(): Config {
           authToken: process.env.WEB_AUTH_TOKEN ?? '',
           linkTokenTtlMinutes: parseIntWithDefault(process.env.WEB_LINK_TOKEN_TTL_MINUTES, 15),
           sessionTtlHours: parseIntWithDefault(process.env.WEB_SESSION_TTL_HOURS, 72),
+          registrationEnabled: process.env.WEB_REGISTRATION_ENABLED !== 'false',
         }
       : undefined,
   };

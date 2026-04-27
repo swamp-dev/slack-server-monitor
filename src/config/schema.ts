@@ -95,6 +95,8 @@ const WebConfigSchema = z.object({
   linkTokenTtlMinutes: z.coerce.number().int().positive().default(15),
   /** Session TTL in hours (default: 72) */
   sessionTtlHours: z.coerce.number().int().positive().default(72),
+  /** Whether `/register` is reachable. When false, the route returns 404. */
+  registrationEnabled: z.boolean().default(true),
 });
 
 /**

@@ -27,6 +27,7 @@ import {
   renderConversation,
   renderNotificationPage,
   renderLogin,
+  renderRegister,
   render404,
 } from '../src/web/templates/index.js';
 import {
@@ -254,9 +255,24 @@ export async function startScreenshotServer(): Promise<number> {
     // Login — variants: error
     app.get('/login', (req, res) => {
       const variant = req.query.variant as string | undefined;
+      const showRegister = req.query.register !== 'false';
       const html = variant === 'error'
-        ? renderLogin('Invalid access token. Please check your token and try again.')
-        : renderLogin();
+        ? renderLogin('Invalid credentials.', undefined, showRegister)
+        : renderLogin(undefined, undefined, showRegister);
+      res.type('html').send(html);
+    });
+
+    // Register — variants: error, prefilled
+    app.get('/register', (req, res) => {
+      const variant = req.query.variant as string | undefined;
+      let html: string;
+      if (variant === 'error') {
+        html = renderRegister('Invite code is invalid, expired, or already used.', { inviteCode: 'abc123def456abc123def456abc123de', username: 'alice' });
+      } else if (variant === 'prefilled') {
+        html = renderRegister(undefined, { inviteCode: 'abc123def456abc123def456abc123de' });
+      } else {
+        html = renderRegister();
+      }
       res.type('html').send(html);
     });
 

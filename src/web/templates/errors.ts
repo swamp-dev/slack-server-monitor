@@ -55,7 +55,7 @@ export function render401(returnTo?: string): string {
 /**
  * Render the login page
  */
-export function renderLogin(error?: string, returnTo?: string): string {
+export function renderLogin(error?: string, returnTo?: string, showRegisterLink = false): string {
   const errorHtml = error
     ? `<div class="login-error">${escapeHtml(error)}</div>`
     : '';
@@ -211,24 +211,77 @@ export function renderLogin(error?: string, returnTo?: string): string {
       border-radius: 3px;
       font-size: 0.7rem;
     }
+    .login-divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 24px 0;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .login-divider::before,
+    .login-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+    .login-section-title {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    .login-form input + label {
+      margin-top: 14px;
+    }
+    .login-register-link {
+      margin-top: 18px;
+      text-align: center;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+    .login-register-link a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .login-register-link a:hover { text-decoration: underline; }
   `;
+
+  const registerLinkHtml = showRegisterLink
+    ? `<p class="login-register-link">Don't have an account? <a href="/register">Register with an invite code</a></p>`
+    : '';
 
   const bodyHtml = `
   <main class="login-page">
     <form class="login-form" method="POST" action="/login">
       <div class="login-brand">${icon('robot', 28)} <h1>Server Monitor</h1></div>
       <p class="login-subtitle">AI-powered server diagnostics</p>
-      <p>Enter your access token to continue.</p>
       ${errorHtml}
+
+      <div class="login-section-title">Username &amp; password</div>
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autocomplete="username" autofocus>
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password">
+
+      <div class="login-divider">or</div>
+
+      <div class="login-section-title">Access token</div>
       <label for="token">Access Token</label>
       <div class="login-input-wrapper">
-        <input type="password" id="token" name="token" required autocomplete="off" autofocus>
+        <input type="password" id="token" name="token" autocomplete="off">
         <span class="token-check" id="token-check">${icon('check', 14)}</span>
         <button type="button" class="toggle-password" id="toggle-password" aria-label="Show password">${icon('eye', 16)}</button>
       </div>
       <p class="login-help">Your token is the <code>WEB_AUTH_TOKEN</code> value in your <code>.env</code> file.</p>
+
       ${returnToInput}
       <button type="submit">${icon('logout', 16)} Log in</button>
+      ${registerLinkHtml}
     </form>
   </main>`;
 
