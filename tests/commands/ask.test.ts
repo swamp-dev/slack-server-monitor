@@ -4,7 +4,7 @@ import {
   getRemainingRequests,
   clearRateLimitForUser,
   clearAllRateLimits,
-} from '../../src/commands/ask.js';
+} from '../../src/services/claude-rate-limit.js';
 
 // ──────────────────────────────────────────────
 // Mocks

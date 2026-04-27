@@ -31,7 +31,7 @@ import { getNotificationStore, closeNotificationStore } from '../services/notifi
 import { getQuickLinksStore, closeQuickLinksStore } from '../services/quick-links-store.js';
 import { getServerHealth } from '../services/server-health.js';
 import { processConversationTurn } from '../services/conversation-processor.js';
-import { checkAndRecordClaudeRequest } from '../commands/ask.js';
+import { checkAndRecordClaudeRequest } from '../services/claude-rate-limit.js';
 
 const SESSION_COOKIE = 'ssm_session';
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour

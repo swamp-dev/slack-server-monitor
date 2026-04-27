@@ -6,97 +6,31 @@ import {
   initDefaultContext,
   processConversationTurn,
 } from '../services/conversation-processor.js';
+import {
+  SLACK_TEXT_LIMIT,
+  buildContextWarningBlocks,
+  extractImageFromSlackFiles,
+} from '../services/claude-entry.js';
+import {
+  checkAndRecordClaudeRequest,
+  getRemainingRequests,
+  clearRateLimitForUser,
+  clearAllRateLimits,
+} from '../services/claude-rate-limit.js';
 import { getConversationUrl } from '../web/index.js';
 import { buildFooter } from './build-footer.js';
 import { logger } from '../utils/logger.js';
 import { parseSlackError } from '../utils/slack-errors.js';
 import { section, context as contextBlock, error as errorBlock, extractSnippet } from '../formatters/blocks.js';
 import { scrubSensitiveData, truncateText } from '../formatters/scrub.js';
-import { isValidImageUrl, fetchImageAsBase64, downloadImageToFile, cleanupTempImage } from '../utils/image.js';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { isValidImageUrl, fetchImageAsBase64, cleanupTempImage } from '../utils/image.js';
 
-/**
- * Slack text limit for section blocks (with buffer for safety)
- * Actual limit is 3000, but we use 2900 for safety margin
- */
-const SLACK_TEXT_LIMIT = 2900;
-
-/**
- * Rate limiter for Claude requests (separate from global rate limit)
- */
-const claudeRateLimits = new Map<string, number[]>();
-
-/**
- * SECURITY: Atomically check and record a Claude request
- * This prevents race conditions where multiple requests could slip through
- * between checking and recording.
- *
- * @param userId - The Slack user ID
- * @returns true if request is allowed and recorded, false if rate limited
- */
-export function checkAndRecordClaudeRequest(userId: string): boolean {
-  if (!config.claude) return false;
-
-  const now = Date.now();
-  const windowMs = config.claude.rateLimitWindowSeconds * 1000;
-  const requests = claudeRateLimits.get(userId) ?? [];
-
-  // Remove old requests outside window
-  const validRequests = requests.filter(t => now - t < windowMs);
-
-  // Check if at limit
-  if (validRequests.length >= config.claude.rateLimitMax) {
-    // Update with cleaned list but don't add new request
-    claudeRateLimits.set(userId, validRequests);
-    return false;
-  }
-
-  // Under limit - record the request atomically
-  validRequests.push(now);
-  claudeRateLimits.set(userId, validRequests);
-
-  // Prune entries for other users whose timestamps have all expired.
-  // This runs on each request but is O(n) over the map size, which is
-  // bounded by the number of distinct users — typically small.
-  for (const [uid, timestamps] of claudeRateLimits) {
-    if (uid === userId) continue;
-    if (timestamps.every(t => now - t >= windowMs)) {
-      claudeRateLimits.delete(uid);
-    }
-  }
-
-  return true;
-}
-
-/**
- * Get remaining requests for a user in the current window
- * Used for testing and diagnostics
- */
-export function getRemainingRequests(userId: string): number {
-  if (!config.claude) return 0;
-
-  const now = Date.now();
-  const windowMs = config.claude.rateLimitWindowSeconds * 1000;
-  const requests = claudeRateLimits.get(userId) ?? [];
-  const validRequests = requests.filter(t => now - t < windowMs);
-
-  return Math.max(0, config.claude.rateLimitMax - validRequests.length);
-}
-
-/**
- * Clear rate limit data for a user (for testing)
- */
-export function clearRateLimitForUser(userId: string): void {
-  claudeRateLimits.delete(userId);
-}
-
-/**
- * Clear all rate limit data (for testing)
- */
-export function clearAllRateLimits(): void {
-  claudeRateLimits.clear();
-}
+export {
+  checkAndRecordClaudeRequest,
+  getRemainingRequests,
+  clearRateLimitForUser,
+  clearAllRateLimits,
+};
 
 /**
  * Parse image URL from the question text
@@ -116,33 +50,6 @@ function parseImageFromQuestion(question: string): { imageUrl: string; cleanQues
   const cleanQuestion = question.replace(imagePattern, '').trim();
 
   return { imageUrl, cleanQuestion };
-}
-
-/**
- * Build Slack blocks for context window warnings/truncation notices
- */
-function buildContextWarningBlocks(
-  contextStatus: { wasTruncated: boolean; removedCount: number; percentUsed: number; isWarning: boolean } | undefined
-): ReturnType<typeof contextBlock>[] {
-  if (!contextStatus) return [];
-
-  const blocks: ReturnType<typeof contextBlock>[] = [];
-
-  if (contextStatus.wasTruncated) {
-    blocks.push(
-      contextBlock(
-        `_:memo: Conversation trimmed to fit context window (${String(contextStatus.removedCount)} earlier messages removed, ${String(Math.round(contextStatus.percentUsed * 100))}% context used)_`
-      )
-    );
-  } else if (contextStatus.isWarning) {
-    blocks.push(
-      contextBlock(
-        `_:warning: Long conversation — context ${String(Math.round(contextStatus.percentUsed * 100))}% used, older messages may be trimmed soon_`
-      )
-    );
-  }
-
-  return blocks;
 }
 
 /**
@@ -708,30 +615,15 @@ export function registerThreadHandler(app: App): void {
       });
 
       // Process image files from Slack uploads
-      let askOptions: AskOptions | undefined;
-      const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']);
-
-      if (files && files.length > 0) {
-        const imageFile = files.find((f) => IMAGE_MIME_TYPES.has(f.mimetype));
-        if (imageFile?.url_private_download) {
-          try {
-            const mimeToExt: Record<string, string> = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' };
-            const ext = mimeToExt[imageFile.mimetype] ?? 'bin';
-            tempImagePath = join(tmpdir(), `ssm-${imageFile.id}.${ext}`);
-            const botToken = config.slack.botToken;
-            await downloadImageToFile(imageFile.url_private_download, tempImagePath, botToken);
-            askOptions = { localImagePath: tempImagePath };
-            logger.debug('Downloaded Slack file for analysis', { fileId: imageFile.id, path: tempImagePath });
-          } catch (imgError) {
-            logger.warn('Failed to download Slack file', { error: imgError, fileId: imageFile.id });
-            // Notify user but continue with text-only processing
-            await client.chat.postMessage({
-              channel: channelId,
-              thread_ts: threadTs,
-              text: `_Could not process image: ${imgError instanceof Error ? imgError.message : 'download failed'}. Continuing with text only._`,
-            }).catch(() => { /* best effort */ });
-          }
-        }
+      const imageResult = await extractImageFromSlackFiles(files, config.slack.botToken);
+      const askOptions: AskOptions | undefined = imageResult.askOptions;
+      tempImagePath = imageResult.tempImagePath;
+      if (imageResult.error) {
+        await client.chat.postMessage({
+          channel: channelId,
+          thread_ts: threadTs,
+          text: `_Could not process image: ${imageResult.error}. Continuing with text only._`,
+        }).catch(() => { /* best effort */ });
       }
 
       const userMessage = text || 'Please analyze this image.';

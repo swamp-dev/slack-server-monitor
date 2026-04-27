@@ -178,7 +178,7 @@ vi.mock('../../src/services/conversation-processor.js', () => ({
   processConversationTurn: vi.fn(async () => { /* noop */ }),
 }));
 
-vi.mock('../../src/commands/ask.js', () => ({
+vi.mock('../../src/services/claude-rate-limit.js', () => ({
   checkAndRecordClaudeRequest: vi.fn(() => true),
 }));
 
@@ -921,7 +921,7 @@ describe('web server routes', () => {
 
   describe('rate limiting on /ask', () => {
     it('should return 429 when rate limit exceeded', async () => {
-      const { checkAndRecordClaudeRequest } = await import('../../src/commands/ask.js');
+      const { checkAndRecordClaudeRequest } = await import('../../src/services/claude-rate-limit.js');
       vi.mocked(checkAndRecordClaudeRequest).mockReturnValueOnce(false);
 
       mockStore.getOrCreateConversation.mockReturnValue({
