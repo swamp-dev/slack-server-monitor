@@ -94,7 +94,20 @@ const mockStore = {
     totalToolCalls: 0, avgToolDurationMs: null, toolFailureRate: 0, topTools: [],
   })),
   getOrCreateConversation: vi.fn(),
-  getConversationById: vi.fn(() => null),
+  // Default to a conversation owned by the test user (U123) so ownership
+  // checks in mutation routes pass. Individual tests override for the
+  // not-found / non-owner cases.
+  getConversationById: vi.fn((id: number) => ({
+    id,
+    threadTs: '1000.001',
+    channelId: 'C001',
+    userId: 'U123',
+    messages: [{ role: 'user' as const, content: 'Hello' }],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    archivedAt: null,
+    favoritedAt: null,
+  })),
   branchConversation: vi.fn(() => ({
     id: 99,
     threadTs: 'branch-123-abc',
@@ -661,6 +674,25 @@ describe('web server routes', () => {
       mockStore.getConversation.mockReturnValue(null);
       const res = await authFetch('/c/9999.999/CNONE/export/md');
       expect(res.status).toBe(404);
+    });
+
+    it('should return 404 (not 200) when a non-owner tries to export', async () => {
+      // Conversation owned by U999, but the test session is U123.
+      mockStore.getConversation.mockReturnValueOnce({
+        id: 1,
+        threadTs: '1000.001',
+        channelId: 'C001',
+        userId: 'U999',
+        messages: [{ role: 'user', content: 'private' }],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        favoritedAt: null,
+      });
+      const res = await authFetch('/c/1000.001/C001/export/md');
+      expect(res.status).toBe(404);
+      const body = await res.text();
+      // Don't leak the conversation content in the 404 page.
+      expect(body).not.toContain('private');
     });
   });
 

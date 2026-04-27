@@ -140,7 +140,7 @@ export class ConversationStore {
 
   /** Stats cache TTL — dashboard stats don't need real-time accuracy */
   private static readonly STATS_CACHE_TTL_MS = 30_000; // 30 seconds
-  private statsCache: { data: SessionStats; hours: number; expiresAt: number } | null = null;
+  private statsCache = new Map<string, { data: SessionStats; expiresAt: number }>();
 
   constructor(dbPath: string, ttlHours = 24) {
     this.ttlHours = ttlHours;
@@ -659,14 +659,42 @@ export class ConversationStore {
   }
 
   /**
+   * Build a user-scoping fragment for SQL filters that operate on
+   * `conversations` (aliased as `c`). Used by every list/count/search
+   * method to enforce per-user visibility (#279).
+   *
+   * - `undefined`        → no filter (admin view, sees everything).
+   * - `string`           → single-user filter.
+   * - `string[]` (>= 1)  → match any id in the set (linked Slack + web identities).
+   * - `string[]` (empty) → defensive: matches no rows. Never produced by
+   *   `UserStore.resolveIdentities`, but guards against accidental empty filters.
+   */
+  private buildUserFilter(userId?: string | string[]): { clause: string; params: Record<string, unknown> } {
+    if (userId === undefined) return { clause: '', params: {} };
+    if (typeof userId === 'string') {
+      return { clause: 'AND c.user_id = $userId', params: { userId } };
+    }
+    if (userId.length === 0) return { clause: 'AND 0', params: {} };
+    const params: Record<string, unknown> = {};
+    const placeholders = userId.map((id, i) => {
+      const key = `userId${String(i)}`;
+      params[key] = id;
+      return `$${key}`;
+    });
+    return { clause: `AND c.user_id IN (${placeholders.join(',')})`, params };
+  }
+
+  /**
    * List recent sessions with metrics (excludes archived)
    *
    * @param limit - Maximum number of sessions to return (default: 20)
    * @param offset - Number of sessions to skip (default: 0)
-   * @param userId - Filter to sessions started by this user (optional)
+   * @param userId - Filter to sessions owned by this user (string), an array
+   *   of identities (linked Slack + web), or undefined for no filter (admin).
    */
-  listRecentSessions(limit = 20, offset = 0, userId?: string): SessionSummary[] {
+  listRecentSessions(limit = 20, offset = 0, userId?: string | string[]): SessionSummary[] {
     const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
+    const filter = this.buildUserFilter(userId);
 
     const rows = this.db
       .prepare(`
@@ -676,14 +704,14 @@ export class ConversationStore {
           COUNT(tc.id) as tool_call_count
         FROM conversations c
         LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
-        WHERE ($userId IS NULL OR c.user_id = $userId)
-          AND c.archived_at IS NULL
+        WHERE c.archived_at IS NULL
+          ${filter.clause}
         GROUP BY c.id
         ORDER BY c.updated_at DESC, c.id DESC
         LIMIT $limit OFFSET $offset
       `)
       .all({
-        userId: userId ?? null,
+        ...filter.params,
         limit,
         offset,
       }) as {
@@ -706,22 +734,24 @@ export class ConversationStore {
   /**
    * Count total sessions (excludes archived)
    */
-  countSessions(userId?: string): number {
+  countSessions(userId?: string | string[]): number {
+    const filter = this.buildUserFilter(userId);
     const row = this.db
       .prepare(`
-        SELECT COUNT(*) as count FROM conversations
-        WHERE ($userId IS NULL OR user_id = $userId)
-          AND archived_at IS NULL
+        SELECT COUNT(*) as count FROM conversations c
+        WHERE c.archived_at IS NULL
+          ${filter.clause}
       `)
-      .get({ userId: userId ?? null }) as { count: number };
+      .get(filter.params) as { count: number };
     return row.count;
   }
 
   /**
    * List archived sessions with pagination
    */
-  listArchivedSessions(limit = 20, offset = 0): SessionSummary[] {
+  listArchivedSessions(limit = 20, offset = 0, userId?: string | string[]): SessionSummary[] {
     const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
+    const filter = this.buildUserFilter(userId);
 
     const rows = this.db
       .prepare(`
@@ -732,11 +762,12 @@ export class ConversationStore {
         FROM conversations c
         LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
         WHERE c.archived_at IS NOT NULL
+          ${filter.clause}
         GROUP BY c.id
         ORDER BY c.archived_at DESC, c.id DESC
         LIMIT $limit OFFSET $offset
       `)
-      .all({ limit, offset }) as {
+      .all({ ...filter.params, limit, offset }) as {
         id: number;
         thread_ts: string;
         channel_id: string;
@@ -756,10 +787,15 @@ export class ConversationStore {
   /**
    * Count archived sessions
    */
-  countArchivedSessions(): number {
+  countArchivedSessions(userId?: string | string[]): number {
+    const filter = this.buildUserFilter(userId);
     const row = this.db
-      .prepare('SELECT COUNT(*) as count FROM conversations WHERE archived_at IS NOT NULL')
-      .get() as { count: number };
+      .prepare(`
+        SELECT COUNT(*) as count FROM conversations c
+        WHERE c.archived_at IS NOT NULL
+          ${filter.clause}
+      `)
+      .get(filter.params) as { count: number };
     return row.count;
   }
 
@@ -846,12 +882,17 @@ export class ConversationStore {
    * Get aggregate statistics across sessions
    *
    * @param hours - Time window in hours (default: 24)
+   * @param userId - Optional per-user scope (single id, array for linked
+   *   identities, or undefined for the admin-wide view).
    */
-  getSessionStats(hours = 24): SessionStats {
-    // Return cached result if still valid for the same time window
-    if (this.statsCache?.hours === hours && Date.now() < this.statsCache.expiresAt) {
-      return this.statsCache.data;
-    }
+  getSessionStats(hours = 24, userId?: string | string[]): SessionStats {
+    const filter = this.buildUserFilter(userId);
+    // Cache key folds in both `hours` and the (canonical) user filter so
+    // scoped and unscoped calls don't poison each other's cache.
+    const userKey = userId === undefined ? '*' : Array.isArray(userId) ? `[${[...userId].sort().join(',')}]` : userId;
+    const cacheKey = `${String(hours)}|${userKey}`;
+    const cached = this.statsCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) return cached.data;
 
     const cutoff = Date.now() - hours * 60 * 60 * 1000;
     const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
@@ -861,11 +902,12 @@ export class ConversationStore {
       .prepare(`
         SELECT
           COUNT(*) as total_sessions,
-          SUM(CASE WHEN updated_at > ? THEN 1 ELSE 0 END) as active_sessions
-        FROM conversations
-        WHERE updated_at > ? AND archived_at IS NULL
+          SUM(CASE WHEN c.updated_at > $activeThreshold THEN 1 ELSE 0 END) as active_sessions
+        FROM conversations c
+        WHERE c.updated_at > $cutoff AND c.archived_at IS NULL
+          ${filter.clause}
       `)
-      .get(activeThreshold, cutoff) as {
+      .get({ ...filter.params, activeThreshold, cutoff }) as {
         total_sessions: number;
         active_sessions: number;
       };
@@ -873,11 +915,12 @@ export class ConversationStore {
     // Get total messages using denormalized message_count column (avoids json_array_length scans)
     const messageStats = this.db
       .prepare(`
-        SELECT COALESCE(SUM(message_count), 0) as total_messages
-        FROM conversations
-        WHERE updated_at > ? AND archived_at IS NULL
+        SELECT COALESCE(SUM(c.message_count), 0) as total_messages
+        FROM conversations c
+        WHERE c.updated_at > $cutoff AND c.archived_at IS NULL
+          ${filter.clause}
       `)
-      .get(cutoff) as { total_messages: number };
+      .get({ ...filter.params, cutoff }) as { total_messages: number };
 
     const totalMessages = messageStats.total_messages;
 
@@ -887,9 +930,10 @@ export class ConversationStore {
         SELECT COUNT(*) as count
         FROM tool_calls tc
         INNER JOIN conversations c ON tc.conversation_id = c.id
-        WHERE c.updated_at > ? AND c.archived_at IS NULL
+        WHERE c.updated_at > $cutoff AND c.archived_at IS NULL
+          ${filter.clause}
       `)
-      .get(cutoff) as { count: number };
+      .get({ ...filter.params, cutoff }) as { count: number };
 
     // Get tool call analytics (duration and failure rate)
     const analyticsStats = this.db
@@ -899,9 +943,10 @@ export class ConversationStore {
           SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failure_count
         FROM tool_calls tc
         INNER JOIN conversations c ON tc.conversation_id = c.id
-        WHERE c.updated_at > ? AND c.archived_at IS NULL
+        WHERE c.updated_at > $cutoff AND c.archived_at IS NULL
+          ${filter.clause}
       `)
-      .get(cutoff) as { avg_duration_ms: number | null; failure_count: number } | undefined;
+      .get({ ...filter.params, cutoff }) as { avg_duration_ms: number | null; failure_count: number } | undefined;
 
     const totalToolCalls = toolCallStats.count;
     const failureCount = analyticsStats?.failure_count ?? 0;
@@ -915,12 +960,13 @@ export class ConversationStore {
           AVG(duration_ms) as avg_duration_ms
         FROM tool_calls tc
         INNER JOIN conversations c ON tc.conversation_id = c.id
-        WHERE c.updated_at > ? AND c.archived_at IS NULL
+        WHERE c.updated_at > $cutoff AND c.archived_at IS NULL
+          ${filter.clause}
         GROUP BY tool_name
         ORDER BY count DESC
         LIMIT 5
       `)
-      .all(cutoff) as { name: string; count: number; avg_duration_ms: number | null }[];
+      .all({ ...filter.params, cutoff }) as { name: string; count: number; avg_duration_ms: number | null }[];
 
     const stats: SessionStats = {
       totalSessions: sessionStats.total_sessions,
@@ -938,7 +984,7 @@ export class ConversationStore {
       })),
     };
 
-    this.statsCache = { data: stats, hours, expiresAt: Date.now() + ConversationStore.STATS_CACHE_TTL_MS };
+    this.statsCache.set(cacheKey, { data: stats, expiresAt: Date.now() + ConversationStore.STATS_CACHE_TTL_MS });
     return stats;
   }
 
@@ -998,8 +1044,9 @@ export class ConversationStore {
   /**
    * Search conversations by message content using FTS5
    */
-  searchConversations(query: string, limit = 20, offset = 0, filterUserId?: string): SessionSummary[] {
+  searchConversations(query: string, limit = 20, offset = 0, filterUserId?: string | string[]): SessionSummary[] {
     const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
+    const filter = this.buildUserFilter(filterUserId);
 
     // Quote each token individually so "nginx restart" matches both words anywhere
     const safeQuery = query
@@ -1007,8 +1054,6 @@ export class ConversationStore {
       .filter((t) => t.length > 0)
       .map((t) => '"' + t.replace(/"/g, '""') + '"')
       .join(' ');
-
-    const userFilter = filterUserId ? 'AND c.user_id = $filterUserId' : '';
 
     const rows = this.db
       .prepare(`
@@ -1021,12 +1066,12 @@ export class ConversationStore {
         LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
         WHERE conversations_fts MATCH $query
           AND c.archived_at IS NULL
-          ${userFilter}
+          ${filter.clause}
         GROUP BY c.id
         ORDER BY rank, c.updated_at DESC
         LIMIT $limit OFFSET $offset
       `)
-      .all({ query: safeQuery, limit, offset, ...(filterUserId ? { filterUserId } : {}) }) as {
+      .all({ query: safeQuery, limit, offset, ...filter.params }) as {
         id: number;
         thread_ts: string;
         channel_id: string;
@@ -1046,7 +1091,8 @@ export class ConversationStore {
   /**
    * Count total search results
    */
-  countSearchResults(query: string): number {
+  countSearchResults(query: string, userId?: string | string[]): number {
+    const filter = this.buildUserFilter(userId);
     const safeQuery = query
       .split(/\s+/)
       .filter((t) => t.length > 0)
@@ -1060,8 +1106,9 @@ export class ConversationStore {
         INNER JOIN conversations_fts fts ON fts.rowid = c.id
         WHERE conversations_fts MATCH $query
           AND c.archived_at IS NULL
+          ${filter.clause}
       `)
-      .get({ query: safeQuery }) as { count: number };
+      .get({ query: safeQuery, ...filter.params }) as { count: number };
 
     return row.count;
   }
@@ -1101,25 +1148,28 @@ export class ConversationStore {
   /**
    * List all unique tags with usage counts
    */
-  listAllTags(): TagInfo[] {
+  listAllTags(userId?: string | string[]): TagInfo[] {
+    const filter = this.buildUserFilter(userId);
     const rows = this.db
       .prepare(`
         SELECT tag as name, COUNT(*) as count
         FROM conversation_tags ct
         INNER JOIN conversations c ON c.id = ct.conversation_id
         WHERE c.archived_at IS NULL
+          ${filter.clause}
         GROUP BY tag
         ORDER BY count DESC, tag ASC
       `)
-      .all() as { name: string; count: number }[];
+      .all(filter.params) as { name: string; count: number }[];
     return rows;
   }
 
   /**
    * List sessions that have a specific tag (excludes archived)
    */
-  listSessionsByTag(tag: string, limit = 20, offset = 0): SessionSummary[] {
+  listSessionsByTag(tag: string, limit = 20, offset = 0, userId?: string | string[]): SessionSummary[] {
     const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
+    const filter = this.buildUserFilter(userId);
 
     const rows = this.db
       .prepare(`
@@ -1132,11 +1182,12 @@ export class ConversationStore {
         LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
         WHERE ct.tag = $tag
           AND c.archived_at IS NULL
+          ${filter.clause}
         GROUP BY c.id
         ORDER BY c.updated_at DESC, c.id DESC
         LIMIT $limit OFFSET $offset
       `)
-      .all({ tag, limit, offset }) as {
+      .all({ tag, limit, offset, ...filter.params }) as {
         id: number;
         thread_ts: string;
         channel_id: string;
@@ -1156,15 +1207,17 @@ export class ConversationStore {
   /**
    * Count sessions with a specific tag (excludes archived)
    */
-  countSessionsByTag(tag: string): number {
+  countSessionsByTag(tag: string, userId?: string | string[]): number {
+    const filter = this.buildUserFilter(userId);
     const row = this.db
       .prepare(`
         SELECT COUNT(*) as count
         FROM conversation_tags ct
         INNER JOIN conversations c ON c.id = ct.conversation_id
-        WHERE ct.tag = ? AND c.archived_at IS NULL
+        WHERE ct.tag = $tag AND c.archived_at IS NULL
+          ${filter.clause}
       `)
-      .get(tag) as { count: number };
+      .get({ tag, ...filter.params }) as { count: number };
     return row.count;
   }
 
@@ -1203,8 +1256,9 @@ export class ConversationStore {
   /**
    * List favorited sessions (excludes archived)
    */
-  listFavoriteSessions(limit = 20, offset = 0): SessionSummary[] {
+  listFavoriteSessions(limit = 20, offset = 0, userId?: string | string[]): SessionSummary[] {
     const activeThreshold = Date.now() - ConversationStore.ACTIVE_THRESHOLD_MS;
+    const filter = this.buildUserFilter(userId);
 
     const rows = this.db
       .prepare(`
@@ -1216,11 +1270,12 @@ export class ConversationStore {
         LEFT JOIN tool_calls tc ON tc.conversation_id = c.id
         WHERE c.favorited_at IS NOT NULL
           AND c.archived_at IS NULL
+          ${filter.clause}
         GROUP BY c.id
         ORDER BY c.favorited_at DESC, c.id DESC
         LIMIT $limit OFFSET $offset
       `)
-      .all({ limit, offset }) as {
+      .all({ limit, offset, ...filter.params }) as {
         id: number;
         thread_ts: string;
         channel_id: string;
@@ -1240,10 +1295,15 @@ export class ConversationStore {
   /**
    * Count favorited sessions (excludes archived)
    */
-  countFavoriteSessions(): number {
+  countFavoriteSessions(userId?: string | string[]): number {
+    const filter = this.buildUserFilter(userId);
     const row = this.db
-      .prepare('SELECT COUNT(*) as count FROM conversations WHERE favorited_at IS NOT NULL AND archived_at IS NULL')
-      .get() as { count: number };
+      .prepare(`
+        SELECT COUNT(*) as count FROM conversations c
+        WHERE c.favorited_at IS NOT NULL AND c.archived_at IS NULL
+          ${filter.clause}
+      `)
+      .get(filter.params) as { count: number };
     return row.count;
   }
 

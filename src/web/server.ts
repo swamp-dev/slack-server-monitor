@@ -37,6 +37,42 @@ import { checkAndRecordClaudeRequest } from '../services/claude-rate-limit.js';
 const SESSION_COOKIE = 'ssm_session';
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
+/**
+ * Resolve the conversation-store filter identities for the current request.
+ *
+ * - Admin (`res.locals.isAdmin === true`) → `undefined`, no filter.
+ * - Authenticated non-admin → array from `userStore.resolveIdentities`,
+ *   which merges any linked Slack ID and `web:<username>` so a user with
+ *   both identities sees conversations from both.
+ * - **No identity on the request → `[]` (deny everything).**
+ *
+ * Failing closed on the unknown case is deliberate: callers should only
+ * reach this helper after auth middleware has set `res.locals.userId` /
+ * `res.locals.isAdmin`. If a future route forgets to gate on auth first,
+ * we want it to see an empty list rather than the admin-equivalent view.
+ */
+function getUserFilterIds(res: Response, dbPath: string): string[] | undefined {
+  if (res.locals.isAdmin) return undefined;
+  const userId = res.locals.userId as string | undefined;
+  if (!userId) return [];
+  return getUserStore(dbPath).resolveIdentities(userId);
+}
+
+/**
+ * Check whether the current request's identity is allowed to view/mutate
+ * a conversation. Admins always pass. Non-admins must own the conversation
+ * via any of their linked identities (Slack ID or web:<username>).
+ */
+function isConversationOwner(
+  conversation: { userId: string },
+  res: Response,
+  dbPath: string,
+): boolean {
+  const filterIds = getUserFilterIds(res, dbPath);
+  if (filterIds === undefined) return true; // admin
+  return filterIds.includes(conversation.userId);
+}
+
 let server: Server | null = null;
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 let sseManager: SSEConnectionManager | null = null;
@@ -327,15 +363,22 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const { page, pageSize, offset } = parsePagination(req);
 
       const userId = res.locals.userId as string;
-      const isSlackUser = userId.startsWith('U');
-      const showMine = req.query.mine === 'true' || (isSlackUser && req.query.mine !== 'false');
+      const filterIds = getUserFilterIds(res, dbPath);
+      // Admins can opt-in to a "show only mine" filter via ?mine=true.
+      // Non-admins are always scoped — `filterIds` from resolveIdentities
+      // already merges their Slack + web identities.
+      const adminViewingOwn = filterIds === undefined && req.query.mine === 'true';
+      const effectiveFilter = filterIds ?? (adminViewingOwn ? userId : undefined);
+      const showMine = filterIds !== undefined || adminViewingOwn;
 
-      const filterUserId = showMine ? userId : undefined;
-      const sessions = store.listRecentSessions(pageSize, offset, filterUserId);
+      const sessions = store.listRecentSessions(pageSize, offset, effectiveFilter);
       attachTags(sessions, store);
-      const totalItems = store.countSessions(filterUserId);
+      const totalItems = store.countSessions(effectiveFilter);
       const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-      const allTags = store.listAllTags();
+      // Tag sidebar tracks the same scope as the session list: a non-admin
+      // sees their tags via filterIds; an admin in ?mine=true sees their
+      // own tags via effectiveFilter; an admin without ?mine sees all.
+      const allTags = store.listAllTags(effectiveFilter);
 
       const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages }, { allTags, currentUserId: userId, showMine });
       res.type('html').send(html);
@@ -359,11 +402,12 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         return;
       }
 
-      const sessions = store.searchConversations(query, pageSize, offset);
+      const filterIds = getUserFilterIds(res, dbPath);
+      const sessions = store.searchConversations(query, pageSize, offset, filterIds);
       attachTags(sessions, store);
-      const totalItems = store.countSearchResults(query);
+      const totalItems = store.countSearchResults(query, filterIds);
       const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-      const allTags = store.listAllTags();
+      const allTags = store.listAllTags(filterIds);
 
       const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages }, { searchQuery: query, allTags });
       res.type('html').send(html);
@@ -381,11 +425,12 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
       const { page, pageSize, offset } = parsePagination(req);
 
-      const sessions = store.listFavoriteSessions(pageSize, offset);
+      const filterIds = getUserFilterIds(res, dbPath);
+      const sessions = store.listFavoriteSessions(pageSize, offset, filterIds);
       attachTags(sessions, store);
-      const totalItems = store.countFavoriteSessions();
+      const totalItems = store.countFavoriteSessions(filterIds);
       const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-      const allTags = store.listAllTags();
+      const allTags = store.listAllTags(filterIds);
 
       const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages }, { favorites: true, allTags });
       res.type('html').send(html);
@@ -409,10 +454,11 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         return;
       }
 
-      const sessions = store.listSessionsByTag(tag, pageSize, offset);
+      const filterIds = getUserFilterIds(res, dbPath);
+      const sessions = store.listSessionsByTag(tag, pageSize, offset, filterIds);
       attachTags(sessions, store);
-      const allTags = store.listAllTags();
-      const totalItems = store.countSessionsByTag(tag);
+      const allTags = store.listAllTags(filterIds);
+      const totalItems = store.countSessionsByTag(tag, filterIds);
       const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
       const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages }, { activeTag: tag, allTags });
@@ -432,6 +478,11 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
       if (isNaN(id)) {
         res.status(400).json({ error: 'Invalid conversation ID' });
+        return;
+      }
+      const conversation = store.getConversationById(id);
+      if (!conversation || !isConversationOwner(conversation, res, dbPath)) {
+        res.status(404).json({ error: 'Not found' });
         return;
       }
       const isFavorited = store.toggleFavorite(id);
@@ -463,6 +514,11 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         return;
       }
 
+      const conversation = store.getConversationById(id);
+      if (!conversation || !isConversationOwner(conversation, res, dbPath)) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
       store.addTag(id, tag);
       res.json({ tags: store.getTags(id) });
     } catch (err) {
@@ -485,6 +541,11 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         return;
       }
 
+      const conversation = store.getConversationById(id);
+      if (!conversation || !isConversationOwner(conversation, res, dbPath)) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
       store.removeTag(id, tag);
       res.json({ tags: store.getTags(id) });
     } catch (err) {
@@ -502,6 +563,11 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
       if (isNaN(id)) {
         res.status(400).json({ error: 'Invalid conversation ID' });
+        return;
+      }
+      const conversation = store.getConversationById(id);
+      if (!conversation || !isConversationOwner(conversation, res, dbPath)) {
+        res.status(404).json({ error: 'Not found' });
         return;
       }
       const archived = store.archiveConversation(id);
@@ -531,19 +597,19 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         return;
       }
 
-      // Ownership check: only the conversation owner can fork
-      const userId = res.locals.userId as string;
+      // Ownership check: only the conversation owner (or admin / linked
+      // identity) can fork.
       const parent = store.getConversationById(id);
       if (!parent) {
         res.status(404).json({ error: 'Conversation not found' });
         return;
       }
-      if (parent.userId !== userId) {
+      if (!isConversationOwner(parent, res, dbPath)) {
         res.status(403).json({ error: 'Access denied' });
         return;
       }
 
-      const branch = store.branchConversation(id, messageIndex, userId);
+      const branch = store.branchConversation(id, messageIndex, res.locals.userId as string);
       res.json({ threadTs: branch.threadTs, channelId: branch.channelId, id: branch.id });
     } catch (err) {
       logger.error('Error forking conversation', {
@@ -559,8 +625,9 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
       const { page, pageSize, offset } = parsePagination(req);
 
-      const sessions = store.listArchivedSessions(pageSize, offset);
-      const totalItems = store.countArchivedSessions();
+      const filterIds = getUserFilterIds(res, dbPath);
+      const sessions = store.listArchivedSessions(pageSize, offset, filterIds);
+      const totalItems = store.countArchivedSessions(filterIds);
       const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
       const html = renderSessionList(sessions, { page, pageSize, totalItems, totalPages }, { archived: true });
@@ -589,6 +656,17 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
 
       if (!conversation) {
         logger.debug('Conversation not found for web view', { threadTs, channelId });
+        res.status(404).send(render404());
+        return;
+      }
+      if (!isConversationOwner(conversation, res, dbPath)) {
+        // Don't leak existence to non-owners — render the same 404 they'd
+        // see for a truly missing thread.
+        logger.debug('Conversation access denied (non-owner)', {
+          threadTs,
+          channelId,
+          requesterId: res.locals.userId as string,
+        });
         res.status(404).send(render404());
         return;
       }
@@ -675,11 +753,10 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     try {
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
 
-      // Ownership check: verify the conversation belongs to this user before allowing continuation
-      // Admin users can continue any conversation (admin sessions have userId 'admin')
-      const isAdmin = res.locals.isAdmin as boolean | undefined;
+      // Ownership check: verify the conversation belongs to this user (or
+      // any linked identity, e.g. Slack ↔ web). Admin sessions bypass.
       const existing = store.getConversation(threadTs, channelId);
-      if (existing && existing.userId !== userId && !isAdmin) {
+      if (existing && !isConversationOwner(existing, res, dbPath)) {
         res.status(403).json({ error: 'Access denied' });
         return;
       }
@@ -766,15 +843,14 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
     }
 
     // Verify conversation exists and the authenticated user owns it
-    // Admin users can access any conversation's stream
-    const isAdmin = res.locals.isAdmin as boolean | undefined;
+    // (any linked identity passes; admin sessions bypass).
     const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
     const conversation = store.getConversation(threadTs, channelId);
     if (!conversation) {
       res.status(404).json({ error: 'Conversation not found' });
       return;
     }
-    if (conversation.userId !== userId && !isAdmin) {
+    if (!isConversationOwner(conversation, res, dbPath)) {
       res.status(403).json({ error: 'Access denied' });
       return;
     }
@@ -797,6 +873,11 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const conversation = store.getConversation(threadTs, channelId);
 
       if (!conversation) {
+        res.status(404).send(render404());
+        return;
+      }
+      if (!isConversationOwner(conversation, res, dbPath)) {
+        // Don't leak existence to non-owners — same 404 as a missing thread.
         res.status(404).send(render404());
         return;
       }
@@ -845,14 +926,17 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
         };
       }
 
+      // Command-palette UX intentionally always scopes to the requester's
+      // own conversations — including admins. Admins explicitly browsing
+      // others' conversations should use the full /c page, not the palette.
+      const filterIds = getUserFilterIds(res, dbPath) ?? (userId ? [userId] : []);
       if (!query) {
-        // Return current user's recent conversations
-        const recent = store.listRecentSessions(limit, 0, userId);
+        const recent = store.listRecentSessions(limit, 0, filterIds);
         res.json({ results: recent.map(toResult) });
         return;
       }
 
-      const sessions = store.searchConversations(query, limit, 0, userId);
+      const sessions = store.searchConversations(query, limit, 0, filterIds);
       res.json({ results: sessions.map(toResult) });
     } catch (err) {
       logger.error('Error in search API', { error: err instanceof Error ? err.message : String(err) });
@@ -1076,14 +1160,16 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
       const userId = (res.locals.userId as string) || 'anonymous';
       const health = await getServerHealth();
 
-      // Only load private data for authenticated users
+      // Only load private data for authenticated users — and scope it
+      // to the user's identities so non-admins only see their own data.
       const store = getConversationStore(claudeConfig.dbPath, claudeConfig.conversationTtlHours);
-      const stats = isAuthenticated ? store.getSessionStats(24) : { totalSessions: 0, activeSessions: 0, totalMessages: 0, totalToolCalls: 0, avgToolDurationMs: null, toolFailureRate: 0, topTools: [] as { name: string; count: number; avgDurationMs: number | null }[] };
-      const recent = isAuthenticated ? store.listRecentSessions(5, 0) : [];
+      const filterIds = isAuthenticated ? getUserFilterIds(res, dbPath) : undefined;
+      const stats = isAuthenticated ? store.getSessionStats(24, filterIds) : { totalSessions: 0, activeSessions: 0, totalMessages: 0, totalToolCalls: 0, avgToolDurationMs: null, toolFailureRate: 0, topTools: [] as { name: string; count: number; avgDurationMs: number | null }[] };
+      const recent = isAuthenticated ? store.listRecentSessions(5, 0, filterIds) : [];
       if (isAuthenticated) attachTags(recent, store);
-      const favorites = isAuthenticated ? store.listFavoriteSessions(3, 0) : [];
-      const favCount = isAuthenticated ? store.countFavoriteSessions() : 0;
-      const allTags = isAuthenticated ? store.listAllTags() : [];
+      const favorites = isAuthenticated ? store.listFavoriteSessions(3, 0, filterIds) : [];
+      const favCount = isAuthenticated ? store.countFavoriteSessions(filterIds) : 0;
+      const allTags = isAuthenticated ? store.listAllTags(filterIds) : [];
       const widgets = getPluginWidgets(!isAuthenticated);
       const notifStore = getNotificationStore(claudeConfig.dbPath);
       const unreadCount = isAuthenticated ? notifStore.countUnread() : 0;
