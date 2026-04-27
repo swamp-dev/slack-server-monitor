@@ -8,6 +8,22 @@
 
 import crypto from 'crypto';
 import type { WebConfig } from '../config/schema.js';
+import { logger } from '../utils/logger.js';
+import type { CreateUserInput, User } from '../types/user.js';
+
+/**
+ * Minimal UserStore surface used by the auth helpers below. Defined here
+ * (rather than imported from `services/user-store.ts`) so this module
+ * stays a leaf — and so tests can supply a tiny mock without touching
+ * the real SQLite store. Mirrors the relevant subset of `UserStore`.
+ */
+export interface UserStoreLike {
+  getBySlackId: (slackId: string) => User | null;
+  verifyPassword: (username: string, password: string) => Promise<User | null>;
+  create: (input: CreateUserInput) => Promise<User>;
+}
+
+const WEB_IDENTITY_PREFIX = 'web:';
 
 /**
  * Resolved identity from a token
@@ -107,6 +123,85 @@ export function resolveToken(token: string, webConfig: WebConfig): TokenIdentity
   }
 
   return null;
+}
+
+/**
+ * Resolve a token to an identity AND look up the user's role from the
+ * `users` table to set `isAdmin` correctly.
+ *
+ * - Static admin token → `{ userId: 'admin', isAdmin: true }` (DB not consulted).
+ * - HMAC link token → look up user by Slack ID:
+ *     - Active user → `isAdmin` derived from `role`.
+ *     - Deactivated user → null (rejected).
+ *     - Unknown user → auto-create with `role: 'user'` and warn, return non-admin.
+ *
+ * The auto-create handles the bootstrap case where a Slack-side user clicks
+ * a link before any operator has explicitly added them — they get the
+ * minimum-privilege identity, the audit log shows the warn, and an admin
+ * can promote them later.
+ */
+export async function resolveTokenWithRole(
+  token: string,
+  webConfig: WebConfig,
+  userStore: UserStoreLike,
+): Promise<TokenIdentity | null> {
+  const base = resolveToken(token, webConfig);
+  if (!base) return null;
+
+  // Static admin token: emergency path, never blocked by DB state.
+  if (base.isAdmin) return base;
+
+  // HMAC link token (base.isAdmin is always false from resolveToken).
+  const existing = userStore.getBySlackId(base.userId);
+  if (existing) {
+    if (!existing.isActive) {
+      logger.warn('Web auth rejected — user is deactivated', { userId: base.userId });
+      return null;
+    }
+    return { userId: base.userId, isAdmin: existing.role === 'admin' };
+  }
+
+  // Unknown Slack user — auto-create at minimum privilege. Two concurrent
+  // first-clicks for the same Slack ID will race here: the second loses
+  // on the unique slack_id index. Catch the constraint error and re-read
+  // so the loser still gets admitted with whatever role the winner stored.
+  logger.warn('Web auth — auto-creating unknown Slack user as role=user', {
+    slackId: base.userId,
+  });
+  try {
+    await userStore.create({ slackId: base.userId, role: 'user' });
+  } catch (err) {
+    const fallback = userStore.getBySlackId(base.userId);
+    if (!fallback) throw err;
+    if (!fallback.isActive) {
+      logger.warn('Web auth rejected — user is deactivated', { userId: base.userId });
+      return null;
+    }
+    return { userId: base.userId, isAdmin: fallback.role === 'admin' };
+  }
+  return { userId: base.userId, isAdmin: false };
+}
+
+/**
+ * Resolve a username/password pair to a web identity. Returns `null` for
+ * invalid credentials; the underlying `verifyPassword` is timing-safe so
+ * a missing user and a wrong password are indistinguishable to the caller.
+ *
+ * The returned `userId` uses the canonical username stored in the table
+ * (not the user-supplied form), so case differences and whitespace get
+ * normalized away before sessions are minted.
+ */
+export async function resolveUserPassword(
+  username: string,
+  password: string,
+  userStore: UserStoreLike,
+): Promise<TokenIdentity | null> {
+  const user = await userStore.verifyPassword(username, password);
+  if (!user?.username) return null;
+  return {
+    userId: `${WEB_IDENTITY_PREFIX}${user.username}`,
+    isAdmin: user.role === 'admin',
+  };
 }
 
 /**

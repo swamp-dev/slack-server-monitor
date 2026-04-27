@@ -18,7 +18,8 @@ import { config, type WebConfig } from '../config/index.js';
 import { getSocketModeStatus } from '../services/socket-mode-status.js';
 import { getConversationStore, type SessionSummary } from '../services/conversation-store.js';
 import { getSessionStore, closeSessionStore } from '../services/session-store.js';
-import { resolveToken, parseCookies, createLinkToken } from './auth.js';
+import { getUserStore } from '../services/user-store.js';
+import { resolveTokenWithRole, parseCookies, createLinkToken } from './auth.js';
 import { SSEConnectionManager, setSharedSSEManager } from './sse.js';
 import { getEventBus, resetEventBus } from '../services/event-bus.js';
 import { logger } from '../utils/logger.js';
@@ -68,51 +69,54 @@ function buildCookieOptions(webConfig: WebConfig, maxAge?: number): string {
  */
 function sessionAuthMiddleware(webConfig: WebConfig, dbPath: string) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const sessionStore = getSessionStore(dbPath, webConfig.sessionTtlHours);
+    (async () => {
+      const sessionStore = getSessionStore(dbPath, webConfig.sessionTtlHours);
+      const userStore = getUserStore(dbPath);
 
-    // 1. Check session cookie
-    const cookies = parseCookies(req.headers.cookie);
-    const sessionId = cookies[SESSION_COOKIE];
-    if (sessionId) {
-      const session = sessionStore.getSession(sessionId);
-      if (session) {
-        res.locals.userId = session.userId;
-        res.locals.isAdmin = session.isAdmin;
-        next();
-        return;
+      // 1. Check session cookie
+      const cookies = parseCookies(req.headers.cookie);
+      const sessionId = cookies[SESSION_COOKIE];
+      if (sessionId) {
+        const session = sessionStore.getSession(sessionId);
+        if (session) {
+          res.locals.userId = session.userId;
+          res.locals.isAdmin = session.isAdmin;
+          next();
+          return;
+        }
+        // Invalid/expired session cookie - clear it
+        res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; ${buildCookieOptions(webConfig, 0)}`);
       }
-      // Invalid/expired session cookie - clear it
-      res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; ${buildCookieOptions(webConfig, 0)}`);
-    }
 
-    // 2. Check query param token (link from Slack)
-    const queryToken = req.query.token;
-    if (typeof queryToken === 'string' && queryToken) {
-      const identity = resolveToken(queryToken, webConfig);
-      if (identity) {
-        // Invalidate existing sessions for this user, then create a new one
-        sessionStore.deleteSessionsForUser(identity.userId);
-        const session = sessionStore.createSession(identity.userId, identity.isAdmin);
-        const maxAge = webConfig.sessionTtlHours * 60 * 60;
-        res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; ${buildCookieOptions(webConfig, maxAge)}`);
+      // 2. Check query param token (link from Slack)
+      const queryToken = req.query.token;
+      if (typeof queryToken === 'string' && queryToken) {
+        const identity = await resolveTokenWithRole(queryToken, webConfig, userStore);
+        if (identity) {
+          // Invalidate existing sessions for this user, then create a new one
+          sessionStore.deleteSessionsForUser(identity.userId);
+          const session = sessionStore.createSession(identity.userId, identity.isAdmin);
+          const maxAge = webConfig.sessionTtlHours * 60 * 60;
+          res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; ${buildCookieOptions(webConfig, maxAge)}`);
 
-        // Redirect to strip token from URL (prevents token leaking in browser history/referrer)
-        const url = new URL(req.originalUrl, 'http://localhost');
-        url.searchParams.delete('token');
-        const cleanPath = url.pathname + (url.search || '');
-        res.redirect(302, cleanPath);
-        return;
+          // Redirect to strip token from URL (prevents token leaking in browser history/referrer)
+          const url = new URL(req.originalUrl, 'http://localhost');
+          url.searchParams.delete('token');
+          const cleanPath = url.pathname + (url.search || '');
+          res.redirect(302, cleanPath);
+          return;
+        }
       }
-    }
 
-    // 3. No valid auth - return 401
-    logger.warn('Unauthorized web access attempt', {
-      ip: req.ip,
-      path: req.path,
-      hasToken: !!queryToken,
-      hasCookie: !!sessionId,
-    });
-    res.status(401).send(render401(req.originalUrl));
+      // 3. No valid auth - return 401
+      logger.warn('Unauthorized web access attempt', {
+        ip: req.ip,
+        path: req.path,
+        hasToken: !!queryToken,
+        hasCookie: !!sessionId,
+      });
+      res.status(401).send(render401(req.originalUrl));
+    })().catch(next);
   };
 }
 
@@ -122,41 +126,44 @@ function sessionAuthMiddleware(webConfig: WebConfig, dbPath: string) {
  */
 function optionalAuthMiddleware(webConfig: WebConfig, dbPath: string) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const sessionStore = getSessionStore(dbPath, webConfig.sessionTtlHours);
+    (async () => {
+      const sessionStore = getSessionStore(dbPath, webConfig.sessionTtlHours);
+      const userStore = getUserStore(dbPath);
 
-    // Check session cookie
-    const cookies = parseCookies(req.headers.cookie);
-    const sessionId = cookies[SESSION_COOKIE];
-    if (sessionId) {
-      const session = sessionStore.getSession(sessionId);
-      if (session) {
-        res.locals.userId = session.userId;
-        res.locals.isAdmin = session.isAdmin;
-        next();
-        return;
+      // Check session cookie
+      const cookies = parseCookies(req.headers.cookie);
+      const sessionId = cookies[SESSION_COOKIE];
+      if (sessionId) {
+        const session = sessionStore.getSession(sessionId);
+        if (session) {
+          res.locals.userId = session.userId;
+          res.locals.isAdmin = session.isAdmin;
+          next();
+          return;
+        }
+        res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; ${buildCookieOptions(webConfig, 0)}`);
       }
-      res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; ${buildCookieOptions(webConfig, 0)}`);
-    }
 
-    // Check query param token
-    const queryToken = req.query.token;
-    if (typeof queryToken === 'string' && queryToken) {
-      const identity = resolveToken(queryToken, webConfig);
-      if (identity) {
-        sessionStore.deleteSessionsForUser(identity.userId);
-        const session = sessionStore.createSession(identity.userId, identity.isAdmin);
-        const maxAge = webConfig.sessionTtlHours * 60 * 60;
-        res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; ${buildCookieOptions(webConfig, maxAge)}`);
-        const url = new URL(req.originalUrl, 'http://localhost');
-        url.searchParams.delete('token');
-        const cleanPath = url.pathname + (url.search || '');
-        res.redirect(302, cleanPath);
-        return;
+      // Check query param token
+      const queryToken = req.query.token;
+      if (typeof queryToken === 'string' && queryToken) {
+        const identity = await resolveTokenWithRole(queryToken, webConfig, userStore);
+        if (identity) {
+          sessionStore.deleteSessionsForUser(identity.userId);
+          const session = sessionStore.createSession(identity.userId, identity.isAdmin);
+          const maxAge = webConfig.sessionTtlHours * 60 * 60;
+          res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; ${buildCookieOptions(webConfig, maxAge)}`);
+          const url = new URL(req.originalUrl, 'http://localhost');
+          url.searchParams.delete('token');
+          const cleanPath = url.pathname + (url.search || '');
+          res.redirect(302, cleanPath);
+          return;
+        }
       }
-    }
 
-    // No auth — continue anyway (public access)
-    next();
+      // No auth — continue anyway (public access)
+      next();
+    })().catch(next);
   };
 }
 
@@ -237,30 +244,33 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   });
 
   // Login form submission
-  app.post('/login', (req: Request, res: Response) => {
-    const body = req.body as Record<string, unknown>;
-    const token = typeof body.token === 'string' ? body.token : '';
-    const returnTo = typeof body.return_to === 'string' ? body.return_to : undefined;
+  app.post('/login', (req: Request, res: Response, next: NextFunction) => {
+    (async () => {
+      const body = req.body as Record<string, unknown>;
+      const token = typeof body.token === 'string' ? body.token : '';
+      const returnTo = typeof body.return_to === 'string' ? body.return_to : undefined;
 
-    const identity = resolveToken(token, webConfig);
-    if (!identity) {
-      logger.warn('Failed login attempt', { ip: req.ip });
-      res.status(401).type('html').send(renderLogin('Invalid token.', returnTo));
-      return;
-    }
+      const userStore = getUserStore(dbPath);
+      const identity = await resolveTokenWithRole(token, webConfig, userStore);
+      if (!identity) {
+        logger.warn('Failed login attempt', { ip: req.ip });
+        res.status(401).type('html').send(renderLogin('Invalid token.', returnTo));
+        return;
+      }
 
-    // Invalidate existing sessions for this user, then create a new one
-    const sessionStore = getSessionStore(dbPath, webConfig.sessionTtlHours);
-    sessionStore.deleteSessionsForUser(identity.userId);
-    const session = sessionStore.createSession(identity.userId, identity.isAdmin);
-    const maxAge = webConfig.sessionTtlHours * 60 * 60;
-    res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; ${buildCookieOptions(webConfig, maxAge)}`);
+      // Invalidate existing sessions for this user, then create a new one
+      const sessionStore = getSessionStore(dbPath, webConfig.sessionTtlHours);
+      sessionStore.deleteSessionsForUser(identity.userId);
+      const session = sessionStore.createSession(identity.userId, identity.isAdmin);
+      const maxAge = webConfig.sessionTtlHours * 60 * 60;
+      res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${session.sessionId}; ${buildCookieOptions(webConfig, maxAge)}`);
 
-    logger.info('User logged in via form', { userId: identity.userId, isAdmin: identity.isAdmin });
+      logger.info('User logged in via form', { userId: identity.userId, isAdmin: identity.isAdmin });
 
-    // Redirect to return_to or home (only allow relative paths, block protocol-relative //evil.com)
-    const redirectTo = returnTo && /^\/[^/]/.test(returnTo) ? returnTo : '/';
-    res.redirect(302, redirectTo);
+      // Redirect to return_to or home (only allow relative paths, block protocol-relative //evil.com)
+      const redirectTo = returnTo && /^\/[^/]/.test(returnTo) ? returnTo : '/';
+      res.redirect(302, redirectTo);
+    })().catch(next);
   });
 
   // Logout
