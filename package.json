@@ -18,7 +18,8 @@
     "lint:fix": "eslint src tests --fix",
     "typecheck": "tsc --noEmit",
     "setup": "tsx src/setup/wizard.ts",
-    "screenshots": "tsx scripts/take-screenshots.ts"
+    "screenshots": "tsx scripts/take-screenshots.ts",
+    "manage-users": "tsx src/cli/manage-users.ts"
   },
   "keywords": [
     "slack",

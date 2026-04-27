@@ -152,6 +152,46 @@ export class UserStore {
       .run(validated, Date.now(), id);
   }
 
+  /**
+   * Atomically demote a user, refusing to leave the table with zero active
+   * admins. Returns true if the role changed, false if the demotion would
+   * have stranded the system without an admin (TOCTOU-safe — the count
+   * check and the UPDATE happen in one statement).
+   */
+  demoteIfNotLastAdmin(id: number, newRole: 'user'): boolean {
+    UserRoleSchema.parse(newRole);
+    const result = this.db
+      .prepare(`
+        UPDATE users SET role = ?, updated_at = ?
+        WHERE id = ?
+          AND (
+            role != 'admin'
+            OR (SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1) > 1
+          )
+      `)
+      .run(newRole, Date.now(), id);
+    return result.changes > 0;
+  }
+
+  /**
+   * Atomically delete a user, refusing to leave the table with zero active
+   * admins. Returns true if the row was deleted, false if the delete would
+   * have stranded the system without an admin or the user does not exist.
+   */
+  deleteIfNotLastAdmin(id: number): boolean {
+    const result = this.db
+      .prepare(`
+        DELETE FROM users
+        WHERE id = ?
+          AND (
+            role != 'admin'
+            OR (SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1) > 1
+          )
+      `)
+      .run(id);
+    return result.changes > 0;
+  }
+
   updateProfile(id: number, updates: UpdateProfileInput): void {
     const fields: string[] = [];
     const values: (string | null)[] = [];
