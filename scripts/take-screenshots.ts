@@ -50,6 +50,10 @@ const PAGES: PageDef[] = [
     { name: 'prefilled', query: '?variant=prefilled' },
     { name: 'error', query: '?variant=error' },
   ]},
+  { name: 'admin-users', path: '/admin/users', variants: [
+    { name: 'empty', query: '?variant=empty' },
+    { name: 'with-flash', query: '?variant=with-flash' },
+  ]},
   { name: '404', path: '/nonexistent-page' },
   { name: 'command-palette', path: '/', setup: async (pw) => {
     await pw.keyboard.press('Control+k');

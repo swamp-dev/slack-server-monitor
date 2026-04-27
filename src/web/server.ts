@@ -25,7 +25,7 @@ import { resolveTokenWithRole, resolveUserPassword, parseCookies, createLinkToke
 import { SSEConnectionManager, setSharedSSEManager } from './sse.js';
 import { getEventBus, resetEventBus } from '../services/event-bus.js';
 import { logger } from '../utils/logger.js';
-import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, renderLogin, renderError, renderNotificationPage, renderRegister } from './templates/index.js';
+import { renderConversation, renderMarkdownExport, renderSessionList, renderDashboard, render404, render401, render403, renderLogin, renderError, renderNotificationPage, renderRegister, renderAdminUsers } from './templates/index.js';
 import { formatMarkdown } from './templates/utils.js';
 import { getStaticCss } from './templates/styles.js';
 import { getPluginWidgets } from '../plugins/loader.js';
@@ -492,6 +492,227 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
 
   // Apply session auth middleware to conversation routes
   app.use('/c', sessionAuthMiddleware(webConfig, dbPath));
+
+  // ─── Admin routes (#277) ─────────────────────────────────────────────
+  // All routes under /admin require an active admin session. The chained
+  // middleware first does the standard session auth (401 if not logged
+  // in) and then enforces role=admin (403 otherwise). This way a logged-in
+  // non-admin sees the friendly 403 page rather than getting bounced to
+  // /login.
+  function adminGuard(req: Request, res: Response, next: NextFunction): void {
+    if (res.locals.isAdmin === true) {
+      next();
+      return;
+    }
+    logger.warn('Non-admin attempted to access /admin', {
+      userId: res.locals.userId as string | undefined,
+      path: req.path,
+      ip: req.ip,
+    });
+    res.status(403).type('html').send(render403());
+  }
+  app.use('/admin', sessionAuthMiddleware(webConfig, dbPath), adminGuard);
+
+  app.get('/admin/users', (req: Request, res: Response) => {
+    try {
+      const userStore = getUserStore(dbPath);
+      const inviteStore = getInviteStore(dbPath);
+      const users = userStore.listAll();
+      const invites = inviteStore.listActive();
+      // Flash/error are deliberately stateless — they round-trip through
+      // the redirect URL. A bookmarked URL with an old `?error=...` will
+      // re-render the same message; that's acceptable for a home server
+      // and avoids a session-backed flash store.
+      const flash = typeof req.query.flash === 'string' ? req.query.flash : undefined;
+      const errMsg = typeof req.query.error === 'string' ? req.query.error : undefined;
+      res.type('html').send(
+        renderAdminUsers({
+          users,
+          invites,
+          baseUrl: webConfig.baseUrl,
+          flash,
+          error: errMsg,
+        }),
+      );
+    } catch (err) {
+      logger.error('Error rendering /admin/users', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).type('html').send(renderError('Failed to load admin page.'));
+    }
+  });
+
+  app.post('/admin/users', (req: Request, res: Response, next: NextFunction) => {
+    (async () => {
+      const body = req.body as Record<string, string>;
+      const slackId = (body.slack_id ?? '').trim();
+      const displayName = (body.display_name ?? '').trim() || undefined;
+      const role = body.role === 'admin' ? 'admin' : 'user';
+      if (!/^U[A-Z0-9]+$/.test(slackId)) {
+        res.redirect(302, '/admin/users?error=' + encodeURIComponent('Slack ID must look like U01ABC...'));
+        return;
+      }
+      const userStore = getUserStore(dbPath);
+      if (userStore.getBySlackId(slackId)) {
+        res.redirect(302, '/admin/users?error=' + encodeURIComponent('User already exists.'));
+        return;
+      }
+      await userStore.create({ slackId, role, displayName });
+      logger.info('Admin created user via web', {
+        actor: res.locals.userId as string,
+        slackId,
+        role,
+      });
+      res.redirect(302, '/admin/users?flash=' + encodeURIComponent(`Added ${slackId}.`));
+    })().catch(next);
+  });
+
+  app.post('/admin/users/:id/role', (req: Request, res: Response) => {
+    const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
+    const body = req.body as Record<string, string>;
+    const newRole = body.role === 'admin' ? 'admin' : 'user';
+    if (!Number.isInteger(id)) {
+      res.redirect(302, '/admin/users?error=Invalid+user+id');
+      return;
+    }
+    const userStore = getUserStore(dbPath);
+    const user = userStore.getById(id);
+    if (!user) {
+      res.redirect(302, '/admin/users?error=User+not+found');
+      return;
+    }
+    // Last-admin protection: count + update aren't atomic (same shape as
+    // #274's CLI). The window between count check and updateRole is a
+    // few SQLite operations; concurrent demotions of two different
+    // admins could each see count=2 and proceed, leaving zero. For a
+    // single-admin home-server context the probability is essentially
+    // zero. Once #310 (manage-users CLI) merges, swap to the atomic
+    // `demoteIfNotLastAdmin` it adds to UserStore.
+    if (user.role === 'admin' && newRole !== 'admin' && userStore.countByRole('admin') <= 1) {
+      res.redirect(302, '/admin/users?error=' + encodeURIComponent('Refusing to demote the last admin.'));
+      return;
+    }
+    userStore.updateRole(id, newRole);
+    logger.info('Admin changed user role', {
+      actor: res.locals.userId as string,
+      targetId: id,
+      newRole,
+    });
+    res.redirect(302, '/admin/users?flash=Role+updated');
+  });
+
+  app.post('/admin/users/:id/toggle-active', (req: Request, res: Response) => {
+    const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
+    if (!Number.isInteger(id)) {
+      res.redirect(302, '/admin/users?error=Invalid+user+id');
+      return;
+    }
+    const userStore = getUserStore(dbPath);
+    const user = userStore.getById(id);
+    if (!user) {
+      res.redirect(302, '/admin/users?error=User+not+found');
+      return;
+    }
+    if (user.isActive && user.role === 'admin' && userStore.countByRole('admin') <= 1) {
+      res.redirect(302, '/admin/users?error=' + encodeURIComponent('Refusing to deactivate the last admin.'));
+      return;
+    }
+    if (user.isActive) userStore.deactivate(id); else userStore.activate(id);
+    logger.info('Admin toggled user active', {
+      actor: res.locals.userId as string,
+      targetId: id,
+      newState: !user.isActive,
+    });
+    res.redirect(302, '/admin/users?flash=' + encodeURIComponent(user.isActive ? 'User deactivated.' : 'User activated.'));
+  });
+
+  app.post('/admin/users/:id/reset-password', (req: Request, res: Response, next: NextFunction) => {
+    (async () => {
+      const id = parseInt(typeof req.params.id === 'string' ? req.params.id : '', 10);
+      const body = req.body as Record<string, unknown>;
+      const newPassword = typeof body.password === 'string' ? body.password : '';
+      if (!Number.isInteger(id)) {
+        res.redirect(302, '/admin/users?error=Invalid+user+id');
+        return;
+      }
+      if (newPassword.length < 8) {
+        res.redirect(302, '/admin/users?error=' + encodeURIComponent('Password must be at least 8 characters.'));
+        return;
+      }
+      const userStore = getUserStore(dbPath);
+      const user = userStore.getById(id);
+      if (!user) {
+        res.redirect(302, '/admin/users?error=User+not+found');
+        return;
+      }
+      await userStore.updatePassword(id, newPassword);
+      logger.info('Admin reset user password', {
+        actor: res.locals.userId as string,
+        targetId: id,
+      });
+      res.redirect(302, '/admin/users?flash=Password+updated.');
+    })().catch(next);
+  });
+
+  app.post('/admin/invites', (req: Request, res: Response) => {
+    const body = req.body as Record<string, string>;
+    const role = body.role === 'admin' ? 'admin' : 'user';
+    const ttlHoursRaw = parseInt(body.ttl_hours ?? '72', 10);
+    const ttlHours = Number.isInteger(ttlHoursRaw) && ttlHoursRaw > 0
+      ? Math.min(ttlHoursRaw, 24 * 365)
+      : 72;
+    const slackUserIdRaw = (body.slack_user_id ?? '').trim();
+    const slackUserId = slackUserIdRaw || undefined;
+    if (slackUserId && !/^U[A-Z0-9]+$/.test(slackUserId)) {
+      res.redirect(302, '/admin/users?error=' + encodeURIComponent('Pre-link Slack ID must look like U01ABC...'));
+      return;
+    }
+
+    // Resolve the requesting admin's user-row id for invite_codes.created_by.
+    //
+    // Three session shapes possible:
+    //   - 'admin'         → static emergency-token session. No user row
+    //                       exists for this identity (and the route should
+    //                       still work for emergency access). Use 0 as a
+    //                       sentinel — invite_codes.created_by has no
+    //                       FK constraint, so 0 is a valid "system" marker.
+    //   - 'web:<user>'    → look up by username.
+    //   - 'U...'          → look up by Slack ID.
+    const userStore = getUserStore(dbPath);
+    const sessionUserId = res.locals.userId as string;
+    let createdByUserId: number;
+    if (sessionUserId === 'admin') {
+      createdByUserId = 0; // sentinel: static emergency-token issuer
+    } else {
+      const requester = sessionUserId.startsWith('web:')
+        ? userStore.getByUsername(sessionUserId.slice(4))
+        : userStore.getBySlackId(sessionUserId);
+      if (!requester) {
+        res.redirect(302, '/admin/users?error=' + encodeURIComponent(
+          'Your account is not in the users table. Run `npm run manage-users create-user` first.',
+        ));
+        return;
+      }
+      createdByUserId = requester.id;
+    }
+
+    const inviteStore = getInviteStore(dbPath);
+    inviteStore.createInvite(createdByUserId, { role, ttlHours, slackUserId });
+    logger.info('Admin created invite via web', { actor: sessionUserId, role, ttlHours });
+    res.redirect(302, '/admin/users?flash=Invite+created.');
+  });
+
+  app.post('/admin/invites/:code/delete', (req: Request, res: Response) => {
+    const code = typeof req.params.code === 'string' ? req.params.code : '';
+    if (!/^[0-9a-f]{32}$/.test(code)) {
+      res.redirect(302, '/admin/users?error=Invalid+code');
+      return;
+    }
+    const inviteStore = getInviteStore(dbPath);
+    inviteStore.deleteInvite(code);
+    logger.info('Admin deleted invite', { actor: res.locals.userId as string, code });
+    res.redirect(302, '/admin/users?flash=Invite+deleted.');
+  });
 
   /**
    * Helper to parse pagination params from query string

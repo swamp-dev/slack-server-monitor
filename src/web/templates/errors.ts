@@ -53,6 +53,27 @@ export function render401(returnTo?: string): string {
 }
 
 /**
+ * Render a 403 forbidden page
+ */
+export function render403(): string {
+  const bodyHtml = `
+  <main class="container">
+    <div class="empty" style="margin-top: 100px;">
+      ${icon('eye-off', 48)}
+      <h1 style="font-size: 3rem; margin: 20px 0 12px;">403</h1>
+      <p>You don't have permission to view this page.</p>
+      <p style="margin-top: 20px;"><a href="/" class="export-btn">${icon('home', 14)} Back to dashboard</a></p>
+    </div>
+  </main>`;
+
+  return wrapInShell({
+    title: 'Forbidden',
+    styles: '',
+    body: bodyHtml,
+  });
+}
+
+/**
  * Render the login page
  */
 export function renderLogin(error?: string, returnTo?: string, showRegisterLink = false): string {

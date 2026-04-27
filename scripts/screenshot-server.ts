@@ -28,6 +28,7 @@ import {
   renderNotificationPage,
   renderLogin,
   renderRegister,
+  renderAdminUsers,
   render404,
 } from '../src/web/templates/index.js';
 import {
@@ -250,6 +251,29 @@ export async function startScreenshotServer(): Promise<number> {
         ? renderNotificationPage([], 0)
         : renderNotificationPage(seedNotifications, 2);
       res.type('html').send(html);
+    });
+
+    // Admin users page — variants: empty, populated, with-flash
+    app.get('/admin/users', (req, res) => {
+      const variant = req.query.variant as string | undefined;
+      const now = Date.now();
+      const sampleUsers = variant === 'empty' ? [] : [
+        { id: 1, slackId: 'U01ALICE', username: 'alice', displayName: 'Alice', role: 'admin' as const, isActive: true, createdAt: now - 30 * 86400_000, updatedAt: now },
+        { id: 2, slackId: 'U02BOB', username: null, displayName: 'Bob', role: 'user' as const, isActive: true, createdAt: now - 14 * 86400_000, updatedAt: now },
+        { id: 3, slackId: null, username: 'carol', displayName: null, role: 'user' as const, isActive: true, createdAt: now - 7 * 86400_000, updatedAt: now },
+        { id: 4, slackId: 'U04DAVE', username: null, displayName: null, role: 'user' as const, isActive: false, createdAt: now - 60 * 86400_000, updatedAt: now },
+      ];
+      const sampleInvites = variant === 'empty' ? [] : [
+        { code: 'abc123def456abc123def456abc123de', createdBy: 1, role: 'user' as const, slackUserId: null, createdAt: now, expiresAt: now + 72 * 3600_000, usedAt: null, usedBy: null },
+        { code: 'fed654cba321fed654cba321fed654cb', createdBy: 1, role: 'admin' as const, slackUserId: 'U05NEW', createdAt: now, expiresAt: now + 24 * 3600_000, usedAt: null, usedBy: null },
+      ];
+      const flash = variant === 'with-flash' ? 'Invite created.' : undefined;
+      res.type('html').send(renderAdminUsers({
+        users: sampleUsers,
+        invites: sampleInvites,
+        baseUrl: 'http://localhost:8080',
+        flash,
+      }));
     });
 
     // Login — variants: error

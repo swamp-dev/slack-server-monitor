@@ -24,13 +24,15 @@ export interface ShellOptions {
   currentPath?: string;
   /** Whether the current user is authenticated (default: true for backward compat) */
   isAuthenticated?: boolean;
+  /** Whether the current user is an admin — gates the /admin nav link. */
+  isAdmin?: boolean;
 }
 
 /**
  * Wrap page content in the full HTML shell with nav, theme, fonts
  */
 export function wrapInShell(opts: ShellOptions): string {
-  const { title, styles: pageStyles, body, scripts = '', showNav = true, highlightJs = false, unreadCount = 0, currentPath = '', isAuthenticated = true } = opts;
+  const { title, styles: pageStyles, body, scripts = '', showNav = true, highlightJs = false, unreadCount = 0, currentPath = '', isAuthenticated = true, isAdmin = false } = opts;
 
   const hljsLink = highlightJs
     ? `<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH" crossorigin="anonymous">`
@@ -90,6 +92,7 @@ export function wrapInShell(opts: ShellOptions): string {
   <nav class="nav-bar">
     <a href="/" class="nav-brand">${icon('robot', 22)} Server Monitor</a>
     ${isAuthenticated ? `<a href="/c" class="nav-link">${icon('message-circle', 14)} Conversations</a>` : ''}
+    ${isAdmin ? `<a href="/admin/users" class="nav-link">${icon('user', 14)} Admin</a>` : ''}
     ${pluginNavHtml ? `<div class="nav-plugins">${pluginNavHtml}</div>` : ''}
     <button class="nav-hamburger" id="nav-hamburger" type="button" aria-label="Menu">${icon('chevron-down', 20)}</button>
     <div class="nav-actions" id="nav-actions">
