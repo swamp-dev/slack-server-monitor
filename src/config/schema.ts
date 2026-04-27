@@ -109,8 +109,13 @@ export const ConfigSchema = z.object({
   }),
 
   authorization: z.object({
-    /** Slack user IDs allowed to execute commands */
-    userIds: z.array(SlackUserIdSchema).min(1, 'At least one authorized user ID is required'),
+    /**
+     * Slack user IDs admitted via the deprecated env-var fallback.
+     * Empty array is allowed — the `users` table is the primary source of
+     * authorization. On first startup, any IDs listed here are seeded into
+     * the table (first ID becomes admin) and the env var can then be cleared.
+     */
+    userIds: z.array(SlackUserIdSchema).default([]),
     /** Optional: Slack channel IDs where commands are allowed */
     channelIds: z.array(SlackChannelIdSchema).default([]),
   }),

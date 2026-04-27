@@ -7,6 +7,7 @@ import { registerCommands } from './commands/index.js';
 import { destroyPlugins } from './plugins/index.js';
 import { logger } from './utils/logger.js';
 import { closeConversationStore, getConversationStore } from './services/conversation-store.js';
+import { closeUserStore, getUserStore, resolveUserStoreDbPath } from './services/user-store.js';
 import { startBackupSchedule } from './services/db-backup.js';
 import { startWebServer, stopWebServer } from './web/index.js';
 import { setConnected, setDisconnected } from './services/socket-mode-status.js';
@@ -107,6 +108,7 @@ async function shutdown(signal: string): Promise<void> {
     await stopWebServer();
     await destroyPlugins();
     closeConversationStore();
+    closeUserStore();
     logger.info('App stopped successfully');
     process.exit(0);
   } catch (error) {
@@ -124,6 +126,26 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 // Start the app
 async function main(): Promise<void> {
   try {
+    // Initialize user store and seed from AUTHORIZED_USER_IDS on first run.
+    const userStore = getUserStore(resolveUserStoreDbPath(config.claude?.dbPath));
+    const bootstrap = userStore.bootstrap(config.authorization.userIds);
+    if (bootstrap.created > 0) {
+      logger.info('Bootstrapped users from AUTHORIZED_USER_IDS', {
+        created: bootstrap.created,
+        skipped: bootstrap.skipped.length,
+      });
+    }
+    // Operational guard: if neither the table nor the env-var allowlist has
+    // any active users, every command will be silently rejected. Surface
+    // this loudly at startup so the operator notices.
+    const activeUsers = userStore.listAll().filter((u) => u.isActive).length;
+    if (activeUsers === 0 && config.authorization.userIds.length === 0) {
+      logger.warn(
+        'No authorized users configured — every Slack command will be rejected. ' +
+          'Set AUTHORIZED_USER_IDS or seed the users table.',
+      );
+    }
+
     // Clean up expired conversations on startup (if Claude is configured)
     if (config.claude) {
       const store = getConversationStore(config.claude.dbPath, config.claude.conversationTtlHours);

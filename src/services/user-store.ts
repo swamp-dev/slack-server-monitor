@@ -200,6 +200,66 @@ export class UserStore {
       .run(Date.now(), id);
   }
 
+  /**
+   * Seed the users table from a list of Slack IDs. Idempotent: if the table
+   * already has any rows, this is a no-op. Otherwise the first valid ID
+   * becomes admin and the rest are regular users.
+   *
+   * Invalid Slack IDs are skipped (logged + reported in the result) so a
+   * single typo in env config doesn't block the rest of the seed. The
+   * actual inserts run inside a single SQLite transaction so a crash
+   * mid-loop can't leave a partial seed behind (which would leave the
+   * table non-empty and cause subsequent bootstraps to no-op).
+   */
+  bootstrap(slackIds: string[]): { created: number; skipped: string[] } {
+    const skipped: string[] = [];
+    if (slackIds.length === 0) return { created: 0, skipped };
+
+    const existing = this.db
+      .prepare('SELECT COUNT(*) AS n FROM users')
+      .get() as { n: number };
+    if (existing.n > 0) {
+      logger.debug('Bootstrap skipped — users table already populated', {
+        existingCount: existing.n,
+      });
+      return { created: 0, skipped };
+    }
+
+    const valid: string[] = [];
+    for (const id of slackIds) {
+      if (SlackUserIdSchema.safeParse(id).success) {
+        valid.push(id);
+      } else {
+        skipped.push(id);
+        logger.warn('Bootstrap skipping invalid Slack ID', { slackId: id });
+      }
+    }
+    if (valid.length === 0) return { created: 0, skipped };
+
+    const insert = this.db.prepare(
+      `INSERT INTO users (slack_id, username, password_hash, display_name, role, is_active, created_at, updated_at)
+       VALUES (?, NULL, NULL, NULL, ?, 1, ?, ?)`,
+    );
+    const seedAll = this.db.transaction((rows: { slackId: string; role: UserRole }[]) => {
+      const now = Date.now();
+      for (const row of rows) {
+        insert.run(row.slackId, row.role, now, now);
+      }
+    });
+    const rows: { slackId: string; role: UserRole }[] = valid.map((slackId, i) => ({
+      slackId,
+      role: i === 0 ? 'admin' : 'user',
+    }));
+    seedAll(rows);
+
+    logger.info('Bootstrapped users from Slack ID list', {
+      created: rows.length,
+      adminId: valid[0],
+      skippedCount: skipped.length,
+    });
+    return { created: rows.length, skipped };
+  }
+
   listAll(): User[] {
     const rows = this.db
       .prepare('SELECT * FROM users ORDER BY id ASC')
@@ -298,6 +358,19 @@ function mapRow(row: UserRow): User {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * Resolve the configured user-store DB path. Single source of truth shared
+ * between app startup (bootstrap) and the authorize middleware so both
+ * always refer to the same SQLite file.
+ *
+ * Auth must work whether or not Claude is configured. When Claude is enabled
+ * the user store shares its database; otherwise it falls back to a default
+ * `./data/users.db` so the bot can still authorize slash commands.
+ */
+export function resolveUserStoreDbPath(claudeDbPath: string | undefined): string {
+  return claudeDbPath ?? './data/users.db';
 }
 
 let store: UserStore | null = null;

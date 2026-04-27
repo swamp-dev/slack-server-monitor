@@ -241,6 +241,63 @@ describe('UserStore', () => {
     });
   });
 
+  describe('bootstrap', () => {
+    it('seeds an empty table with the first id as admin and the rest as users', () => {
+      const result = store.bootstrap(['U01ABC', 'U02DEF', 'U03GHI']);
+      expect(result.created).toBe(3);
+      expect(store.getBySlackId('U01ABC')?.role).toBe('admin');
+      expect(store.getBySlackId('U02DEF')?.role).toBe('user');
+      expect(store.getBySlackId('U03GHI')?.role).toBe('user');
+    });
+
+    it('is a no-op when the table is already populated', async () => {
+      await store.create({ slackId: 'U99XYZ', role: 'user' });
+      const result = store.bootstrap(['U01ABC', 'U02DEF']);
+      expect(result.created).toBe(0);
+      expect(store.getBySlackId('U01ABC')).toBeNull();
+      expect(store.getBySlackId('U99XYZ')?.role).toBe('user');
+    });
+
+    it('does nothing when the input is empty', () => {
+      const result = store.bootstrap([]);
+      expect(result.created).toBe(0);
+      expect(store.listAll()).toHaveLength(0);
+    });
+
+    it('skips invalid Slack IDs and logs them but still seeds valid ones', () => {
+      const result = store.bootstrap(['U01ABC', 'not-a-slack-id', 'U02DEF']);
+      expect(result.created).toBe(2);
+      expect(result.skipped).toEqual(['not-a-slack-id']);
+      expect(store.getBySlackId('U01ABC')?.role).toBe('admin');
+      expect(store.getBySlackId('U02DEF')?.role).toBe('user');
+    });
+
+    it('promotes the first valid id to admin even when earlier ids are skipped', () => {
+      const result = store.bootstrap(['bad', 'U01ABC', 'U02DEF']);
+      expect(result.created).toBe(2);
+      expect(store.getBySlackId('U01ABC')?.role).toBe('admin');
+      expect(store.getBySlackId('U02DEF')?.role).toBe('user');
+    });
+
+    it('inserts atomically — a duplicate slack_id later in the list rolls back earlier rows', () => {
+      // The list contains a duplicate; the unique index on slack_id should
+      // make the second insert throw, and the transaction should roll back
+      // every insert from this bootstrap call.
+      expect(() => store.bootstrap(['U01ABC', 'U02DEF', 'U01ABC'])).toThrow();
+      expect(store.getBySlackId('U01ABC')).toBeNull();
+      expect(store.getBySlackId('U02DEF')).toBeNull();
+      expect(store.listAll()).toHaveLength(0);
+    });
+
+    it('is a no-op on second call after a successful bootstrap (restart safety)', () => {
+      const first = store.bootstrap(['U01ABC', 'U02DEF']);
+      expect(first.created).toBe(2);
+      const second = store.bootstrap(['U01ABC', 'U02DEF', 'U03GHI']);
+      expect(second.created).toBe(0);
+      expect(store.getBySlackId('U03GHI')).toBeNull();
+    });
+  });
+
   describe('listAll', () => {
     it('returns all users including deactivated', async () => {
       const u1 = await store.create({ slackId: 'U01ABC' });
