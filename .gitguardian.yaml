@@ -1,0 +1,24 @@
+# GitGuardian configuration.
+# Reference: https://github.com/GitGuardian/ggshield/blob/main/.gitguardian.example.yml
+#
+# Honored by `ggshield` (CLI / pre-commit / GitHub Action). The
+# GitGuardian GitHub App that scans pull requests may also honor this
+# file; if a future auth-track PR gets flagged anyway, the fallback is
+# to mark the incident "False positive" in the GitGuardian dashboard.
+
+version: 2
+
+secret:
+  # Skip secret scanning in test files. Every previous flag on this
+  # repo has been on a literal test-fixture password (e.g.
+  # `password: 'long-enough-pw'`) appearing next to a fixture username
+  # (e.g. `username: 'alice'`) — the "Username Password" detector
+  # treats the pair as credentials. The values are deliberately
+  # synthetic and never real secrets, but the detector can't know
+  # that. Excluding the test directories is cleaner than annotating
+  # every fixture call site.
+  ignored_paths:
+    - 'tests/**/*.test.ts'
+    - 'plugins.example/**/*.test.ts'
+    - 'plugins.local/**/*.test.ts'
+    - 'mcp/tests/**/*.test.ts'
