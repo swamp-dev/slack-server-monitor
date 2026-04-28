@@ -211,6 +211,115 @@ export function sortQueueIssues<T extends QueueIssue>(issues: T[]): T[] {
   });
 }
 
+// ─── Run history page (split #3) ───────────────────────────────────
+
+export interface RunHistoryData {
+  /** Rows for the current page (newest first). */
+  runs: RunRow[];
+  /** Total rows in the runs table — used to compute pagination. */
+  total: number;
+  /** Current page (1-based). */
+  page: number;
+  /** Rows per page. */
+  pageSize: number;
+}
+
+export const RUNS_PAGE_SIZE_DEFAULT = 20;
+
+/**
+ * Read a paginated slice of the runs table, newest first. The page
+ * argument is 1-based; out-of-range values are clamped to 1..lastPage.
+ */
+export function loadRunHistory(
+  db: PluginDatabase,
+  page: number = 1,
+  pageSize: number = RUNS_PAGE_SIZE_DEFAULT,
+): RunHistoryData {
+  const totalRow = db.prepare(`SELECT COUNT(*) AS n FROM ${db.prefix}runs`).get() as { n: number };
+  const total = Number(totalRow.n);
+  const safePageSize = Math.max(1, Math.min(100, Math.floor(pageSize)));
+  const lastPage = Math.max(1, Math.ceil(total / safePageSize));
+  const safePage = Math.max(1, Math.min(lastPage, Math.floor(page)));
+  const offset = (safePage - 1) * safePageSize;
+
+  const rows = db
+    .prepare(
+      `SELECT id, issue_number, repo, status, started_at, finished_at, pr_url, progress_pct,
+              tasks_total, tasks_completed, error
+       FROM ${db.prefix}runs ORDER BY id DESC LIMIT ? OFFSET ?`,
+    )
+    .all(safePageSize, offset) as Array<Record<string, unknown>>;
+
+  return { runs: rows.map(mapRow), total, page: safePage, pageSize: safePageSize };
+}
+
+export function renderRunHistory(data: RunHistoryData, basePath: string = '/p/agentbox/runs'): string {
+  const nav = renderNavPills('runs');
+  if (data.total === 0) {
+    return `${nav}
+<div class="agentbox-card">
+  <h2>Run History</h2>
+  <p class="agentbox-muted">No runs yet. The history table populates as agentbox processes issues.</p>
+</div>`;
+  }
+  const rows = data.runs
+    .map((r) => {
+      const dur = r.startedAt && r.finishedAt ? formatDurationMs(r.finishedAt - r.startedAt) : '—';
+      const safePrUrl = r.prUrl ? sanitizeUrl(r.prUrl) : null;
+      const prCell = safePrUrl ? `<a href="${escapeHtml(safePrUrl)}">PR</a>` : '—';
+      const startedCell = r.startedAt ? formatRelative(r.startedAt) : '—';
+      return `<tr>
+        <td>#${String(r.id)}</td>
+        <td>${escapeHtml(r.repo)}#${String(r.issueNumber)}</td>
+        <td><span class="agentbox-badge agentbox-badge-${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
+        <td>${escapeHtml(dur)}</td>
+        <td>${escapeHtml(startedCell)}</td>
+        <td>${prCell}</td>
+      </tr>`;
+    })
+    .join('');
+  const pagination = renderPagination(data, basePath);
+  return `${nav}
+<div class="agentbox-card">
+  <h2>Run History</h2>
+  <p class="agentbox-muted">${String(data.total)} total run${data.total === 1 ? '' : 's'}.</p>
+  <table class="agentbox-runs-table">
+    <thead><tr><th>Run</th><th>Issue</th><th>Status</th><th>Duration</th><th>Started</th><th>PR</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  ${pagination}
+</div>`;
+}
+
+function renderPagination(data: RunHistoryData, basePath: string): string {
+  const lastPage = Math.max(1, Math.ceil(data.total / data.pageSize));
+  if (lastPage <= 1) return '';
+  const prev = data.page > 1 ? data.page - 1 : null;
+  const next = data.page < lastPage ? data.page + 1 : null;
+  const prevHtml = prev !== null
+    ? `<a class="agentbox-pagelink" href="${basePath}?page=${String(prev)}">← Prev</a>`
+    : `<span class="agentbox-pagelink agentbox-pagelink-disabled">← Prev</span>`;
+  const nextHtml = next !== null
+    ? `<a class="agentbox-pagelink" href="${basePath}?page=${String(next)}">Next →</a>`
+    : `<span class="agentbox-pagelink agentbox-pagelink-disabled">Next →</span>`;
+  return `<div class="agentbox-pagination">
+  ${prevHtml}
+  <span class="agentbox-page-indicator">Page ${String(data.page)} of ${String(lastPage)}</span>
+  ${nextHtml}
+</div>`;
+}
+
+/**
+ * Parse a `?page=` query param into a positive integer. Returns 1
+ * for missing / non-numeric / out-of-range input. Defensive against
+ * arrays (Express can hand back string[]).
+ */
+export function parsePageParam(raw: unknown): number {
+  if (typeof raw !== 'string') return 1;
+  const n = parseInt(raw, 10);
+  return Number.isInteger(n) && n >= 1 ? n : 1;
+}
+
 function renderStatusBanner(data: DashboardData): string {
   const cls = data.activeRun ? 'banner-running' : 'banner-idle';
   const msg = data.activeRun
@@ -396,4 +505,24 @@ export const DASHBOARD_CSS = `
 .agentbox-badge-cancelled { background: rgba(255, 184, 108, 0.2); color: var(--orange, #ffb86c); }
 .agentbox-badge-running { background: rgba(189, 147, 249, 0.2); color: var(--accent, #bd93f9); }
 .agentbox-badge-pending { background: rgba(98, 114, 164, 0.2); color: var(--text-muted, #6272a4); }
+.agentbox-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #444);
+  font-size: 0.875rem;
+}
+.agentbox-pagelink {
+  padding: 6px 12px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--text, #fff);
+  border: 1px solid var(--border, #444);
+}
+.agentbox-pagelink:hover { border-color: var(--accent, #bd93f9); }
+.agentbox-pagelink-disabled { opacity: 0.4; cursor: not-allowed; }
+.agentbox-page-indicator { color: var(--text-muted, #888); }
 `;

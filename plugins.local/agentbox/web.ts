@@ -4,9 +4,9 @@
  * Pages registered under /p/agentbox/:
  *   - GET /        →  dashboard (status banner + stats + active run + recent)
  *   - GET /queue   →  ready-issue queue (split #2)
+ *   - GET /runs    →  paginated run history (split #3)
  *
- * Run history, run detail, and SSE event broadcasting will land in
- * follow-up PRs (T11 split).
+ * Run detail and SSE event broadcasting will land in follow-up PRs.
  */
 import type { PluginRouter } from '../../src/plugins/index.js';
 import { renderPluginPage, escapeHtml } from '../../src/web/plugin-helpers.js';
@@ -16,6 +16,9 @@ import {
   renderDashboard,
   renderQueue,
   renderNavPills,
+  loadRunHistory,
+  renderRunHistory,
+  parsePageParam,
   DASHBOARD_CSS,
   type QueueIssue,
 } from './web-templates.js';
@@ -97,6 +100,40 @@ export function registerAgentboxWebRoutes(router: PluginRouter): void {
     }
     res.send(renderPluginPage({
       title: 'Workflows · Queue',
+      pluginName: ctx.name,
+      body,
+      styles: DASHBOARD_CSS,
+    }));
+  });
+
+  // GET /runs  →  paginated run history
+  router.get('/runs', (req, res, ctx) => {
+    if (!pluginDb) {
+      res.send(renderPluginPage({
+        title: 'Workflows · Runs',
+        pluginName: ctx.name,
+        body: `${renderNavPills('runs')}<div class="agentbox-card"><h2>Not initialized</h2><p>The AgentBox plugin database is not available.</p></div>`,
+        styles: DASHBOARD_CSS,
+      }));
+      return;
+    }
+    let body: string;
+    try {
+      const page = parsePageParam(req.query?.page);
+      const data = loadRunHistory(pluginDb, page);
+      body = renderRunHistory(data);
+    } catch (err) {
+      logger.error('AgentBox web: run history load failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      body = `${renderNavPills('runs')}
+<div class="agentbox-card">
+  <h2>Error</h2>
+  <p>Could not load run history: ${escapeHtml(err instanceof Error ? err.message : String(err))}</p>
+</div>`;
+    }
+    res.send(renderPluginPage({
+      title: 'Workflows · Runs',
       pluginName: ctx.name,
       body,
       styles: DASHBOARD_CSS,

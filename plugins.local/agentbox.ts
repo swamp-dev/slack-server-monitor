@@ -579,6 +579,7 @@ const agentboxPlugin: Plugin = {
   screenshotPages: [
     { name: 'dashboard', path: '/' },
     { name: 'queue', path: '/queue' },
+    { name: 'runs', path: '/runs' },
   ],
 
   init: async (ctx: PluginContext) => {

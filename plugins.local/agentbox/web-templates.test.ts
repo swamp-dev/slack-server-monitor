@@ -322,3 +322,182 @@ describe('sortQueueIssues (#241 split #2)', () => {
     expect(out[0]?.number).toBe(2);
   });
 });
+
+describe('parsePageParam (#241 split #3)', () => {
+  it('returns 1 for missing input', async () => {
+    const { parsePageParam } = await import('./web-templates.js');
+    expect(parsePageParam(undefined)).toBe(1);
+  });
+  it('returns 1 for non-string input (e.g. Express array case)', async () => {
+    const { parsePageParam } = await import('./web-templates.js');
+    expect(parsePageParam(['2', '3'])).toBe(1);
+    expect(parsePageParam(42)).toBe(1);
+  });
+  it('returns 1 for non-numeric string', async () => {
+    const { parsePageParam } = await import('./web-templates.js');
+    expect(parsePageParam('abc')).toBe(1);
+  });
+  it('returns 1 for zero or negative', async () => {
+    const { parsePageParam } = await import('./web-templates.js');
+    expect(parsePageParam('0')).toBe(1);
+    expect(parsePageParam('-3')).toBe(1);
+  });
+  it('parses positive integers', async () => {
+    const { parsePageParam } = await import('./web-templates.js');
+    expect(parsePageParam('5')).toBe(5);
+    expect(parsePageParam('1')).toBe(1);
+  });
+  // Documents that parseInt's loose parsing is intentional — Express
+  // query strings are noisy in the wild and we'd rather be permissive
+  // than fail-closed. If you tighten this, update both the comment
+  // and these assertions together.
+  it('takes the leading-integer prefix from a noisy string ("2abc" → 2)', async () => {
+    const { parsePageParam } = await import('./web-templates.js');
+    expect(parsePageParam('2abc')).toBe(2);
+    expect(parsePageParam('1.5')).toBe(1);
+  });
+});
+
+describe('loadRunHistory (#241 split #3)', () => {
+  function seedRuns(n: number): void {
+    for (let i = 1; i <= n; i++) {
+      rawDb
+        .prepare(`INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, created_at) VALUES (?, ?, ?, ?)`)
+        .run(i, 'org/r', 'success', Date.now() + i);
+    }
+  }
+
+  it('returns total=0 + empty rows on an empty table', async () => {
+    const { loadRunHistory } = await import('./web-templates.js');
+    const data = loadRunHistory(pluginDb);
+    expect(data.total).toBe(0);
+    expect(data.runs).toEqual([]);
+    expect(data.page).toBe(1);
+  });
+
+  it('paginates newest-first by id at the configured pageSize', async () => {
+    const { loadRunHistory } = await import('./web-templates.js');
+    seedRuns(25);
+    const page1 = loadRunHistory(pluginDb, 1, 10);
+    expect(page1.runs).toHaveLength(10);
+    expect(page1.total).toBe(25);
+    expect(page1.page).toBe(1);
+    expect(page1.runs[0]?.id).toBe(25);
+    const page3 = loadRunHistory(pluginDb, 3, 10);
+    expect(page3.runs).toHaveLength(5);
+    expect(page3.runs[0]?.id).toBe(5);
+  });
+
+  it('clamps out-of-range page to the last available page', async () => {
+    const { loadRunHistory } = await import('./web-templates.js');
+    seedRuns(15);
+    const data = loadRunHistory(pluginDb, 999, 10);
+    expect(data.page).toBe(2);
+    expect(data.runs).toHaveLength(5);
+  });
+
+  it('clamps page=0 / negative to 1', async () => {
+    const { loadRunHistory } = await import('./web-templates.js');
+    seedRuns(5);
+    const data = loadRunHistory(pluginDb, -3, 10);
+    expect(data.page).toBe(1);
+  });
+
+  it('clamps pageSize to a sane range', async () => {
+    const { loadRunHistory } = await import('./web-templates.js');
+    seedRuns(5);
+    expect(loadRunHistory(pluginDb, 1, 999).pageSize).toBe(100);
+    expect(loadRunHistory(pluginDb, 1, 0).pageSize).toBe(1);
+    expect(loadRunHistory(pluginDb, 1, -10).pageSize).toBe(1);
+  });
+});
+
+describe('renderRunHistory (#241 split #3)', () => {
+  it('renders an empty-state card when no runs exist', async () => {
+    const { renderRunHistory, loadRunHistory } = await import('./web-templates.js');
+    const html = renderRunHistory(loadRunHistory(pluginDb));
+    expect(html).toContain('No runs yet');
+  });
+
+  it('renders rows with status badges, duration, and PR link', async () => {
+    const { renderRunHistory } = await import('./web-templates.js');
+    const html = renderRunHistory({
+      total: 1, page: 1, pageSize: 20,
+      runs: [{
+        id: 1, issueNumber: 7, repo: 'org/r', status: 'success',
+        startedAt: 1000, finishedAt: 5000, prUrl: 'https://example/pr/1',
+        progressPct: 100, tasksTotal: null, tasksCompleted: null, error: null,
+      }],
+    });
+    expect(html).toContain('agentbox-badge-success');
+    expect(html).toContain('https://example/pr/1');
+    expect(html).toContain('#1');
+    expect(html).toContain('org/r#7');
+  });
+
+  it('renders pagination links when there are multiple pages', async () => {
+    const { renderRunHistory } = await import('./web-templates.js');
+    const html = renderRunHistory({ total: 50, page: 2, pageSize: 20, runs: [] });
+    expect(html).toContain('Page 2 of 3');
+    expect(html).toContain('href="/p/agentbox/runs?page=1"');
+    expect(html).toContain('href="/p/agentbox/runs?page=3"');
+  });
+
+  it('honors a custom basePath for pagination links', async () => {
+    const { renderRunHistory } = await import('./web-templates.js');
+    const html = renderRunHistory(
+      { total: 50, page: 2, pageSize: 20, runs: [] },
+      '/custom/path',
+    );
+    expect(html).toContain('href="/custom/path?page=1"');
+    expect(html).toContain('href="/custom/path?page=3"');
+  });
+
+  it('marks Prev as disabled on page 1 and Next as disabled on the last page', async () => {
+    const { renderRunHistory } = await import('./web-templates.js');
+    const firstPage = renderRunHistory({ total: 50, page: 1, pageSize: 20, runs: [] });
+    expect(firstPage).toMatch(/agentbox-pagelink-disabled[^>]*>← Prev/);
+    const lastPage = renderRunHistory({ total: 50, page: 3, pageSize: 20, runs: [] });
+    expect(lastPage).toMatch(/agentbox-pagelink-disabled[^>]*>Next →/);
+  });
+
+  it('omits pagination entirely when total fits in one page', async () => {
+    const { renderRunHistory } = await import('./web-templates.js');
+    const html = renderRunHistory({
+      total: 5, page: 1, pageSize: 20,
+      runs: [{
+        id: 1, issueNumber: 1, repo: 'org/r', status: 'success',
+        startedAt: 1000, finishedAt: 2000, prUrl: null,
+        progressPct: 100, tasksTotal: null, tasksCompleted: null, error: null,
+      }],
+    });
+    expect(html).not.toContain('agentbox-pagination');
+  });
+
+  it('sanitizes hostile prUrl scheme', async () => {
+    const { renderRunHistory } = await import('./web-templates.js');
+    const html = renderRunHistory({
+      total: 1, page: 1, pageSize: 20,
+      runs: [{
+        id: 1, issueNumber: 1, repo: 'org/r', status: 'success',
+        startedAt: 1000, finishedAt: 2000, prUrl: 'javascript:alert(1)',
+        progressPct: 100, tasksTotal: null, tasksCompleted: null, error: null,
+      }],
+    });
+    expect(html).not.toMatch(/href="javascript:/i);
+  });
+
+  it('escapes hostile repo name', async () => {
+    const { renderRunHistory } = await import('./web-templates.js');
+    const html = renderRunHistory({
+      total: 1, page: 1, pageSize: 20,
+      runs: [{
+        id: 1, issueNumber: 1, repo: '<script>x</script>', status: 'success',
+        startedAt: 1000, finishedAt: 2000, prUrl: null,
+        progressPct: 100, tasksTotal: null, tasksCompleted: null, error: null,
+      }],
+    });
+    expect(html).not.toContain('<script>x</script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+});
