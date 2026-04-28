@@ -29,6 +29,8 @@ import {
   renderLogin,
   renderRegister,
   renderAdminUsers,
+  render401,
+  render403,
   render404,
 } from '../src/web/templates/index.js';
 import {
@@ -253,16 +255,24 @@ export async function startScreenshotServer(): Promise<number> {
       res.type('html').send(html);
     });
 
-    // Admin users page — variants: empty, populated, with-flash
+    // Admin users page — variants: empty, with-flash, deactivated, reset-pw-open
     app.get('/admin/users', (req, res) => {
       const variant = req.query.variant as string | undefined;
       const now = Date.now();
-      const sampleUsers = variant === 'empty' ? [] : [
+      const allUsers = [
         { id: 1, slackId: 'U01ALICE', username: 'alice', displayName: 'Alice', role: 'admin' as const, isActive: true, createdAt: now - 30 * 86400_000, updatedAt: now },
         { id: 2, slackId: 'U02BOB', username: null, displayName: 'Bob', role: 'user' as const, isActive: true, createdAt: now - 14 * 86400_000, updatedAt: now },
         { id: 3, slackId: null, username: 'carol', displayName: null, role: 'user' as const, isActive: true, createdAt: now - 7 * 86400_000, updatedAt: now },
         { id: 4, slackId: 'U04DAVE', username: null, displayName: null, role: 'user' as const, isActive: false, createdAt: now - 60 * 86400_000, updatedAt: now },
       ];
+      // The `deactivated` variant emphasizes the inactive row by hoisting it
+      // to the top of the list — visually distinct from the default state
+      // where the inactive row is mixed in with active ones.
+      const sampleUsers = variant === 'empty'
+        ? []
+        : variant === 'deactivated'
+          ? [allUsers[3]!, allUsers[0]!, allUsers[1]!]
+          : allUsers;
       const sampleInvites = variant === 'empty' ? [] : [
         { code: 'abc123def456abc123def456abc123de', createdBy: 1, role: 'user' as const, slackUserId: null, createdAt: now, expiresAt: now + 72 * 3600_000, usedAt: null, usedBy: null },
         { code: 'fed654cba321fed654cba321fed654cb', createdBy: 1, role: 'admin' as const, slackUserId: 'U05NEW', createdAt: now, expiresAt: now + 24 * 3600_000, usedAt: null, usedBy: null },
@@ -274,6 +284,16 @@ export async function startScreenshotServer(): Promise<number> {
         baseUrl: 'http://localhost:8080',
         flash,
       }));
+    });
+
+    // 401 Unauthorized — no auth, redirected from a protected page
+    app.get('/401', (_req, res) => {
+      res.status(200).type('html').send(render401('/c'));
+    });
+
+    // 403 Forbidden — authenticated but insufficient role
+    app.get('/403', (_req, res) => {
+      res.status(200).type('html').send(render403());
     });
 
     // Login — variants: error

@@ -53,7 +53,17 @@ const PAGES: PageDef[] = [
   { name: 'admin-users', path: '/admin/users', variants: [
     { name: 'empty', query: '?variant=empty' },
     { name: 'with-flash', query: '?variant=with-flash' },
+    { name: 'deactivated', query: '?variant=deactivated' },
   ]},
+  { name: 'admin-users-reset-pw-open', path: '/admin/users', setup: async (pw) => {
+    // Click the Reset-password button for user id=1 (alice in the seed) to
+    // open the <dialog> modal. Anchored on data-id so the screenshot stays
+    // stable if row ordering or button layout shifts later.
+    await pw.click('.reset-pw-btn[data-id="1"]');
+    await pw.waitForSelector('#reset-pw-dialog[open]', { timeout: 2000 });
+  }},
+  { name: '401', path: '/401' },
+  { name: '403', path: '/403' },
   { name: '404', path: '/nonexistent-page' },
   { name: 'command-palette', path: '/', setup: async (pw) => {
     await pw.keyboard.press('Control+k');
@@ -139,8 +149,9 @@ async function main() {
       for (const page of pages) {
         for (const theme of THEMES) {
           for (const viewport of VIEWPORTS) {
-            // Default state
-            await capture(browser, page.name, `${baseUrl}${page.path}`, theme, viewport, page.fullPage);
+            // Default state — setup runs after navigation if defined
+            // (e.g. open a modal, focus an input) before the screenshot.
+            await capture(browser, page.name, `${baseUrl}${page.path}`, theme, viewport, page.fullPage, page.setup);
 
             // Variant states
             if (page.variants) {
