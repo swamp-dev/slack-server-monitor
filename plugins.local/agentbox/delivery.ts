@@ -20,6 +20,7 @@ import { logger } from '../../src/utils/logger.js';
 import type { PluginContext } from '../../src/plugins/types.js';
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
 import { getIssueLinkByIssue } from '../../plugins.example/agentbox/schema.js';
+import { formatReviewSummary, type ReviewResult } from './review.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -69,10 +70,21 @@ export interface DeliveryInput {
   prTitle?: string;
   /** PR body. Defaults to a short auto-generated description. */
   prBody?: string;
+  /**
+   * Optional code-review result from the post-execution review step
+   * (#196). When present:
+   *   - PR creation is skipped if `hasCritical` or `ranButFailed`.
+   *   - The review summary is appended to both the PR body (if a PR
+   *     IS created) and the issue comment (always).
+   * Omit to preserve pre-#196 behavior (no review gating).
+   */
+  review?: ReviewResult;
 }
 
 export interface DeliveryReport {
   prUrl: string | null;
+  /** True when PR creation was skipped because of a blocking review. */
+  prBlockedByReview: boolean;
   issueCommented: boolean;
   slackPosted: boolean;
   notified: boolean;
@@ -91,6 +103,7 @@ export async function deliverResults(
   const errors: string[] = [];
   const report: DeliveryReport = {
     prUrl: null,
+    prBlockedByReview: false,
     issueCommented: false,
     slackPosted: false,
     notified: false,
@@ -98,11 +111,19 @@ export async function deliverResults(
     errors,
   };
 
-  // 1. PR creation (success runs only, branch name required).
-  //    Two separate try/catch so a DB UPDATE failure doesn't get
-  //    misattributed as a pr_create error and wipe the URL we already
-  //    created on GitHub.
-  if (input.status === 'success' && input.branchName) {
+  // Determine if a pending review blocks PR creation. ranButFailed
+  // means a review was attempted but errored — treated the same as a
+  // critical finding for safety.
+  const reviewBlocks = !!input.review && (input.review.hasCritical || input.review.ranButFailed);
+  if (reviewBlocks) {
+    report.prBlockedByReview = true;
+  }
+
+  // 1. PR creation (success runs only, branch name required, no
+  //    blocking review). Two separate try/catch so a DB UPDATE
+  //    failure doesn't get misattributed as a pr_create error and
+  //    wipe the URL we already created on GitHub.
+  if (input.status === 'success' && input.branchName && !reviewBlocks) {
     try {
       report.prUrl = await createPr(input);
     } catch (err) {
@@ -220,6 +241,14 @@ export function formatIssueComment(input: DeliveryInput, prUrl: string | null): 
     lines.push('');
     lines.push(`Error: ${input.error}`);
   }
+  if (input.review && input.review.count > 0) {
+    lines.push('');
+    lines.push(formatReviewSummary(input.review));
+  }
+  if (input.review && input.review.ranButFailed) {
+    lines.push('');
+    lines.push('_Review run failed — PR creation blocked as a precaution._');
+  }
   return lines.join('\n');
 }
 
@@ -253,6 +282,9 @@ function defaultPrBody(input: DeliveryInput): string {
   ];
   if (typeof input.durationMs === 'number') {
     blocks.push(`Duration: ${formatDuration(input.durationMs)}`);
+  }
+  if (input.review && input.review.count > 0) {
+    blocks.push(formatReviewSummary(input.review));
   }
   return blocks.join('\n\n');
 }

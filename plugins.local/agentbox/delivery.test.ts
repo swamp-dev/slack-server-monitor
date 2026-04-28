@@ -336,3 +336,132 @@ describe('formatDuration tier handling (#240)', () => {
     expect(out).toMatch(/5m 30s/);
   });
 });
+
+describe('review-gated PR creation (wires #196 into delivery)', () => {
+  it('blocks PR creation when review.hasCritical is true', async () => {
+    setExecHandler((bin, args) => {
+      if (bin === '/usr/bin/gh' && args[0] === 'pr' && args[1] === 'create') {
+        return { stdout: 'https://github.com/org/r/pull/1\n' };
+      }
+      return { stdout: '' };
+    });
+
+    const review = {
+      count: 1, hasCritical: true, ranButFailed: false,
+      findings: [{ severity: 'critical' as const, title: 'bad thing', body: 'bad thing' }],
+      rawOutput: '',
+    };
+
+    const report = await deliverResults(
+      { slackClient: mockSlack, ctx: mockCtx, db: pluginDb },
+      baseInput({ review }),
+    );
+
+    expect(report.prUrl).toBeNull();
+    expect(report.prBlockedByReview).toBe(true);
+    expect(execCalls().some((c) => c.args[0] === 'pr' && c.args[1] === 'create')).toBe(false);
+  });
+
+  it('blocks PR creation when review.ranButFailed is true even with no findings', async () => {
+    const review = {
+      count: 0, hasCritical: false, ranButFailed: true,
+      findings: [], rawOutput: '',
+    };
+    const report = await deliverResults(
+      { slackClient: mockSlack, ctx: mockCtx, db: pluginDb },
+      baseInput({ review }),
+    );
+    expect(report.prUrl).toBeNull();
+    expect(report.prBlockedByReview).toBe(true);
+  });
+
+  it('still creates PR when review has only minor/significant findings (no critical)', async () => {
+    setExecHandler((bin, args) => {
+      if (bin === '/usr/bin/gh' && args[0] === 'pr' && args[1] === 'create') {
+        return { stdout: 'https://github.com/org/r/pull/1\n' };
+      }
+      return { stdout: '' };
+    });
+
+    const review = {
+      count: 1, hasCritical: false, ranButFailed: false,
+      findings: [{ severity: 'minor' as const, title: 'nit', body: 'nit' }],
+      rawOutput: '',
+    };
+    const report = await deliverResults(
+      { slackClient: mockSlack, ctx: mockCtx, db: pluginDb },
+      baseInput({ review }),
+    );
+    expect(report.prUrl).toBe('https://github.com/org/r/pull/1');
+    expect(report.prBlockedByReview).toBe(false);
+  });
+
+  it('embeds review summary in the issue comment when findings are present', async () => {
+    let commentBody = '';
+    setExecHandler((bin, args) => {
+      if (bin === '/usr/bin/gh' && args[0] === 'issue' && args[1] === 'comment') {
+        const idx = args.indexOf('--body');
+        if (idx >= 0) commentBody = args[idx + 1] ?? '';
+        return { stdout: '' };
+      }
+      if (bin === '/usr/bin/gh' && args[0] === 'pr' && args[1] === 'create') {
+        return { stdout: 'https://github.com/org/r/pull/1\n' };
+      }
+      return { stdout: '' };
+    });
+
+    const review = {
+      count: 2, hasCritical: false, ranButFailed: false,
+      findings: [
+        { severity: 'significant' as const, title: 'thing', body: 'thing' },
+        { severity: 'minor' as const, title: 'nit', body: 'nit' },
+      ],
+      rawOutput: '',
+    };
+
+    await deliverResults(
+      { slackClient: mockSlack, ctx: mockCtx, db: pluginDb },
+      baseInput({ review }),
+    );
+
+    expect(commentBody).toContain('Review summary');
+    expect(commentBody).toMatch(/significant/i);
+    expect(commentBody).toMatch(/minor/i);
+  });
+
+  it('issue comment notes when review run failed', async () => {
+    let commentBody = '';
+    setExecHandler((bin, args) => {
+      if (bin === '/usr/bin/gh' && args[0] === 'issue' && args[1] === 'comment') {
+        const idx = args.indexOf('--body');
+        if (idx >= 0) commentBody = args[idx + 1] ?? '';
+      }
+      return { stdout: '' };
+    });
+
+    const review = { count: 0, hasCritical: false, ranButFailed: true, findings: [], rawOutput: '' };
+    await deliverResults(
+      { slackClient: mockSlack, ctx: mockCtx, db: pluginDb },
+      baseInput({ review }),
+    );
+
+    expect(commentBody).toMatch(/Review run failed/);
+  });
+
+  it('preserves pre-#196 behavior when no review is supplied', async () => {
+    setExecHandler((bin, args) => {
+      if (bin === '/usr/bin/gh' && args[0] === 'pr' && args[1] === 'create') {
+        return { stdout: 'https://github.com/org/r/pull/1\n' };
+      }
+      return { stdout: '' };
+    });
+
+    const report = await deliverResults(
+      { slackClient: mockSlack, ctx: mockCtx, db: pluginDb },
+      baseInput(), // no review field
+    );
+
+    expect(report.prUrl).toBe('https://github.com/org/r/pull/1');
+    expect(report.prBlockedByReview).toBe(false);
+  });
+});
