@@ -188,6 +188,51 @@ Some additional context about task A
     expect(result[0].checked).toBe(true);
     expect(result[1].checked).toBe(false);
   });
+
+  describe('case-insensitive heading matching (#192)', () => {
+    it('should match `## acceptance criteria` (lowercase)', () => {
+      const body = `## acceptance criteria
+
+- [ ] First criterion
+- [ ] Second criterion`;
+
+      const result = parseAcceptanceCriteria(body);
+      expect(result).toHaveLength(2);
+      expect(result[0].text).toBe('First criterion');
+    });
+
+    it('should match `## ACCEPTANCE CRITERIA` (uppercase)', () => {
+      const body = `## ACCEPTANCE CRITERIA
+
+- [ ] First`;
+
+      const result = parseAcceptanceCriteria(body);
+      expect(result).toHaveLength(1);
+    });
+
+    it('should match `## Acceptance criteria` (mixed case)', () => {
+      const body = `## Acceptance criteria
+
+- [ ] Item`;
+
+      const result = parseAcceptanceCriteria(body);
+      expect(result).toHaveLength(1);
+    });
+
+    it('should still respect section boundaries on the next ## heading regardless of case', () => {
+      const body = `## acceptance criteria
+
+- [ ] Inside
+
+## FILES
+
+- \`x.ts\``;
+
+      const result = parseAcceptanceCriteria(body);
+      expect(result).toHaveLength(1);
+      expect(result[0].text).toBe('Inside');
+    });
+  });
 });
 
 // =============================================================================

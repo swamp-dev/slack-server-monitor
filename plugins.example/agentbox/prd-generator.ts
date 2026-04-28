@@ -59,8 +59,10 @@ export class PRDGenerationError extends Error {
 // --- Section extraction helpers ---
 
 function extractSection(body: string, heading: string): string | null {
-  // Find the heading line
-  const headingPattern = new RegExp(`^##\\s+${escapeRegex(heading)}\\s*$`, 'm');
+  // Find the heading line. Case-insensitive (#192) so authors can write
+  // `## Acceptance Criteria`, `## acceptance criteria`, or
+  // `## ACCEPTANCE CRITERIA` and still get the section parsed.
+  const headingPattern = new RegExp(`^##\\s+${escapeRegex(heading)}\\s*$`, 'mi');
   const headingMatch = headingPattern.exec(body);
   if (!headingMatch) return null;
 
