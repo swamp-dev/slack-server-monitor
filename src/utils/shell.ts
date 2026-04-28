@@ -63,6 +63,8 @@ const ALLOWED_COMMANDS = new Map<string, string>([
   ['aws', '/usr/local/bin/aws'],
   // GitHub CLI
   ['gh', '/usr/bin/gh'],
+  // AgentBox automated-run CLI (T5)
+  ['agentbox', '/root/agentbox/agentbox'],
 ]);
 
 /**
@@ -123,6 +125,19 @@ const ALLOWED_AWS_SUBCOMMANDS = new Set(['s3']);
  * SECURITY: AWS S3 subcommands that are allowed (read-only only)
  */
 const ALLOWED_S3_SUBCOMMANDS = new Set(['ls']);
+
+/**
+ * SECURITY: agentbox CLI subcommands that are allowed (T5).
+ * Read+execute set — `ralph` and `sprint` actually run the agent;
+ * `status`, `journal`, and `task-list` are diagnostic/inspection.
+ */
+const ALLOWED_AGENTBOX_SUBCOMMANDS = new Set([
+  'ralph',
+  'sprint',
+  'status',
+  'journal',
+  'task-list',
+]);
 
 /**
  * SECURITY: Allowed path prefixes for file commands (cat, ls, head, tail, find, grep, etc.)
@@ -280,6 +295,20 @@ function validateDockerCommand(args: readonly string[]): void {
  * SECURITY: Validate GitHub CLI command has allowed subcommands
  * Validates both the top-level subcommand and the action (e.g., gh issue create)
  */
+/**
+ * SECURITY: Validate agentbox CLI command has an allowed subcommand (T5)
+ */
+function validateAgentboxCommand(args: readonly string[]): void {
+  if (args.length === 0) {
+    throw new ShellSecurityError('agentbox command requires a subcommand');
+  }
+
+  const subcommand = args[0];
+  if (!subcommand || !ALLOWED_AGENTBOX_SUBCOMMANDS.has(subcommand)) {
+    throw new ShellSecurityError(`agentbox subcommand not allowed: ${subcommand ?? 'undefined'}`);
+  }
+}
+
 function validateGhCommand(args: readonly string[]): void {
   if (args.length === 0) {
     throw new ShellSecurityError('gh command requires a subcommand');
@@ -560,6 +589,8 @@ export async function executeCommand(
     validateCurlCommand(args);
   } else if (command === 'gh') {
     validateGhCommand(args);
+  } else if (command === 'agentbox') {
+    validateAgentboxCommand(args);
   } else if (['cat', 'ls', 'head', 'tail', 'find', 'grep', 'du', 'file', 'wc'].includes(command)) {
     validateFileCommand(command, args);
   }

@@ -621,6 +621,23 @@ describe('shell security', () => {
     });
   });
 
+  describe('agentbox subcommand validation (#238)', () => {
+    it('should reject agentbox without a subcommand', async () => {
+      await expect(executeCommand('agentbox', [])).rejects.toThrow(
+        'agentbox command requires a subcommand',
+      );
+    });
+
+    it('should reject disallowed agentbox subcommands', async () => {
+      await expect(executeCommand('agentbox', ['eval', 'foo'])).rejects.toThrow(
+        'agentbox subcommand not allowed: eval',
+      );
+      await expect(executeCommand('agentbox', ['exec'])).rejects.toThrow(
+        'agentbox subcommand not allowed: exec',
+      );
+    });
+  });
+
   describe('docker compose subcommand validation', () => {
     it('should allow read-only docker compose subcommands', async () => {
       await expect(executeCommand('docker', ['compose', 'ps'])).resolves.toBeDefined();
