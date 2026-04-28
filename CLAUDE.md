@@ -210,6 +210,7 @@ Required secret: `PARENT_REPO_TOKEN` (GitHub PAT with `repo` scope for `swamp-de
 | Deployment options | [docs/deployment.md](docs/deployment.md) |
 | Troubleshooting | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | Developer guide | [docs/developing.md](docs/developing.md) |
+| Testing & coverage | [docs/testing.md](docs/testing.md) |
 | MCP server | [mcp/README.md](mcp/README.md) |
 
 ## Important: Always Execute, Never Narrate
