@@ -342,7 +342,7 @@ function renderInvitesSection(invites: InviteCode[], baseUrl?: string): string {
 }
 
 const dialogHtml = `
-  <dialog id="reset-pw-dialog" style="border:1px solid var(--border);background:var(--card-bg);color:var(--text);border-radius:12px;padding:24px;max-width:400px;">
+  <dialog id="reset-pw-dialog" style="margin:auto;border:1px solid var(--border);background:var(--card-bg);color:var(--text);border-radius:12px;padding:24px;max-width:400px;">
     <form method="POST" id="reset-pw-form">
       <h3 style="margin:0 0 8px;font-size:1.125rem;">Reset password</h3>
       <p style="margin:0 0 16px;font-size:0.875rem;color:var(--text-muted);" id="reset-pw-target">For user.</p>

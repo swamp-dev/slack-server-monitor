@@ -8,6 +8,7 @@ import {
   render401,
   renderError,
   renderLogin,
+  renderAdminUsers,
   icon,
   getThemeStyles,
   wrapInShell,
@@ -2745,6 +2746,23 @@ describe('web templates', () => {
       expect(html).toContain('data-count="42"');
       expect(html).toContain('data-count="150"');
       expect(html).toContain('data-count="75"');
+    });
+  });
+
+  describe('renderAdminUsers reset-password dialog', () => {
+    // The global * { margin: 0 } reset in styles.ts strips the
+    // user-agent <dialog> centering rule. The inline style must
+    // re-assert margin:auto or the modal anchors top-left (#322).
+    it('declares margin:auto on the dialog inline style so it stays centered', () => {
+      const html = renderAdminUsers({
+        users: [],
+        invites: [],
+        baseUrl: 'http://localhost:8080',
+      });
+
+      const dialogTagMatch = /<dialog\s+id="reset-pw-dialog"[^>]*style="([^"]*)"/i.exec(html);
+      expect(dialogTagMatch).not.toBeNull();
+      expect(dialogTagMatch?.[1]).toContain('margin:auto');
     });
   });
 });
