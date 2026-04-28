@@ -5,39 +5,46 @@
     {
       "id": "task-1",
       "title": "Session table created in SQLite",
-      "description": "Session table created in SQLite\n\nRelevant files:\n- `src/web/server.ts` — web server (modify)",
+      "description": "Session table created in SQLite\n\nRelevant files:\n- `src/web/server.ts` \u2014 web server (modify)",
       "status": "completed",
       "priority": 1
     },
     {
       "id": "task-2",
       "title": "Login endpoint creates session",
-      "description": "Login endpoint creates session\n\nRelevant files:\n- `src/web/server.ts` — web server (modify)",
+      "description": "Login endpoint creates session\n\nRelevant files:\n- `src/web/server.ts` \u2014 web server (modify)",
       "status": "completed",
       "priority": 2,
-      "depends_on": ["task-1"]
+      "depends_on": [
+        "task-1"
+      ]
     },
     {
       "id": "task-3",
       "title": "Logout endpoint destroys session",
-      "description": "Logout endpoint destroys session\n\nRelevant files:\n- `src/web/server.ts` — web server (modify)",
+      "description": "Logout endpoint destroys session\n\nRelevant files:\n- `src/web/server.ts` \u2014 web server (modify)",
       "status": "pending",
       "priority": 3,
-      "depends_on": ["task-2"]
+      "depends_on": [
+        "task-2"
+      ]
     },
     {
       "id": "task-4",
       "title": "Session expiry cleanup job",
-      "description": "Session expiry cleanup job\n\nRelevant files:\n- `src/web/server.ts` — web server (modify)",
+      "description": "Session expiry cleanup job\n\nRelevant files:\n- `src/web/server.ts` \u2014 web server (modify)",
       "status": "pending",
       "priority": 4,
-      "depends_on": ["task-3"]
+      "depends_on": [
+        "task-3"
+      ]
     }
   ],
   "metadata": {
     "total_tasks": 4,
     "completed": 2,
     "in_progress": 0,
-    "pending": 2
+    "pending": 2,
+    "blocked": 0
   }
 }

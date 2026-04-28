@@ -5,21 +5,21 @@
     {
       "id": "task-1",
       "title": "Create notification preferences data model",
-      "description": "Create notification preferences data model\n\nRelevant files:\n- `src/services/notification-store.ts` — notification storage (modify)\n- `src/web/templates/notifications.ts` — notification pages (modify)\n- `tests/services/notification-store.test.ts` — tests (modify)",
+      "description": "Create notification preferences data model\n\nRelevant files:\n- `src/services/notification-store.ts` \u2014 notification storage (modify)\n- `src/web/templates/notifications.ts` \u2014 notification pages (modify)\n- `tests/services/notification-store.test.ts` \u2014 tests (modify)",
       "status": "pending",
       "priority": 1,
       "subtasks": [
         {
           "id": "task-1-1",
           "title": "Database table for per-user notification preferences",
-          "description": "Database table for per-user notification preferences\n\nRelevant files:\n- `src/services/notification-store.ts` — notification storage (modify)\n- `src/web/templates/notifications.ts` — notification pages (modify)\n- `tests/services/notification-store.test.ts` — tests (modify)",
+          "description": "Database table for per-user notification preferences\n\nRelevant files:\n- `src/services/notification-store.ts` \u2014 notification storage (modify)\n- `src/web/templates/notifications.ts` \u2014 notification pages (modify)\n- `tests/services/notification-store.test.ts` \u2014 tests (modify)",
           "status": "pending",
           "priority": 1
         },
         {
           "id": "task-1-2",
           "title": "Default preferences for new users",
-          "description": "Default preferences for new users\n\nRelevant files:\n- `src/services/notification-store.ts` — notification storage (modify)\n- `src/web/templates/notifications.ts` — notification pages (modify)\n- `tests/services/notification-store.test.ts` — tests (modify)",
+          "description": "Default preferences for new users\n\nRelevant files:\n- `src/services/notification-store.ts` \u2014 notification storage (modify)\n- `src/web/templates/notifications.ts` \u2014 notification pages (modify)\n- `tests/services/notification-store.test.ts` \u2014 tests (modify)",
           "status": "pending",
           "priority": 2
         }
@@ -28,22 +28,24 @@
     {
       "id": "task-2",
       "title": "Build preferences API endpoint",
-      "description": "Build preferences API endpoint\n\nRelevant files:\n- `src/services/notification-store.ts` — notification storage (modify)\n- `src/web/templates/notifications.ts` — notification pages (modify)\n- `tests/services/notification-store.test.ts` — tests (modify)",
+      "description": "Build preferences API endpoint\n\nRelevant files:\n- `src/services/notification-store.ts` \u2014 notification storage (modify)\n- `src/web/templates/notifications.ts` \u2014 notification pages (modify)\n- `tests/services/notification-store.test.ts` \u2014 tests (modify)",
       "status": "pending",
       "priority": 2,
-      "depends_on": ["task-1"],
+      "depends_on": [
+        "task-1"
+      ],
       "subtasks": [
         {
           "id": "task-2-1",
           "title": "GET /api/notifications/preferences returns current settings",
-          "description": "GET /api/notifications/preferences returns current settings\n\nRelevant files:\n- `src/services/notification-store.ts` — notification storage (modify)\n- `src/web/templates/notifications.ts` — notification pages (modify)\n- `tests/services/notification-store.test.ts` — tests (modify)",
+          "description": "GET /api/notifications/preferences returns current settings\n\nRelevant files:\n- `src/services/notification-store.ts` \u2014 notification storage (modify)\n- `src/web/templates/notifications.ts` \u2014 notification pages (modify)\n- `tests/services/notification-store.test.ts` \u2014 tests (modify)",
           "status": "pending",
           "priority": 1
         },
         {
           "id": "task-2-2",
           "title": "PUT /api/notifications/preferences updates settings",
-          "description": "PUT /api/notifications/preferences updates settings\n\nRelevant files:\n- `src/services/notification-store.ts` — notification storage (modify)\n- `src/web/templates/notifications.ts` — notification pages (modify)\n- `tests/services/notification-store.test.ts` — tests (modify)",
+          "description": "PUT /api/notifications/preferences updates settings\n\nRelevant files:\n- `src/services/notification-store.ts` \u2014 notification storage (modify)\n- `src/web/templates/notifications.ts` \u2014 notification pages (modify)\n- `tests/services/notification-store.test.ts` \u2014 tests (modify)",
           "status": "pending",
           "priority": 2
         }
@@ -52,16 +54,19 @@
     {
       "id": "task-3",
       "title": "Add preferences UI page at /notifications/settings",
-      "description": "Add preferences UI page at /notifications/settings\n\nRelevant files:\n- `src/services/notification-store.ts` — notification storage (modify)\n- `src/web/templates/notifications.ts` — notification pages (modify)\n- `tests/services/notification-store.test.ts` — tests (modify)",
+      "description": "Add preferences UI page at /notifications/settings\n\nRelevant files:\n- `src/services/notification-store.ts` \u2014 notification storage (modify)\n- `src/web/templates/notifications.ts` \u2014 notification pages (modify)\n- `tests/services/notification-store.test.ts` \u2014 tests (modify)",
       "status": "pending",
       "priority": 3,
-      "depends_on": ["task-2"]
+      "depends_on": [
+        "task-2"
+      ]
     }
   ],
   "metadata": {
     "total_tasks": 7,
     "completed": 0,
     "in_progress": 0,
-    "pending": 7
+    "pending": 7,
+    "blocked": 0
   }
 }

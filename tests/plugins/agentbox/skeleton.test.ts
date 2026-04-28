@@ -4,7 +4,7 @@
  * Tests for: plugin shape, database schema creation, config loading,
  * /agentbox status command, and destroy cleanup.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { PluginDatabase } from '../../../src/services/plugin-database.js';
 
@@ -53,19 +53,14 @@ describe('agentbox plugin shape', () => {
 // =============================================================================
 
 describe('loadAgentboxConfig', () => {
-  const originalEnv = { ...process.env };
-
+  // Use vi.stubEnv per-test rather than reassigning process.env. Each
+  // test stubs only the vars it needs; afterEach restores everything
+  // via unstubAllEnvs().
   afterEach(() => {
-    // Restore env
-    process.env = { ...originalEnv };
+    vi.unstubAllEnvs();
   });
 
   it('should load defaults when no env vars are set', () => {
-    delete process.env.AGENTBOX_ENABLED;
-    delete process.env.AGENTBOX_BINARY_PATH;
-    delete process.env.AGENTBOX_WORK_DIR;
-    delete process.env.AGENTBOX_DEFAULT_REPO;
-
     const config = loadAgentboxConfig();
     expect(config.enabled).toBe(false);
     expect(config.binaryPath).toBe('/root/agentbox/agentbox');
@@ -74,10 +69,10 @@ describe('loadAgentboxConfig', () => {
   });
 
   it('should read env vars when set', () => {
-    process.env.AGENTBOX_ENABLED = 'true';
-    process.env.AGENTBOX_BINARY_PATH = '/usr/local/bin/agentbox';
-    process.env.AGENTBOX_WORK_DIR = '/tmp/agentbox';
-    process.env.AGENTBOX_DEFAULT_REPO = 'swamp-dev/slack-server-monitor';
+    vi.stubEnv('AGENTBOX_ENABLED', 'true');
+    vi.stubEnv('AGENTBOX_BINARY_PATH', '/usr/local/bin/agentbox');
+    vi.stubEnv('AGENTBOX_WORK_DIR', '/tmp/agentbox');
+    vi.stubEnv('AGENTBOX_DEFAULT_REPO', 'swamp-dev/slack-server-monitor');
 
     const config = loadAgentboxConfig();
     expect(config.enabled).toBe(true);
@@ -87,16 +82,16 @@ describe('loadAgentboxConfig', () => {
   });
 
   it('should treat AGENTBOX_ENABLED as false for any non-true value', () => {
-    process.env.AGENTBOX_ENABLED = 'yes';
+    vi.stubEnv('AGENTBOX_ENABLED', 'yes');
     expect(loadAgentboxConfig().enabled).toBe(false);
 
-    process.env.AGENTBOX_ENABLED = '1';
+    vi.stubEnv('AGENTBOX_ENABLED', '1');
     expect(loadAgentboxConfig().enabled).toBe(false);
 
-    process.env.AGENTBOX_ENABLED = 'TRUE';
+    vi.stubEnv('AGENTBOX_ENABLED', 'TRUE');
     expect(loadAgentboxConfig().enabled).toBe(false);
 
-    process.env.AGENTBOX_ENABLED = 'true';
+    vi.stubEnv('AGENTBOX_ENABLED', 'true');
     expect(loadAgentboxConfig().enabled).toBe(true);
   });
 });

@@ -24,6 +24,7 @@ export interface PRDMetadata {
   completed: number;
   in_progress: number;
   pending: number;
+  blocked: number;
 }
 
 export interface PRD {
@@ -375,11 +376,12 @@ function buildDescription(item: ParsedCriterion, fileContext: string): string {
   return desc + fileContext;
 }
 
-function computeMetadata(tasks: PRDTask[]): PRDMetadata {
+export function computeMetadata(tasks: PRDTask[]): PRDMetadata {
   let total = 0;
   let completed = 0;
   let inProgress = 0;
   let pending = 0;
+  let blocked = 0;
 
   function count(taskList: PRDTask[]): void {
     for (const t of taskList) {
@@ -390,6 +392,9 @@ function computeMetadata(tasks: PRDTask[]): PRDMetadata {
           break;
         case 'in_progress':
           inProgress++;
+          break;
+        case 'blocked':
+          blocked++;
           break;
         default:
           pending++;
@@ -405,6 +410,7 @@ function computeMetadata(tasks: PRDTask[]): PRDMetadata {
     completed,
     in_progress: inProgress,
     pending,
+    blocked,
   };
 }
 

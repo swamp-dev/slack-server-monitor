@@ -14,8 +14,10 @@ import {
   parseDependencies,
   parseSummary,
   validatePRD,
+  computeMetadata,
   PRDGenerationError,
   type PRD,
+  type PRDTask,
   type IssueInput,
 } from '../../../plugins.example/agentbox/prd-generator.js';
 
@@ -684,7 +686,54 @@ Add email validation to the registration form.
       completed: 1,
       in_progress: 0,
       pending: 2,
+      blocked: 0,
     });
+  });
+
+  it('should count blocked status separately from pending in computeMetadata (#194)', () => {
+    // generatePRD doesn't produce blocked tasks from issue markdown directly
+    // — blocked status only appears after downstream tooling promotes a
+    // task. So drive computeMetadata directly with a hand-built task list.
+    const tasks: PRDTask[] = [
+      { id: 'task-1', title: 'a', description: '', status: 'pending', priority: 1 },
+      { id: 'task-2', title: 'b', description: '', status: 'blocked', priority: 2 },
+      { id: 'task-3', title: 'c', description: '', status: 'completed', priority: 3 },
+      { id: 'task-4', title: 'd', description: '', status: 'in_progress', priority: 4 },
+    ];
+
+    const metadata = computeMetadata(tasks);
+
+    expect(metadata).toEqual({
+      total_tasks: 4,
+      completed: 1,
+      in_progress: 1,
+      pending: 1,
+      blocked: 1,
+    });
+  });
+
+  it('computeMetadata should count blocked subtasks recursively', () => {
+    const tasks: PRDTask[] = [
+      {
+        id: 'parent',
+        title: 'parent',
+        description: '',
+        status: 'in_progress',
+        priority: 1,
+        subtasks: [
+          { id: 'sub-1', title: 's1', description: '', status: 'blocked', priority: 1 },
+          { id: 'sub-2', title: 's2', description: '', status: 'completed', priority: 2 },
+        ],
+      },
+    ];
+
+    const metadata = computeMetadata(tasks);
+
+    expect(metadata.total_tasks).toBe(3);
+    expect(metadata.blocked).toBe(1);
+    expect(metadata.completed).toBe(1);
+    expect(metadata.in_progress).toBe(1);
+    expect(metadata.pending).toBe(0);
   });
 
   it('should strip trailing colon from task title when followed by sub-items', () => {
@@ -720,7 +769,7 @@ describe('validatePRD', () => {
           priority: 1,
         },
       ],
-      metadata: { total_tasks: 1, completed: 0, in_progress: 0, pending: 1 },
+      metadata: { total_tasks: 1, completed: 0, in_progress: 0, pending: 1, blocked: 0 },
     };
 
     const result = validatePRD(prd);
@@ -733,7 +782,7 @@ describe('validatePRD', () => {
       name: 'test',
       description: 'test desc',
       tasks: [],
-      metadata: { total_tasks: 0, completed: 0, in_progress: 0, pending: 0 },
+      metadata: { total_tasks: 0, completed: 0, in_progress: 0, pending: 0, blocked: 0 },
     };
 
     const result = validatePRD(prd);
@@ -748,7 +797,7 @@ describe('validatePRD', () => {
       tasks: [
         { id: '', title: '', description: '', status: 'pending', priority: 1 },
       ],
-      metadata: { total_tasks: 1, completed: 0, in_progress: 0, pending: 1 },
+      metadata: { total_tasks: 1, completed: 0, in_progress: 0, pending: 1, blocked: 0 },
     };
 
     const result = validatePRD(prd);
@@ -771,7 +820,7 @@ describe('validatePRD', () => {
           depends_on: ['task-999'],
         },
       ],
-      metadata: { total_tasks: 1, completed: 0, in_progress: 0, pending: 1 },
+      metadata: { total_tasks: 1, completed: 0, in_progress: 0, pending: 1, blocked: 0 },
     };
 
     const result = validatePRD(prd);
@@ -792,7 +841,7 @@ describe('validatePRD', () => {
           priority: 1,
         },
       ],
-      metadata: { total_tasks: 1, completed: 0, in_progress: 0, pending: 1 },
+      metadata: { total_tasks: 1, completed: 0, in_progress: 0, pending: 1, blocked: 0 },
     };
 
     const result = validatePRD(prd);
@@ -822,7 +871,7 @@ describe('validatePRD', () => {
           depends_on: ['task-1'],
         },
       ],
-      metadata: { total_tasks: 2, completed: 0, in_progress: 0, pending: 2 },
+      metadata: { total_tasks: 2, completed: 0, in_progress: 0, pending: 2, blocked: 0 },
     };
 
     const result = validatePRD(prd);
@@ -853,7 +902,7 @@ describe('validatePRD', () => {
           ],
         },
       ],
-      metadata: { total_tasks: 2, completed: 0, in_progress: 0, pending: 2 },
+      metadata: { total_tasks: 2, completed: 0, in_progress: 0, pending: 2, blocked: 0 },
     };
 
     const result = validatePRD(prd);
@@ -893,7 +942,7 @@ describe('validatePRD', () => {
           depends_on: ['task-1-1'],
         },
       ],
-      metadata: { total_tasks: 3, completed: 0, in_progress: 0, pending: 3 },
+      metadata: { total_tasks: 3, completed: 0, in_progress: 0, pending: 3, blocked: 0 },
     };
 
     const result = validatePRD(prd);
@@ -921,7 +970,7 @@ describe('validatePRD', () => {
           priority: 2,
         },
       ],
-      metadata: { total_tasks: 2, completed: 0, in_progress: 0, pending: 2 },
+      metadata: { total_tasks: 2, completed: 0, in_progress: 0, pending: 2, blocked: 0 },
     };
 
     const result = validatePRD(prd);
