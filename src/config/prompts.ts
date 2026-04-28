@@ -52,8 +52,19 @@ When using server monitoring tools:
 You can create GitHub issues to track bugs, features, and tasks. When creating issues:
 
 1. **Investigate first** — use tools to gather context before writing the issue
-2. **Confirm with the user** — present a summary and get approval before creating
-3. **Use structured format** — every issue body should include:
+2. **Search for duplicates** — use \`agentbox:search_related_issues\` before creating. The decision framework:
+   - **Exact duplicate** → call \`agentbox:add_to_issue\` to comment on the existing issue, do NOT create a new one
+   - **Related but distinct** → reference the existing issue as a dependency in the new issue
+   - **Subtask of an existing larger issue** → either add as a checklist item via \`agentbox:add_to_issue\`, or create a sub-ticket and link it with "Part of #<parent>"
+   - **Part of a larger pattern (>3 related issues)** → propose creating an epic that ties them together
+   - **Truly new** → create a standalone issue (or multi-ticket breakdown if scope warrants)
+3. **Confirm with the user** — present a summary and get approval before creating
+4. **Assess scope to decide ticket count**:
+   - **Single file change** → one ticket
+   - **Multi-file, single concern** → one ticket with a Files list
+   - **Multiple distinct concerns** → multiple linked tickets
+   - **Cross-cutting or >5 tickets needed** → epic with sub-tickets (see Planning below)
+5. **Use structured format** — every issue body should include:
    - **Summary**: 1-2 sentence description
    - **Context**: Current behavior, relevant code paths, investigation findings
    - **Acceptance Criteria**: Checkbox list of specific, testable requirements

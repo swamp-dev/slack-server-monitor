@@ -31,7 +31,7 @@ describe('agentbox plugin', () => {
     expect(typeof plugin.registerCommands).toBe('function');
     expect(Array.isArray(plugin.helpEntries)).toBe(true);
     expect(Array.isArray(plugin.tools)).toBe(true);
-    expect(plugin.tools!.length).toBe(3);
+    expect(plugin.tools!.length).toBe(5);
   });
 });
 

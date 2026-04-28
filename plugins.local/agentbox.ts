@@ -110,6 +110,83 @@ function ghLabelAdd(issueNumber: number, repo: string, label: string): Promise<s
   });
 }
 
+interface GhIssueSummary {
+  number: number;
+  title: string;
+  state: string;
+  labels: { name: string }[];
+  url: string;
+  updatedAt: string;
+}
+
+/**
+ * Search GitHub issues via `gh issue list --search`. Returns an array of
+ * issue summaries the caller can rank by relevance. State defaults to
+ * "all" so the caller can decide whether closed issues are useful context.
+ */
+function ghSearchIssues(repo: string, query: string, state: 'open' | 'closed' | 'all', limit: number): Promise<GhIssueSummary[]> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      '/usr/bin/gh',
+      [
+        'issue', 'list', '--repo', repo,
+        '--search', query,
+        '--state', state,
+        '--limit', String(limit),
+        '--json', 'number,title,state,labels,url,updatedAt',
+      ],
+      { timeout: 30_000 },
+      (err, stdout, stderr) => {
+        if (err) {
+          reject(new Error(stderr || err.message));
+          return;
+        }
+        try {
+          const trimmed = stdout.trim();
+          const parsed = trimmed === '' ? [] : (JSON.parse(trimmed) as GhIssueSummary[]);
+          resolve(parsed);
+        } catch (parseErr) {
+          reject(new Error(`Failed to parse gh issue list output: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`));
+        }
+      },
+    );
+  });
+}
+
+/**
+ * GitHub's issue comment body cap is 65,536 chars. Truncate slightly
+ * shy of that so we always have room for the truncation marker, and
+ * so we fail with a clear in-tool message rather than a cryptic 422
+ * from the API.
+ */
+const ISSUE_COMMENT_MAX_LENGTH = 60_000;
+const ISSUE_COMMENT_TRUNCATION_MARKER = '\n\n[…truncated by agentbox to fit GitHub comment size limit]';
+
+function capCommentBody(body: string): string {
+  if (body.length <= ISSUE_COMMENT_MAX_LENGTH) return body;
+  return body.slice(0, ISSUE_COMMENT_MAX_LENGTH - ISSUE_COMMENT_TRUNCATION_MARKER.length) + ISSUE_COMMENT_TRUNCATION_MARKER;
+}
+
+/**
+ * Add a comment to an existing GitHub issue via `gh issue comment`.
+ * Used by Claude when investigation findings or proposed subtasks
+ * belong on an existing ticket rather than as a new issue.
+ */
+function ghIssueComment(issueNumber: number, repo: string, body: string): Promise<string> {
+  const safeBody = capCommentBody(body);
+  return new Promise((resolve, reject) => {
+    execFile(
+      '/usr/bin/gh',
+      ['issue', 'comment', String(issueNumber), '--repo', repo, '--body', safeBody],
+      { timeout: 30_000 },
+      (err, stdout, stderr) => {
+        if (err) reject(new Error(stderr || err.message));
+        else resolve(stdout.trim() || `Comment added to ${repo}#${issueNumber}`);
+      },
+    );
+  });
+}
+
 function createTools(): ToolDefinition[] {
   return [
     {
@@ -192,6 +269,76 @@ function createTools(): ToolDefinition[] {
           return JSON.stringify(link);
         } catch (err) {
           return `Failed to get issue link: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      },
+    },
+    {
+      spec: {
+        name: 'search_related_issues',
+        description:
+          'Search existing GitHub issues by keyword, label, and state before creating a new one. ' +
+          'Use this to detect duplicates, related issues, or epics this work belongs under. ' +
+          'Returns an array of {number, title, state, labels, url, updatedAt}.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search keywords (e.g. "rate limit auth"). Required.' },
+            repo: { type: 'string', description: 'GitHub repo (owner/repo). Defaults to AGENTBOX_DEFAULT_REPO.' },
+            state: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Issue state to search. Defaults to "all".' },
+            limit: { type: 'number', description: 'Max issues to return (1-50). Defaults to 10.' },
+          },
+          required: ['query'],
+        },
+      },
+      execute: async (input) => {
+        try {
+          const repo = resolveRepo(input);
+          const query = (input.query as string | undefined)?.trim();
+          if (!query) return 'Failed to search issues: query is required';
+          const stateInput = input.state as string | undefined;
+          const state: 'open' | 'closed' | 'all' =
+            stateInput === 'open' || stateInput === 'closed' ? stateInput : 'all';
+          const limitInput = input.limit;
+          const limit =
+            typeof limitInput === 'number' && Number.isInteger(limitInput) && limitInput > 0 && limitInput <= 50
+              ? limitInput
+              : 10;
+          const results = await ghSearchIssues(repo, query, state, limit);
+          if (results.length === 0) {
+            return JSON.stringify({ query, state, results: [], note: 'No matching issues found.' });
+          }
+          return JSON.stringify({ query, state, results });
+        } catch (err) {
+          return `Failed to search issues: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      },
+    },
+    {
+      spec: {
+        name: 'add_to_issue',
+        description:
+          'Add a comment to an existing GitHub issue with investigation findings, proposed subtasks, ' +
+          'or additional context. Use this instead of creating a duplicate issue when the existing ' +
+          'one already covers the same problem. The comment body is added verbatim — pre-format it.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            issue_number: { type: 'number', description: 'GitHub issue number to comment on' },
+            body: { type: 'string', description: 'Comment body (supports markdown). Required.' },
+            repo: { type: 'string', description: 'GitHub repo (owner/repo). Defaults to AGENTBOX_DEFAULT_REPO.' },
+          },
+          required: ['issue_number', 'body'],
+        },
+      },
+      execute: async (input) => {
+        try {
+          const repo = resolveRepo(input);
+          const issueNumber = validateIssueNumber(input);
+          const body = (input.body as string | undefined)?.trim();
+          if (!body) return 'Failed to add comment: body is required';
+          return await ghIssueComment(issueNumber, repo, body);
+        } catch (err) {
+          return `Failed to add comment: ${err instanceof Error ? err.message : String(err)}`;
         }
       },
     },
