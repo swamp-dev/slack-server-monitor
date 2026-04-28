@@ -2,6 +2,7 @@ import type { App, SlackCommandMiddlewareArgs, AllMiddlewareArgs } from '@slack/
 import { config } from '../config/index.js';
 import type { AskOptions } from '../services/claude.js';
 import { getConversationStore } from '../services/conversation-store.js';
+import { getUserStore, resolveUserStoreDbPath } from '../services/user-store.js';
 import {
   initDefaultContext,
   processConversationTurn,
@@ -576,9 +577,20 @@ export function registerThreadHandler(app: App): void {
       return;
     }
 
-    // Check authorization first (doesn't need DB)
-    if (!config.authorization.userIds.includes(userId)) {
-      logger.debug('Thread reply from unauthorized user', { userId, threadTs });
+    // Authorization: DB is source of truth (#278). Reject unknown or
+    // deactivated users; fail closed on storage errors.
+    try {
+      const dbUser = getUserStore(resolveUserStoreDbPath(claudeConfig.dbPath)).getBySlackId(userId);
+      if (!dbUser?.isActive) {
+        logger.debug('Thread reply from unauthorized or deactivated user', { userId, threadTs });
+        return;
+      }
+    } catch (err) {
+      logger.error('Rejecting thread reply — UserStore unavailable', {
+        userId,
+        threadTs,
+        error: err instanceof Error ? err.message : String(err),
+      });
       return;
     }
 

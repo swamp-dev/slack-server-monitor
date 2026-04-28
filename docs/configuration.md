@@ -13,8 +13,22 @@ All configuration is via environment variables in `.env`. Run `npm run setup` fo
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `AUTHORIZED_USER_IDS` | Yes | - | Comma-separated Slack user IDs |
+| `AUTHORIZED_USER_IDS` | First-run only | - | Comma-separated Slack user IDs. **Bootstrap-only** — used once on first startup to seed the `users` table; ignored at runtime thereafter. See "User accounts migration" below. |
 | `AUTHORIZED_CHANNEL_IDS` | No | - | Restrict commands to specific channel IDs |
+
+### User accounts migration
+
+As of #278, the `users` SQLite table is the sole runtime source of truth for who can run commands. `AUTHORIZED_USER_IDS` is now **bootstrap-only**:
+
+1. **First startup** — if the users table is empty and `AUTHORIZED_USER_IDS` is set, the bot seeds the table from the env var. The first ID becomes admin; the rest are regular users.
+2. **Subsequent runs** — the env var is ignored at request time. Add or remove users via:
+   - **Slack:** `/user-admin add U01ABC` / `/user-admin remove U01ABC` / `/user-admin promote U01ABC`
+   - **Web UI:** the `/admin/users` page (admin-only)
+   - **CLI:** `npm run manage-users add` (and friends)
+3. **After bootstrap** — the env var can safely be removed. The bot logs an INFO at startup when both are populated, telling you exactly that.
+4. **Failure modes** — if both the users table is empty AND `AUTHORIZED_USER_IDS` is unset, the bot **refuses to start** (logs an ERROR explaining how to recover).
+
+There is no longer a runtime fallback path: a user listed in `AUTHORIZED_USER_IDS` but not in the `users` table will be rejected. This was deliberately closed in #278 — the table reflects activation state (deactivation, role changes, deletions) and the env var doesn't.
 
 ## Rate Limiting
 

@@ -8,6 +8,7 @@ import { destroyPlugins } from './plugins/index.js';
 import { logger } from './utils/logger.js';
 import { closeConversationStore, getConversationStore } from './services/conversation-store.js';
 import { closeUserStore, getUserStore, resolveUserStoreDbPath } from './services/user-store.js';
+import { evaluateAuthStartup } from './services/auth-startup.js';
 import { startBackupSchedule } from './services/db-backup.js';
 import { startWebServer, stopWebServer } from './web/index.js';
 import { setConnected, setDisconnected } from './services/socket-mode-status.js';
@@ -135,15 +136,18 @@ async function main(): Promise<void> {
         skipped: bootstrap.skipped.length,
       });
     }
-    // Operational guard: if neither the table nor the env-var allowlist has
-    // any active users, every command will be silently rejected. Surface
-    // this loudly at startup so the operator notices.
+    // Auth startup validation (#278): refuse to start when both the
+    // users table and the env-var allowlist are empty (the bot would
+    // silently reject every command). Log an INFO when the env var
+    // is redundant so operators know they can clear it.
     const activeUsers = userStore.listAll().filter((u) => u.isActive).length;
-    if (activeUsers === 0 && config.authorization.userIds.length === 0) {
-      logger.warn(
-        'No authorized users configured — every Slack command will be rejected. ' +
-          'Set AUTHORIZED_USER_IDS or seed the users table.',
-      );
+    const startup = evaluateAuthStartup(activeUsers, config.authorization.userIds.length);
+    if (!startup.ok) {
+      logger.error(startup.message);
+      process.exit(1);
+    }
+    if (startup.level === 'info') {
+      logger.info(startup.message);
     }
 
     // Clean up expired conversations on startup (if Claude is configured)
@@ -177,7 +181,7 @@ async function main(): Promise<void> {
     await app.start();
     logger.info('Slack Server Monitor is running!', {
       socketMode: true,
-      authorizedUsers: config.authorization.userIds.length,
+      activeUsersInDb: activeUsers,
       rateLimit: `${String(config.rateLimit.max)} per ${String(config.rateLimit.windowSeconds)}s`,
       claudeEnabled: !!config.claude,
       webEnabled: !!config.web?.enabled,

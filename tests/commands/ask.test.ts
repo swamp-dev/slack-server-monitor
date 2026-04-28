@@ -23,6 +23,12 @@ vi.mock('../../src/services/conversation-store.js', () => ({
   getConversationStore: (...args: unknown[]) => mockGetConversationStore(...args),
 }));
 
+const mockGetBySlackId = vi.fn();
+vi.mock('../../src/services/user-store.js', () => ({
+  getUserStore: () => ({ getBySlackId: (id: string) => mockGetBySlackId(id) }),
+  resolveUserStoreDbPath: (p: string) => p,
+}));
+
 const mockGetConversationUrl = vi.fn().mockReturnValue('http://localhost:8080/c/1234.5678/C123TEST');
 vi.mock('../../src/web/index.js', () => ({
   getConversationUrl: (...args: unknown[]) => mockGetConversationUrl(...args),
@@ -398,6 +404,15 @@ describe('registerAskCommand handler', () => {
     const store = createMockStore();
     mockGetConversationStore.mockReturnValue(store);
     mockProcessConversationTurn.mockResolvedValue(defaultTurnResult());
+
+    // Default UserStore lookup: any user is authorized + active. Per-test
+    // overrides simulate unknown / deactivated / storage-failure cases.
+    mockGetBySlackId.mockReturnValue({
+      id: 1,
+      slackId: 'U123TEST',
+      role: 'user',
+      isActive: true,
+    });
 
     const handlers = await captureHandlers();
     askHandler = handlers.askHandler;
@@ -1148,12 +1163,52 @@ describe('registerAskCommand handler', () => {
       expect(mockProcessConversationTurn).not.toHaveBeenCalled();
     });
 
-    it('should ignore messages from unauthorized users', async () => {
+    it('should ignore messages from users not in the users table', async () => {
+      // #278: DB is the sole source of truth at request time.
+      mockGetBySlackId.mockReturnValueOnce(null);
+
       const handler = assertMessageHandler(messageHandler);
       const client = createMockClient();
 
       await handler({
         event: createThreadEvent({ user: 'UUNAUTHORIZED' }),
+        client,
+      });
+
+      expect(mockProcessConversationTurn).not.toHaveBeenCalled();
+    });
+
+    it('should ignore messages from deactivated users', async () => {
+      // #278: even if a user exists in the table, isActive=false rejects.
+      mockGetBySlackId.mockReturnValueOnce({
+        id: 1,
+        slackId: 'U123TEST',
+        role: 'user',
+        isActive: false,
+      });
+
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      await handler({
+        event: createThreadEvent({ user: 'U123TEST' }),
+        client,
+      });
+
+      expect(mockProcessConversationTurn).not.toHaveBeenCalled();
+    });
+
+    it('should fail closed when UserStore throws', async () => {
+      // #278: storage errors must reject the request, not fall back to env.
+      mockGetBySlackId.mockImplementationOnce(() => {
+        throw new Error('database is locked');
+      });
+
+      const handler = assertMessageHandler(messageHandler);
+      const client = createMockClient();
+
+      await handler({
+        event: createThreadEvent({ user: 'U123TEST' }),
         client,
       });
 

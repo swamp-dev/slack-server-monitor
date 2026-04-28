@@ -7,17 +7,20 @@ import type { User } from '../types/user.js';
 /**
  * Authorization middleware that checks if a user/channel is allowed to execute commands.
  *
- * Source-of-truth order:
- * 1. The `users` SQLite table (primary). User must exist + `is_active`.
- *    Their `role` is attached to `args.context.userRole` for downstream handlers.
- * 2. The `AUTHORIZED_USER_IDS` env var (deprecated fallback). Logged with a
- *    deprecation warning so operators are nudged to seed the users table
- *    via `npm run manage-users` once that ships.
+ * Source of truth: the `users` SQLite table. User must exist + `is_active`.
+ * Their `role` is attached to `args.context.userRole` for downstream handlers.
+ *
+ * The `AUTHORIZED_USER_IDS` env var is **bootstrap-only** (#278): on first
+ * startup it seeds the users table via `userStore.bootstrap()` in `app.ts`.
+ * Once the table is populated, the env var is ignored at request time —
+ * the DB is the sole runtime source of truth. Operators add new users via
+ * `npm run manage-users`, `/user-admin`, or `/admin/users`, never by
+ * editing env config.
  *
  * If the users table can't be read (storage error), the request is rejected
- * outright. Falling back to the env-var allowlist on a DB error would let a
- * deactivated user — who is no longer in the table but might still be in
- * env config — slip through.
+ * outright. We never fall back to the env-var list at request time — that
+ * would let a deactivated user (no longer in the table but still in env
+ * config) slip through.
  *
  * Security behavior:
  * - Silent rejection for unauthorized users (no response, prevents enumeration).
@@ -41,8 +44,7 @@ export const authorizeMiddleware: Middleware<AnyMiddlewareArgs> = async (args) =
   try {
     dbUser = getUserStore(resolveUserStoreDbPath(config.claude?.dbPath)).getBySlackId(userId);
   } catch (err) {
-    // Storage failure — fail closed rather than fall back to a weaker
-    // auth path that could admit a deactivated user.
+    // Storage failure — fail closed.
     logger.error('Rejecting command — UserStore unavailable in authorize middleware', {
       userId,
       command: command.command,
@@ -51,33 +53,7 @@ export const authorizeMiddleware: Middleware<AnyMiddlewareArgs> = async (args) =
     return;
   }
 
-  let role: 'admin' | 'user' | null = null;
-  let admittedVia: 'users-table' | 'env-fallback' | null = null;
-
-  if (dbUser) {
-    if (!dbUser.isActive) {
-      logger.warn('Deactivated user attempted command', {
-        userId,
-        userName: command.user_name,
-        command: command.command,
-      });
-      return;
-    }
-    role = dbUser.role;
-    admittedVia = 'users-table';
-  } else if (config.authorization.userIds.includes(userId)) {
-    role = 'user';
-    admittedVia = 'env-fallback';
-    logger.warn(
-      'User admitted via deprecated AUTHORIZED_USER_IDS fallback — seed the users table',
-      {
-        userId,
-        userName: command.user_name,
-      },
-    );
-  }
-
-  if (admittedVia === null) {
+  if (!dbUser) {
     logger.warn('Unauthorized user attempted command', {
       userId,
       userName: command.user_name,
@@ -88,6 +64,17 @@ export const authorizeMiddleware: Middleware<AnyMiddlewareArgs> = async (args) =
     });
     return;
   }
+
+  if (!dbUser.isActive) {
+    logger.warn('Deactivated user attempted command', {
+      userId,
+      userName: command.user_name,
+      command: command.command,
+    });
+    return;
+  }
+
+  const role = dbUser.role;
 
   // Channel authorization (unchanged from before this PR).
   if (

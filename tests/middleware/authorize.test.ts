@@ -119,27 +119,40 @@ describe('authorizeMiddleware', () => {
     });
   });
 
-  describe('env-var fallback (deprecated)', () => {
-    it('still allows users in AUTHORIZED_USER_IDS when not in the users table', async () => {
-      // mockUsers is empty
+  describe('env-var fallback removed (#278)', () => {
+    // The middleware no longer admits users solely on AUTHORIZED_USER_IDS
+    // membership at request time. The env var is bootstrap-only:
+    // userStore.bootstrap() in app.ts seeds the users table on first
+    // startup. Once the bot is running, the users table is the sole
+    // runtime source of truth.
+
+    it('rejects a user who is in AUTHORIZED_USER_IDS but NOT in the users table', async () => {
+      // mockUsers is empty; config.authorization.userIds includes U12345678.
+      // Pre-#278 this would have been admitted via the env-var fallback.
+      // Post-#278: rejected, since the DB has no row for them.
       await authorizeMiddleware(makeArgs());
-      expect(mockNext).toHaveBeenCalled();
+      expect(mockNext).not.toHaveBeenCalled();
     });
 
-    it('logs a deprecation warning when admitted via the env-var fallback', async () => {
+    it('logs an unauthorized-attempt warning for env-only users', async () => {
       await authorizeMiddleware(makeArgs());
       expect(logger.warn).toHaveBeenCalledWith(
-        expect.stringMatching(/deprecated/i),
+        'Unauthorized user attempted command',
         expect.objectContaining({ userId: 'U12345678' }),
+      );
+      // No deprecation warning fires — the fallback is gone, not deprecated.
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        expect.stringMatching(/deprecated/i),
+        expect.anything(),
       );
     });
 
-    it('defaults role to "user" when admitted via env-var fallback', async () => {
+    it('does not set userRole on the Bolt context for an env-only user', async () => {
       await authorizeMiddleware(makeArgs());
-      expect(mockContext.userRole).toBe('user');
+      expect(mockContext.userRole).toBeUndefined();
     });
 
-    it('rejects users not in users table and not in env-var allowlist', async () => {
+    it('rejects users absent from both the users table and the env-var allowlist', async () => {
       mockCommand.user_id = 'UUNAUTHORIZED';
       await authorizeMiddleware(makeArgs());
       expect(mockNext).not.toHaveBeenCalled();
