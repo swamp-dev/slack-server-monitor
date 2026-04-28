@@ -168,7 +168,7 @@ Commands:
 `);
 }
 
-async function runCreateUser(userStore: UserStore): Promise<void> {
+export async function runCreateUser(userStore: UserStore): Promise<void> {
   const username = await p.text({ message: 'Username', validate: (v) => (v ? undefined : 'required') });
   if (p.isCancel(username)) return;
   const password = await p.password({ message: 'Password (min 8 chars)', validate: (v) => (v && v.length >= 8 ? undefined : 'min 8 chars') });
@@ -180,7 +180,7 @@ async function runCreateUser(userStore: UserStore): Promise<void> {
   p.note(`Created user #${String(user.id)} (${user.username ?? '<no-username>'}) — role=${user.role}`, 'Done');
 }
 
-async function runCreateInvite(userStore: UserStore, inviteStore: InviteStore, baseUrl: string): Promise<void> {
+export async function runCreateInvite(userStore: UserStore, inviteStore: InviteStore, baseUrl: string): Promise<void> {
   const createdByUsername = await p.text({ message: 'Admin username creating this invite' });
   if (p.isCancel(createdByUsername)) return;
   const role = await p.select<UserRole>({
@@ -216,7 +216,7 @@ async function runCreateInvite(userStore: UserStore, inviteStore: InviteStore, b
   p.note(`Code: ${result.invite.code}\nURL:  ${result.url}\nExpires: ${fmtTime(result.invite.expiresAt)}`, 'Invite created');
 }
 
-function runListUsers(userStore: UserStore): void {
+export function runListUsers(userStore: UserStore): void {
   const users = listUsersOp(userStore);
   if (users.length === 0) {
     p.note('No users yet.', 'Users');
@@ -228,7 +228,7 @@ function runListUsers(userStore: UserStore): void {
   p.note(lines.join('\n'), `Users (${String(users.length)})`);
 }
 
-function runListInvites(inviteStore: InviteStore): void {
+export function runListInvites(inviteStore: InviteStore): void {
   const invites = listInvitesOp(inviteStore);
   if (invites.length === 0) {
     p.note('No active invites.', 'Invites');
@@ -240,7 +240,7 @@ function runListInvites(inviteStore: InviteStore): void {
   p.note(lines.join('\n'), `Active invites (${String(invites.length)})`);
 }
 
-async function runLinkSlack(userStore: UserStore): Promise<void> {
+export async function runLinkSlack(userStore: UserStore): Promise<void> {
   const username = await p.text({ message: 'Web username' });
   if (p.isCancel(username)) return;
   const slackId = await p.text({ message: 'Slack user ID (e.g. U01ABC)' });
@@ -249,7 +249,7 @@ async function runLinkSlack(userStore: UserStore): Promise<void> {
   p.note(`Linked ${username} → ${slackId}`, 'Done');
 }
 
-async function runSetRole(userStore: UserStore): Promise<void> {
+export async function runSetRole(userStore: UserStore): Promise<void> {
   const username = await p.text({ message: 'Username' });
   if (p.isCancel(username)) return;
   const role = await p.select<UserRole>({
@@ -264,7 +264,7 @@ async function runSetRole(userStore: UserStore): Promise<void> {
   p.note(`Updated role for ${username} → ${role}`, 'Done');
 }
 
-async function runDeleteUser(userStore: UserStore): Promise<void> {
+export async function runDeleteUser(userStore: UserStore): Promise<void> {
   const username = await p.text({ message: 'Username to delete' });
   if (p.isCancel(username)) return;
   const confirm = await p.confirm({
@@ -280,7 +280,7 @@ async function runDeleteUser(userStore: UserStore): Promise<void> {
   p.note(`Deleted ${username}.`, 'Done');
 }
 
-async function runResetPassword(userStore: UserStore): Promise<void> {
+export async function runResetPassword(userStore: UserStore): Promise<void> {
   const username = await p.text({ message: 'Username' });
   if (p.isCancel(username)) return;
   const password = await p.password({ message: 'New password (min 8 chars)', validate: (v) => (v && v.length >= 8 ? undefined : 'min 8 chars') });
