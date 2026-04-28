@@ -9,8 +9,11 @@ import type { AgentboxConfig } from './agentbox/types.js';
 import { linkIssueToThread, getLinkForIssue } from './agentbox/linking.js';
 import { logger } from '../src/utils/logger.js';
 import { execFile } from 'node:child_process';
+import { listReadyIssues, triggerRun, cancelRun, type SchedulerConfig } from './agentbox/scheduler.js';
+import { getActiveRunId } from './agentbox/executor.js';
 
 let pluginDb: PluginDatabase | null = null;
+let pluginCtx: PluginContext | null = null;
 
 const config: AgentboxConfig = {
   enabled: process.env.AGENTBOX_ENABLED === 'true',
@@ -94,6 +97,129 @@ function validateIssueNumber(input: Record<string, unknown>): number {
     throw new Error(`Invalid issue number: ${String(n)}`);
   }
   return n;
+}
+
+/**
+ * Build a SchedulerConfig from the plugin's env-driven config plus a
+ * caller-supplied repo override. Used by `triggerRun` invocations
+ * from slash commands and Claude tools where the scheduler isn't
+ * running but we still need its pipeline.
+ */
+function makeSchedulerConfig(repo: string): SchedulerConfig {
+  return {
+    enabled: false, // bypass; we're triggering directly
+    intervalMinutes: 60,
+    repo,
+    workDirRoot: config.workDir,
+    agentboxBinaryPath: config.binaryPath,
+  };
+}
+
+interface AgentboxRunRow {
+  id: number;
+  issue_number: number;
+  repo: string;
+  status: string;
+  started_at: number | null;
+  finished_at: number | null;
+  pr_url: string | null;
+  error: string | null;
+}
+
+/** Format an `/agentbox queue` response listing pending issues. */
+export async function handleQueue(repo: string): Promise<string> {
+  let issues;
+  try {
+    issues = await listReadyIssues(repo);
+  } catch (err) {
+    return `Failed to list ready issues: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  if (issues.length === 0) return 'No `agentbox-ready` issues in queue.';
+  const lines = issues.slice(0, 10).map((iss) => {
+    const labels = iss.labels.map((l) => l.name).filter((n) => n.startsWith('priority:')).join(', ');
+    return `• #${String(iss.number)} ${iss.title}${labels ? ` _(${labels})_` : ''}`;
+  });
+  return `*Ready queue (${String(issues.length)})*\n${lines.join('\n')}`;
+}
+
+/** Format an `/agentbox runs` response showing the last 10 runs. */
+export function handleRunsHistory(db: PluginDatabase): string {
+  const rows = db
+    .prepare(
+      `SELECT id, issue_number, repo, status, started_at, finished_at, pr_url, error
+       FROM ${db.prefix}runs ORDER BY id DESC LIMIT 10`,
+    )
+    .all() as AgentboxRunRow[];
+  if (rows.length === 0) return 'No AgentBox runs yet.';
+  const lines = rows.map((r) => {
+    const dur = r.started_at && r.finished_at ? formatDurationMs(r.finished_at - r.started_at) : '—';
+    const prSuffix = r.pr_url ? ` ${r.pr_url}` : '';
+    return `• #${String(r.issue_number)} — ${r.status.toUpperCase()} (${dur})${prSuffix}`;
+  });
+  return `*Recent runs*\n${lines.join('\n')}`;
+}
+
+/** Parse `/agentbox run <issue#>` text and dispatch through the pipeline. */
+export async function handleRunCommand(
+  text: string,
+  deps: { db: PluginDatabase; ctx: PluginContext },
+  repo: string,
+): Promise<string> {
+  const match = text.trim().match(/^(\d+)$/);
+  if (!match) return 'Usage: `/agentbox run <issue#>` — issue number must be a positive integer.';
+  const issueNumber = parseInt(match[1]!, 10);
+  if (!Number.isInteger(issueNumber) || issueNumber < 1) {
+    return `Invalid issue number: ${match[1]}`;
+  }
+  try {
+    const result = await triggerRun(deps, makeSchedulerConfig(repo), issueNumber);
+    if (!result) return `Run for #${String(issueNumber)} failed to start.`;
+    return `Run #${String(result.runId)} for issue #${String(issueNumber)} finished: ${result.status}`;
+  } catch (err) {
+    // ExecutorBusyError surfaces as a regular Error — distinguish by
+    // its name so users get a readable "another run is in flight"
+    // message rather than the raw "agentbox executor is busy" log line.
+    if (err instanceof Error && err.name === 'ExecutorBusyError') {
+      return `Cannot start run: another AgentBox run is already in flight. Use \`/agentbox cancel\` to stop it first.`;
+    }
+    return `Failed to trigger run: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+/**
+ * Cancel the active run. Reports the active run id even when no repo
+ * is configured so the operator knows what's running and can pass the
+ * repo explicitly via the tool surface.
+ */
+export async function handleCancelCommand(
+  cancelledBy: string,
+  db: PluginDatabase,
+  repo: string,
+): Promise<string> {
+  const activeId = getActiveRunId();
+  if (activeId === null) return 'No active run to cancel.';
+  if (!repo) {
+    return (
+      `Run #${String(activeId)} is active, but AGENTBOX_DEFAULT_REPO is not configured. ` +
+      `Set the env var or use the \`cancel_run\` Claude tool with an explicit \`repo\`.`
+    );
+  }
+  try {
+    await cancelRun(activeId, cancelledBy, { db, repo });
+    return `Cancelled run #${String(activeId)}.`;
+  } catch (err) {
+    return `Failed to cancel run #${String(activeId)}: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+function formatDurationMs(ms: number): string {
+  if (ms < 1000) return `${String(ms)}ms`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${String(s)}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${String(m)}m ${String(s % 60)}s`;
+  const h = Math.floor(m / 60);
+  return `${String(h)}h ${String(m % 60)}m`;
 }
 
 function ghLabelAdd(issueNumber: number, repo: string, label: string): Promise<string> {
@@ -342,6 +468,93 @@ function createTools(): ToolDefinition[] {
         }
       },
     },
+    {
+      spec: {
+        name: 'get_run_status',
+        description:
+          'Look up the status of an AgentBox run by id, or omit run_id to read the currently active run. ' +
+          'Returns {id, issue_number, status, started_at, finished_at, pr_url, error}.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            run_id: { type: 'number', description: 'Run id (from the runs table). Omit for the active run.' },
+          },
+        },
+      },
+      execute: (input) => {
+        if (!pluginDb) return 'AgentBox plugin is not initialized';
+        const idCandidate = (input.run_id as number | undefined) ?? getActiveRunId();
+        if (idCandidate === null || idCandidate === undefined) return 'No active run.';
+        const row = pluginDb
+          .prepare(`SELECT id, issue_number, repo, status, started_at, finished_at, pr_url, error FROM ${pluginDb.prefix}runs WHERE id = ?`)
+          .get(idCandidate);
+        if (!row) return `Run ${String(idCandidate)} not found.`;
+        return JSON.stringify(row);
+      },
+    },
+    {
+      spec: {
+        name: 'trigger_run',
+        description:
+          'Manually start an AgentBox run for a specific GitHub issue, bypassing the polling scheduler. ' +
+          'Returns the run id and final status. Throws if another run is already in flight.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            issue_number: { type: 'number', description: 'GitHub issue number to run.' },
+            repo: { type: 'string', description: 'GitHub repo (owner/repo). Defaults to AGENTBOX_DEFAULT_REPO.' },
+          },
+          required: ['issue_number'],
+        },
+      },
+      execute: async (input) => {
+        if (!pluginDb || !pluginCtx) return 'AgentBox plugin is not initialized';
+        try {
+          const repo = resolveRepo(input);
+          const issueNumber = validateIssueNumber(input);
+          const result = await triggerRun(
+            { db: pluginDb, ctx: pluginCtx },
+            makeSchedulerConfig(repo),
+            issueNumber,
+          );
+          if (!result) return `Run for #${String(issueNumber)} did not complete.`;
+          return JSON.stringify({ runId: result.runId, status: result.status });
+        } catch (err) {
+          if (err instanceof Error && err.name === 'ExecutorBusyError') {
+            return 'Cannot start run: another AgentBox run is already in flight.';
+          }
+          return `Failed to trigger run: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      },
+    },
+    {
+      spec: {
+        name: 'cancel_run',
+        description:
+          'Cancel the currently active AgentBox run. Sends SIGTERM, transitions issue labels, ' +
+          'and posts a cancel comment. No-op when no run is active.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            cancelled_by: { type: 'string', description: 'Name to attribute the cancellation to. Defaults to "claude".' },
+            repo: { type: 'string', description: 'GitHub repo (owner/repo). Defaults to AGENTBOX_DEFAULT_REPO.' },
+          },
+        },
+      },
+      execute: async (input) => {
+        if (!pluginDb) return 'AgentBox plugin is not initialized';
+        const activeId = getActiveRunId();
+        if (activeId === null) return 'No active run to cancel.';
+        try {
+          const repo = resolveRepo(input);
+          const cancelledBy = (input.cancelled_by as string | undefined)?.trim() || 'claude';
+          await cancelRun(activeId, cancelledBy, { db: pluginDb, repo });
+          return `Cancelled run #${String(activeId)}.`;
+        } catch (err) {
+          return `Failed to cancel run #${String(activeId)}: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      },
+    },
   ];
 }
 
@@ -358,6 +571,7 @@ const agentboxPlugin: Plugin = {
 
   init: async (ctx: PluginContext) => {
     pluginDb = ctx.db;
+    pluginCtx = ctx;
 
     ctx.db.exec(`
       CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}runs (
@@ -399,6 +613,7 @@ const agentboxPlugin: Plugin = {
 
   destroy: async () => {
     pluginDb = null;
+    pluginCtx = null;
     logger.info('AgentBox plugin destroyed');
   },
 
@@ -410,17 +625,48 @@ const agentboxPlugin: Plugin = {
         await respond('AgentBox plugin is not initialized.');
         return;
       }
+      if (!pluginCtx) {
+        await respond('AgentBox plugin context is not available.');
+        return;
+      }
 
-      const subcommand = (command.text ?? '').trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+      const text = (command.text ?? '').trim();
+      const [first, ...rest] = text.split(/\s+/);
+      const subcommand = (first ?? '').toLowerCase();
+      const args = rest.join(' ');
+      const ctx = pluginCtx;
+      const db = pluginDb;
+      const repo = config.defaultRepo ?? '';
 
       switch (subcommand) {
         case 'status':
         case '': {
-          await respond(handleStatus(pluginDb));
+          await respond(handleStatus(db));
+          break;
+        }
+        case 'queue': {
+          if (!repo) { await respond('AGENTBOX_DEFAULT_REPO is not configured.'); break; }
+          await respond(await handleQueue(repo));
+          break;
+        }
+        case 'run': {
+          if (!repo) { await respond('AGENTBOX_DEFAULT_REPO is not configured.'); break; }
+          await respond(await handleRunCommand(args, { db, ctx }, repo));
+          break;
+        }
+        case 'cancel': {
+          // handleCancelCommand handles missing repo internally so it
+          // can still report whether a run is active.
+          await respond(await handleCancelCommand(command.user_name, db, repo));
+          break;
+        }
+        case 'runs':
+        case 'history': {
+          await respond(handleRunsHistory(db));
           break;
         }
         default:
-          await respond(`Unknown subcommand: \`${subcommand}\`. Try \`/agentbox status\`.`);
+          await respond(`Unknown subcommand: \`${subcommand}\`. Try \`/agentbox status\`, \`queue\`, \`run <#>\`, \`cancel\`, or \`runs\`.`);
       }
     });
   },

@@ -23,7 +23,7 @@ import { logger } from '../../src/utils/logger.js';
 import type { PluginContext } from '../../src/plugins/types.js';
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
 import { prepareEnvironment, cleanupEnvironment } from './environment.js';
-import { executeRun, cancelActiveRun, getActiveRunId } from './executor.js';
+import { executeRun, cancelActiveRun, getActiveRunId, ExecutorBusyError } from './executor.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -164,49 +164,71 @@ async function pickAndRun(s: SchedulerState): Promise<void> {
   }
 
   logger.info('AgentBox scheduler picking issue', { issue: picked.number, title: picked.title });
+  await runIssuePipeline(s.db, s.ctx, s.config, picked);
+}
 
-  // ready → running
-  await ghLabelRemove(picked.number, s.config.repo, 'agentbox-ready').catch(() => { /* best-effort */ });
-  await ghLabelAdd(picked.number, s.config.repo, 'agentbox-running').catch(() => { /* best-effort */ });
+/**
+ * Run the full pipeline for a specific issue: label transition →
+ * environment → execution → label transition → cleanup. Used by both
+ * the scheduler's polling loop and the manual `triggerRun` entry
+ * point. Best-effort: a label-transition failure is logged but
+ * doesn't abort the run.
+ */
+export async function runIssuePipeline(
+  db: PluginDatabase,
+  ctx: PluginContext,
+  config: SchedulerConfig,
+  picked: ReadyIssue,
+): Promise<{ runId: number; status: 'success' | 'failed' | 'cancelled' } | null> {
+  await ghLabelRemove(picked.number, config.repo, 'agentbox-ready').catch(() => { /* best-effort */ });
+  await ghLabelAdd(picked.number, config.repo, 'agentbox-running').catch(() => { /* best-effort */ });
 
   let envWorkDir: string | null = null;
   try {
     const env = await prepareEnvironment({
       issueNumber: picked.number,
-      repo: s.config.repo,
+      repo: config.repo,
       issueTitle: picked.title,
       issueBody: picked.body,
-      workDirRoot: s.config.workDirRoot,
+      workDirRoot: config.workDirRoot,
     });
     envWorkDir = env.workDir;
 
     const result = await executeRun({
-      db: s.db,
+      db,
       issueNumber: picked.number,
-      repo: s.config.repo,
+      repo: config.repo,
       workDir: env.workDir,
       prdPath: env.prdPath,
       mode: 'ralph',
-      binaryPath: s.config.agentboxBinaryPath,
+      binaryPath: config.agentboxBinaryPath,
     });
 
-    // running → done|failed
-    await ghLabelRemove(picked.number, s.config.repo, 'agentbox-running').catch(() => { /* best-effort */ });
+    await ghLabelRemove(picked.number, config.repo, 'agentbox-running').catch(() => { /* best-effort */ });
     const finalLabel = result.status === 'success' ? 'agentbox-done' : 'agentbox-failed';
-    await ghLabelAdd(picked.number, s.config.repo, finalLabel).catch(() => { /* best-effort */ });
+    await ghLabelAdd(picked.number, config.repo, finalLabel).catch(() => { /* best-effort */ });
 
-    s.ctx.sse.broadcast('agentbox:run_finished', {
+    ctx.sse.broadcast('agentbox:run_finished', {
       runId: result.runId,
       issueNumber: picked.number,
       status: result.status,
     });
+    return { runId: result.runId, status: result.status };
   } catch (err) {
-    logger.error('AgentBox scheduler pipeline failed', {
+    // ExecutorBusyError means another run is already in flight — the
+    // pipeline never started, so don't transition labels or mark this
+    // issue as failed. Re-throw so the caller can decide how to
+    // surface it (Slack response, retry, etc).
+    if (err instanceof ExecutorBusyError) {
+      throw err;
+    }
+    logger.error('AgentBox pipeline failed', {
       issue: picked.number,
       error: err instanceof Error ? err.message : String(err),
     });
-    await ghLabelRemove(picked.number, s.config.repo, 'agentbox-running').catch(() => { /* best-effort */ });
-    await ghLabelAdd(picked.number, s.config.repo, 'agentbox-failed').catch(() => { /* best-effort */ });
+    await ghLabelRemove(picked.number, config.repo, 'agentbox-running').catch(() => { /* best-effort */ });
+    await ghLabelAdd(picked.number, config.repo, 'agentbox-failed').catch(() => { /* best-effort */ });
+    return null;
   } finally {
     if (envWorkDir) {
       await cleanupEnvironment(envWorkDir).catch(() => { /* best-effort */ });
@@ -215,10 +237,47 @@ async function pickAndRun(s: SchedulerState): Promise<void> {
 }
 
 /**
+ * Manually trigger a run for a specific issue number, bypassing the
+ * scheduler's polling loop but going through the same pipeline. Used
+ * by the `/agentbox run <issue#>` slash command and the `trigger_run`
+ * Claude tool. Fetches the issue via gh first so the manual path
+ * works for issues that don't have the `agentbox-ready` label.
+ *
+ * Throws if the issue can't be fetched. The pipeline itself is
+ * best-effort — any pipeline failure is logged and reflected in the
+ * runs row.
+ */
+export async function triggerRun(
+  deps: { db: PluginDatabase; ctx: PluginContext },
+  config: SchedulerConfig,
+  issueNumber: number,
+): Promise<{ runId: number; status: 'success' | 'failed' | 'cancelled' } | null> {
+  const issue = await fetchIssueDetails(config.repo, issueNumber);
+  return runIssuePipeline(deps.db, deps.ctx, config, issue);
+}
+
+async function fetchIssueDetails(repo: string, issueNumber: number): Promise<ReadyIssue> {
+  const { stdout } = await execFileAsync(
+    '/usr/bin/gh',
+    [
+      'issue', 'view', String(issueNumber),
+      '--repo', repo,
+      '--json', 'number,title,body,labels,createdAt',
+    ],
+    { timeout: GH_TIMEOUT_MS },
+  );
+  const trimmed = stdout.trim();
+  if (trimmed === '') {
+    throw new Error(`Issue ${repo}#${String(issueNumber)} not found`);
+  }
+  return JSON.parse(trimmed) as ReadyIssue;
+}
+
+/**
  * List `agentbox-ready` open issues via the gh CLI. Returns parsed
  * objects matching the schema requested in the --json flag.
  */
-async function listReadyIssues(repo: string): Promise<ReadyIssue[]> {
+export async function listReadyIssues(repo: string): Promise<ReadyIssue[]> {
   const { stdout } = await execFileAsync(
     '/usr/bin/gh',
     [
