@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { PluginDatabase } from '../../src/services/plugin-database.js';
+import { stopSSEPolling } from '../agentbox/web.js';
 
 let db: Database.Database;
 let pluginDb: PluginDatabase;
@@ -11,7 +12,12 @@ function setupTestDb(): void {
   pluginDb = new PluginDatabase(db, 'agentbox');
 }
 
-function teardownTestDb(): void { db.close(); }
+function teardownTestDb(): void {
+  // Stop the SSE polling timer init() starts, so it doesn't fire
+  // against a closed DB after the test ends.
+  stopSSEPolling();
+  db.close();
+}
 
 function createMockContext() {
   return {
@@ -29,9 +35,111 @@ describe('agentbox plugin', () => {
     expect(typeof plugin.init).toBe('function');
     expect(typeof plugin.destroy).toBe('function');
     expect(typeof plugin.registerCommands).toBe('function');
+    expect(typeof plugin.getWidgets).toBe('function');
     expect(Array.isArray(plugin.helpEntries)).toBe(true);
     expect(Array.isArray(plugin.tools)).toBe(true);
     expect(plugin.tools!.length).toBe(8);
+  });
+});
+
+describe('agentbox getWidgets() (#241 split #5)', () => {
+  beforeEach(() => setupTestDb());
+  afterEach(() => teardownTestDb());
+
+  it('returns a single AgentBox widget linking to /p/agentbox/', async () => {
+    const { default: plugin } = await import('../agentbox.js');
+    await plugin.init!(createMockContext());
+    const widgets = plugin.getWidgets!();
+    expect(widgets).toHaveLength(1);
+    const w = widgets[0]!;
+    expect(w.title).toBe('AgentBox');
+    expect(w.link).toBe('/p/agentbox/');
+    expect(w.html).toContain('Idle');
+    expect(typeof w.icon).toBe('string');
+  });
+
+  it('reflects active-run state in the widget HTML', async () => {
+    const { default: plugin } = await import('../agentbox.js');
+    await plugin.init!(createMockContext());
+    pluginDb.prepare(
+      `INSERT INTO plugin_agentbox_runs (issue_number, repo, status, started_at, created_at) VALUES (?, ?, ?, ?, ?)`,
+    ).run(7, 'org/r', 'running', Date.now(), Date.now());
+    const widgets = plugin.getWidgets!();
+    expect(widgets[0]!.html).toContain('org/r#7');
+    expect(widgets[0]!.html).toContain('Running:');
+  });
+
+  it('returns a fallback widget when the plugin is not initialised', async () => {
+    const { default: plugin } = await import('../agentbox.js');
+    await plugin.destroy!(createMockContext());
+    const widgets = plugin.getWidgets!();
+    expect(widgets).toHaveLength(1);
+    expect(widgets[0]!.html).toContain('not initialised');
+  });
+});
+
+describe('agentbox SSE polling (#241 split #5)', () => {
+  beforeEach(() => setupTestDb());
+  afterEach(() => teardownTestDb());
+
+  it('broadcasts dashboard-update on the SSE channel when a client is listening', async () => {
+    vi.useFakeTimers();
+    try {
+      const { default: plugin } = await import('../agentbox.js');
+      const broadcast = vi.fn();
+      const ctx = {
+        db: pluginDb, name: 'agentbox', version: '1.0.0',
+        notify: vi.fn(),
+        sse: { broadcast, clientCount: () => 1 },
+      };
+      await plugin.init!(ctx);
+      vi.advanceTimersByTime(10_000);
+      expect(broadcast).toHaveBeenCalled();
+      expect(broadcast.mock.calls[0]![0]).toBe('dashboard-update');
+      const payload = broadcast.mock.calls[0]![1] as Record<string, unknown>;
+      expect(payload.stats).toBeDefined();
+      await plugin.destroy!(ctx);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('skips the broadcast when no clients are connected', async () => {
+    vi.useFakeTimers();
+    try {
+      const { default: plugin } = await import('../agentbox.js');
+      const broadcast = vi.fn();
+      const ctx = {
+        db: pluginDb, name: 'agentbox', version: '1.0.0',
+        notify: vi.fn(),
+        sse: { broadcast, clientCount: () => 0 },
+      };
+      await plugin.init!(ctx);
+      vi.advanceTimersByTime(30_000);
+      expect(broadcast).not.toHaveBeenCalled();
+      await plugin.destroy!(ctx);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops broadcasting after destroy()', async () => {
+    vi.useFakeTimers();
+    try {
+      const { default: plugin } = await import('../agentbox.js');
+      const broadcast = vi.fn();
+      const ctx = {
+        db: pluginDb, name: 'agentbox', version: '1.0.0',
+        notify: vi.fn(),
+        sse: { broadcast, clientCount: () => 1 },
+      };
+      await plugin.init!(ctx);
+      await plugin.destroy!(ctx);
+      vi.advanceTimersByTime(60_000);
+      expect(broadcast).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

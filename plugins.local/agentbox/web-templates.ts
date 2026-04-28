@@ -734,3 +734,91 @@ export function parseRunIdParam(raw: unknown): number | null {
   if (!Number.isInteger(n) || n < 1) return null;
   return n;
 }
+
+// ─── Home-page widget (split #5) ───────────────────────────────────
+
+/**
+ * Compact HTML summary of AgentBox state for the main dashboard's
+ * widget grid. The plugin host renders this verbatim — escape any
+ * user-derived values (repo names) explicitly here.
+ */
+export function buildWidgetSummary(data: DashboardData): string {
+  const { stats, activeRun } = data;
+  // issueNumber is INTEGER from the runs table — safe to interpolate
+  // without escaping. repo is operator-supplied free text, so escape.
+  const activeLine = activeRun
+    ? `<p style="margin: 4px 0; font-size: 0.875rem;">Running: <strong>${escapeHtml(activeRun.repo)}#${String(activeRun.issueNumber)}</strong></p>`
+    : '<p style="margin: 4px 0; font-size: 0.875rem; color: var(--text-muted, #888);">Idle</p>';
+  return `${activeLine}
+<div style="display: flex; gap: 12px; margin-top: 6px; font-size: 0.75rem; color: var(--text-muted, #888);">
+  <span>${String(stats.totalRuns)} total</span>
+  <span>${String(stats.successCount)} ✓</span>
+  <span>${String(stats.failedCount)} ✗</span>
+</div>`;
+}
+
+// ─── Client-side SSE wiring (split #5) ─────────────────────────────
+
+/**
+ * Embedded on the dashboard page. Opens an EventSource to the plugin's
+ * SSE channel (auto-mounted at /p/agentbox/stream by the plugin
+ * router) and re-renders active-run progress + stat values without
+ * a page reload. Auto-reconnects on connection drop with exponential
+ * backoff capped at 30s.
+ */
+export const DASHBOARD_CLIENT_JS = `
+<script>
+(function() {
+  if (typeof EventSource === 'undefined') return;
+  var url = '/p/agentbox/stream';
+  var backoff = 1000;
+  var es = null;
+
+  function applyUpdate(data) {
+    try {
+      var stats = data && data.stats;
+      if (stats) {
+        var labels = {
+          'Total runs': stats.totalRuns,
+          'Active': stats.activeRuns,
+          'Success': stats.successCount,
+          'Failed': stats.failedCount,
+          'Cancelled': stats.cancelledCount,
+        };
+        document.querySelectorAll('.agentbox-stat').forEach(function(card) {
+          var label = card.querySelector('.agentbox-stat-label');
+          var value = card.querySelector('.agentbox-stat-value');
+          if (!label || !value) return;
+          var n = labels[label.textContent.trim()];
+          if (typeof n === 'number') value.textContent = String(n);
+        });
+      }
+      var active = data && data.activeRun;
+      if (active && typeof active.progressPct === 'number') {
+        var fill = document.querySelector('.agentbox-progress-fill');
+        if (fill) {
+          var pct = Math.min(100, Math.max(0, active.progressPct));
+          fill.style.width = pct + '%';
+        }
+      }
+    } catch (e) { /* best-effort UI update */ }
+  }
+
+  function connect() {
+    es = new EventSource(url);
+    es.addEventListener('dashboard-update', function(ev) {
+      try { applyUpdate(JSON.parse(ev.data)); }
+      catch (e) { /* ignore malformed payload */ }
+      backoff = 1000;
+    });
+    es.onerror = function() {
+      try { es && es.close(); } catch (e) {}
+      es = null;
+      setTimeout(connect, backoff);
+      backoff = Math.min(30000, backoff * 2);
+    };
+  }
+
+  connect();
+})();
+</script>`;

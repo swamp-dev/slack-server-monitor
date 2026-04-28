@@ -7,7 +7,12 @@
  *   - GET /runs        →  paginated run history (split #3)
  *   - GET /runs/:id    →  single-run detail (split #4)
  *
- * SSE event broadcasting (split #5) lands in a follow-up PR.
+ * Live updates (split #5):
+ *   - 10s poll broadcasts `dashboard-update` events on the plugin
+ *     SSE channel while a run is active. The dashboard's embedded
+ *     client-side JS subscribes and re-renders the active-run +
+ *     stats sections without a page reload. The plugin SSE channel
+ *     is auto-mounted at /p/agentbox/stream by the plugin router.
  */
 import type { PluginRouter } from '../../src/plugins/index.js';
 import { renderPluginPage, escapeHtml } from '../../src/web/plugin-helpers.js';
@@ -24,13 +29,20 @@ import {
   renderRunDetail,
   parseRunIdParam,
   DASHBOARD_CSS,
+  DASHBOARD_CLIENT_JS,
+  buildWidgetSummary,
   type QueueIssue,
 } from './web-templates.js';
 import { listReadyIssues } from './scheduler.js';
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
+import type { PluginContext, DashboardWidget } from '../../src/plugins/types.js';
 
 let pluginDb: PluginDatabase | null = null;
 let defaultRepo = '';
+let pluginCtxRef: PluginContext | null = null;
+let sseTimer: ReturnType<typeof setInterval> | null = null;
+
+const SSE_POLL_INTERVAL_MS = 10_000;
 
 export function setWebPluginDb(db: PluginDatabase | null): void {
   pluginDb = db;
@@ -43,6 +55,80 @@ export function setWebPluginDb(db: PluginDatabase | null): void {
  */
 export function setWebDefaultRepo(repo: string): void {
   defaultRepo = repo;
+}
+
+/**
+ * Start the 10s polling loop that broadcasts dashboard-update SSE
+ * events while a run is active. Stop with stopSSEPolling() in
+ * destroy(). Calling startSSEPolling() while a timer is already
+ * running updates the context reference (so a re-init points at
+ * fresh state) but does not stack timers.
+ *
+ * The broadcast payload is intentionally narrow — only `stats` and
+ * `activeRun` — so internal `error` strings on completed runs aren't
+ * pushed to every connected client every 10s.
+ */
+export function startSSEPolling(ctx: PluginContext): void {
+  pluginCtxRef = ctx;
+  if (sseTimer) return;
+  sseTimer = setInterval(() => {
+    if (!pluginCtxRef || !pluginDb) return;
+    if (pluginCtxRef.sse.clientCount() === 0) return;
+    try {
+      const data = loadDashboardData(pluginDb);
+      pluginCtxRef.sse.broadcast('dashboard-update', {
+        stats: data.stats,
+        activeRun: data.activeRun,
+      });
+    } catch (err) {
+      logger.warn('AgentBox SSE poll failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, SSE_POLL_INTERVAL_MS);
+}
+
+export function stopSSEPolling(): void {
+  if (sseTimer) {
+    clearInterval(sseTimer);
+    sseTimer = null;
+  }
+  pluginCtxRef = null;
+}
+
+/**
+ * Build the home-page DashboardWidget summarising AgentBox state.
+ * Consumed by the plugin manifest's getWidgets() hook.
+ */
+export function getAgentboxWidgets(): DashboardWidget[] {
+  if (!pluginDb) {
+    return [{
+      title: 'AgentBox',
+      icon: 'robot',
+      html: '<p style="color:var(--text-muted);font-size:0.875rem;">Plugin not initialised.</p>',
+      link: '/p/agentbox/',
+      priority: 30,
+      size: 'small',
+    }];
+  }
+  let html: string;
+  try {
+    const data = loadDashboardData(pluginDb);
+    html = buildWidgetSummary(data);
+  } catch (err) {
+    logger.warn('AgentBox widget render failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    html = '<p style="color:var(--text-muted);font-size:0.875rem;">Could not load AgentBox state.</p>';
+  }
+  return [{
+    title: 'AgentBox',
+    icon: 'robot',
+    html,
+    link: '/p/agentbox/',
+    priority: 30,
+    size: 'small',
+  }];
 }
 
 export function registerAgentboxWebRoutes(router: PluginRouter): void {
@@ -72,6 +158,7 @@ export function registerAgentboxWebRoutes(router: PluginRouter): void {
       pluginName: ctx.name,
       body,
       styles: DASHBOARD_CSS,
+      scripts: DASHBOARD_CLIENT_JS,
     }));
   });
 

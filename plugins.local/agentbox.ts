@@ -11,7 +11,14 @@ import { logger } from '../src/utils/logger.js';
 import { execFile } from 'node:child_process';
 import { listReadyIssues, triggerRun, cancelRun, type SchedulerConfig } from './agentbox/scheduler.js';
 import { getActiveRunId } from './agentbox/executor.js';
-import { registerAgentboxWebRoutes, setWebPluginDb, setWebDefaultRepo } from './agentbox/web.js';
+import {
+  registerAgentboxWebRoutes,
+  setWebPluginDb,
+  setWebDefaultRepo,
+  startSSEPolling,
+  stopSSEPolling,
+  getAgentboxWidgets,
+} from './agentbox/web.js';
 
 let pluginDb: PluginDatabase | null = null;
 let pluginCtx: PluginContext | null = null;
@@ -575,6 +582,7 @@ const agentboxPlugin: Plugin = {
   // plugins can sit under the same nav umbrella.
   webNavEntry: { label: 'Workflows', icon: 'robot' },
   registerWebRoutes: registerAgentboxWebRoutes,
+  getWidgets: getAgentboxWidgets,
 
   screenshotPages: [
     { name: 'dashboard', path: '/' },
@@ -620,6 +628,8 @@ const agentboxPlugin: Plugin = {
 
     migrateRunsTable(ctx.db);
 
+    startSSEPolling(ctx);
+
     logger.info('AgentBox plugin initialized', {
       version: ctx.version,
       tablePrefix: ctx.db.prefix,
@@ -628,6 +638,7 @@ const agentboxPlugin: Plugin = {
   },
 
   destroy: async () => {
+    stopSSEPolling();
     pluginDb = null;
     pluginCtx = null;
     setWebPluginDb(null);

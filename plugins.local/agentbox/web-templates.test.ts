@@ -684,3 +684,80 @@ describe('renderRunDetail (#241 split #4)', () => {
     expect(runsActive).toBe(true);
   });
 });
+
+describe('buildWidgetSummary (#241 split #5)', () => {
+  it('renders an "Idle" summary when no run is active', async () => {
+    const { buildWidgetSummary } = await import('./web-templates.js');
+    const html = buildWidgetSummary({
+      stats: { totalRuns: 0, activeRuns: 0, successCount: 0, failedCount: 0, cancelledCount: 0 },
+      activeRun: null,
+      recentRuns: [],
+    });
+    expect(html).toContain('Idle');
+    expect(html).toContain('0 total');
+    expect(html).toContain('0 ✓');
+    expect(html).toContain('0 ✗');
+  });
+
+  it('renders the active run line with repo and issue number when a run is in flight', async () => {
+    const { buildWidgetSummary } = await import('./web-templates.js');
+    const html = buildWidgetSummary({
+      stats: { totalRuns: 12, activeRuns: 1, successCount: 9, failedCount: 2, cancelledCount: 0 },
+      activeRun: {
+        id: 5, issueNumber: 42, repo: 'org/r', status: 'running',
+        startedAt: 1000, finishedAt: null, prUrl: null, progressPct: 30,
+        tasksTotal: 10, tasksCompleted: 3, error: null,
+      },
+      recentRuns: [],
+    });
+    expect(html).toContain('Running:');
+    expect(html).toContain('org/r#42');
+    expect(html).toContain('12 total');
+    expect(html).toContain('9 ✓');
+    expect(html).toContain('2 ✗');
+  });
+
+  it('escapes hostile repo names in the active-run line', async () => {
+    const { buildWidgetSummary } = await import('./web-templates.js');
+    const html = buildWidgetSummary({
+      stats: { totalRuns: 1, activeRuns: 1, successCount: 0, failedCount: 0, cancelledCount: 0 },
+      activeRun: {
+        id: 1, issueNumber: 1, repo: '<script>x</script>', status: 'running',
+        startedAt: 1000, finishedAt: null, prUrl: null, progressPct: 0,
+        tasksTotal: null, tasksCompleted: null, error: null,
+      },
+      recentRuns: [],
+    });
+    expect(html).not.toContain('<script>x</script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+});
+
+describe('DASHBOARD_CLIENT_JS (#241 split #5)', () => {
+  it('is wrapped in <script> tags so the host shell parses it as JS', async () => {
+    const { DASHBOARD_CLIENT_JS } = await import('./web-templates.js');
+    // The plugin shell inserts ${scripts} verbatim — without these tags
+    // the IIFE is rendered as inert text.
+    expect(DASHBOARD_CLIENT_JS.trimStart().startsWith('<script>')).toBe(true);
+    expect(DASHBOARD_CLIENT_JS.trimEnd().endsWith('</script>')).toBe(true);
+  });
+
+  it('opens an EventSource against the agentbox stream and listens for dashboard-update', async () => {
+    const { DASHBOARD_CLIENT_JS } = await import('./web-templates.js');
+    expect(DASHBOARD_CLIENT_JS).toContain("'/p/agentbox/stream'");
+    expect(DASHBOARD_CLIENT_JS).toContain("addEventListener('dashboard-update'");
+  });
+
+  it('updates stat values and the progress bar fill on each event', async () => {
+    const { DASHBOARD_CLIENT_JS } = await import('./web-templates.js');
+    expect(DASHBOARD_CLIENT_JS).toContain('agentbox-stat');
+    expect(DASHBOARD_CLIENT_JS).toContain('agentbox-progress-fill');
+  });
+
+  it('reconnects with capped exponential backoff on error', async () => {
+    const { DASHBOARD_CLIENT_JS } = await import('./web-templates.js');
+    // The cap is 30s — present as 30000 in the IIFE.
+    expect(DASHBOARD_CLIENT_JS).toContain('30000');
+    expect(DASHBOARD_CLIENT_JS).toContain('setTimeout(connect');
+  });
+});
