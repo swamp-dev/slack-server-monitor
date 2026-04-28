@@ -11,6 +11,7 @@ import { logger } from '../src/utils/logger.js';
 import { execFile } from 'node:child_process';
 import { listReadyIssues, triggerRun, cancelRun, type SchedulerConfig } from './agentbox/scheduler.js';
 import { getActiveRunId } from './agentbox/executor.js';
+import { registerAgentboxWebRoutes, setWebPluginDb } from './agentbox/web.js';
 
 let pluginDb: PluginDatabase | null = null;
 let pluginCtx: PluginContext | null = null;
@@ -569,9 +570,20 @@ const agentboxPlugin: Plugin = {
 
   tools: createTools(),
 
+  // Workflows web UI lives at /p/agentbox/. The nav label is
+  // "Workflows" (broader than "AgentBox") so future automation
+  // plugins can sit under the same nav umbrella.
+  webNavEntry: { label: 'Workflows', icon: 'robot' },
+  registerWebRoutes: registerAgentboxWebRoutes,
+
+  screenshotPages: [
+    { name: 'dashboard', path: '/' },
+  ],
+
   init: async (ctx: PluginContext) => {
     pluginDb = ctx.db;
     pluginCtx = ctx;
+    setWebPluginDb(ctx.db);
 
     ctx.db.exec(`
       CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}runs (
@@ -614,6 +626,7 @@ const agentboxPlugin: Plugin = {
   destroy: async () => {
     pluginDb = null;
     pluginCtx = null;
+    setWebPluginDb(null);
     logger.info('AgentBox plugin destroyed');
   },
 
