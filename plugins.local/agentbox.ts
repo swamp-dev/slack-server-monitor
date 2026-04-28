@@ -11,7 +11,7 @@ import { logger } from '../src/utils/logger.js';
 import { execFile } from 'node:child_process';
 import { listReadyIssues, triggerRun, cancelRun, type SchedulerConfig } from './agentbox/scheduler.js';
 import { getActiveRunId } from './agentbox/executor.js';
-import { registerAgentboxWebRoutes, setWebPluginDb } from './agentbox/web.js';
+import { registerAgentboxWebRoutes, setWebPluginDb, setWebDefaultRepo } from './agentbox/web.js';
 
 let pluginDb: PluginDatabase | null = null;
 let pluginCtx: PluginContext | null = null;
@@ -578,12 +578,14 @@ const agentboxPlugin: Plugin = {
 
   screenshotPages: [
     { name: 'dashboard', path: '/' },
+    { name: 'queue', path: '/queue' },
   ],
 
   init: async (ctx: PluginContext) => {
     pluginDb = ctx.db;
     pluginCtx = ctx;
     setWebPluginDb(ctx.db);
+    setWebDefaultRepo(config.defaultRepo ?? '');
 
     ctx.db.exec(`
       CREATE TABLE IF NOT EXISTS ${ctx.db.prefix}runs (
@@ -627,6 +629,7 @@ const agentboxPlugin: Plugin = {
     pluginDb = null;
     pluginCtx = null;
     setWebPluginDb(null);
+    setWebDefaultRepo('');
     logger.info('AgentBox plugin destroyed');
   },
 

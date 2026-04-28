@@ -220,3 +220,105 @@ describe('DASHBOARD_CSS (#241)', () => {
     expect(DASHBOARD_CSS).toContain('var(--accent');
   });
 });
+
+describe('renderQueue (#241 split #2)', () => {
+  it('renders an empty-state card when no issues are ready', async () => {
+    const { renderQueue } = await import('./web-templates.js');
+    const html = renderQueue([], 'org/r');
+    expect(html).toContain('Ready Queue');
+    expect(html).toMatch(/no.*agentbox-ready/i);
+    expect(html).toContain('org/r');
+  });
+
+  it('lists issues with priority labels surfaced', async () => {
+    const { renderQueue } = await import('./web-templates.js');
+    const html = renderQueue(
+      [
+        { number: 7, title: 'Fix the bug', createdAt: '2026-04-01T00:00:00Z',
+          labels: [{ name: 'agentbox-ready' }, { name: 'priority:high' }, { name: 'area: web-ui' }] },
+      ],
+      'org/r',
+    );
+    expect(html).toContain('#7');
+    expect(html).toContain('Fix the bug');
+    expect(html).toContain('priority:high');
+    expect(html).toContain('area: web-ui');
+  });
+
+  it('orders priority:high before unlabeled, then by oldest createdAt', async () => {
+    const { renderQueue } = await import('./web-templates.js');
+    const html = renderQueue(
+      [
+        { number: 3, title: 'newest no-priority', createdAt: '2026-03-03T00:00:00Z', labels: [] },
+        { number: 2, title: 'old high-priority', createdAt: '2026-01-01T00:00:00Z',
+          labels: [{ name: 'priority:high' }] },
+        { number: 1, title: 'middle no-priority', createdAt: '2026-02-02T00:00:00Z', labels: [] },
+      ],
+      'org/r',
+    );
+    const idx2 = html.indexOf('#2');
+    const idx1 = html.indexOf('#1');
+    const idx3 = html.indexOf('#3');
+    expect(idx2).toBeGreaterThan(0);
+    expect(idx2).toBeLessThan(idx1);
+    expect(idx1).toBeLessThan(idx3);
+  });
+
+  it('escapes hostile titles + labels', async () => {
+    const { renderQueue } = await import('./web-templates.js');
+    const html = renderQueue(
+      [
+        { number: 1, title: '<script>alert(1)</script>', createdAt: '2026-01-01T00:00:00Z',
+          labels: [{ name: '<img src=x>' }] },
+      ],
+      'org/<script>',
+    );
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).not.toMatch(/<img src=x>/);
+    expect(html).toContain('&lt;script&gt;alert(1)');
+  });
+
+  it('sanitizes the issue url so a hostile scheme cannot become a live link', async () => {
+    const { renderQueue } = await import('./web-templates.js');
+    const html = renderQueue(
+      [
+        { number: 1, title: 't', createdAt: '2026-01-01T00:00:00Z',
+          labels: [], url: 'javascript:alert(1)' },
+      ],
+      'org/r',
+    );
+    expect(html).not.toMatch(/href="javascript:/i);
+  });
+});
+
+describe('renderNavPills (#241 split #2)', () => {
+  it('marks the active page', async () => {
+    const { renderNavPills } = await import('./web-templates.js');
+    const html = renderNavPills('queue');
+    expect(html).toContain('Queue');
+    const queueLinkMatch = /<a href="\/p\/agentbox\/queue"[^>]*class="agentbox-pill active"/.test(html);
+    expect(queueLinkMatch).toBe(true);
+  });
+
+  it('links to all three pages', async () => {
+    const { renderNavPills } = await import('./web-templates.js');
+    const html = renderNavPills('dashboard');
+    expect(html).toContain('href="/p/agentbox/"');
+    expect(html).toContain('href="/p/agentbox/queue"');
+    expect(html).toContain('href="/p/agentbox/runs"');
+  });
+});
+
+describe('sortQueueIssues (#241 split #2)', () => {
+  it('returns a new array (does not mutate input)', async () => {
+    const { sortQueueIssues } = await import('./web-templates.js');
+    const input = [
+      { number: 1, title: 'a', createdAt: '2026-02-01', labels: [] },
+      { number: 2, title: 'b', createdAt: '2026-01-01', labels: [{ name: 'priority:high' }] },
+    ];
+    const out = sortQueueIssues(input);
+    expect(out).not.toBe(input);
+    expect(input[0]?.number).toBe(1);
+    expect(out[0]?.number).toBe(2);
+  });
+});

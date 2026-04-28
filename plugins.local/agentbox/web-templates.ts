@@ -113,13 +113,102 @@ function mapRow(row: Record<string, unknown>): RunRow {
 
 // ─── Renderers ──────────────────────────────────────────────────────
 
+/**
+ * Tab/pill navigation between the Workflows pages. Caller passes the
+ * id of the page currently being rendered so it can be highlighted.
+ */
+export function renderNavPills(active: 'dashboard' | 'queue' | 'runs'): string {
+  const pages = [
+    { href: '/p/agentbox/', label: 'Dashboard', id: 'dashboard' as const },
+    { href: '/p/agentbox/queue', label: 'Queue', id: 'queue' as const },
+    { href: '/p/agentbox/runs', label: 'Runs', id: 'runs' as const },
+  ];
+  return `<nav class="agentbox-nav">${pages
+    .map((p) => `<a href="${p.href}" class="agentbox-pill${active === p.id ? ' active' : ''}">${escapeHtml(p.label)}</a>`)
+    .join('')}</nav>`;
+}
+
 export function renderDashboard(data: DashboardData): string {
   return [
+    renderNavPills('dashboard'),
     renderStatusBanner(data),
     renderStatsCards(data.stats),
     renderActiveRun(data.activeRun),
     renderRecentRuns(data.recentRuns),
   ].join('\n');
+}
+
+/**
+ * GitHub issue summary — same shape as `ReadyIssue` from scheduler.ts
+ * but redeclared locally so this template module doesn't depend on
+ * the scheduler.
+ */
+export interface QueueIssue {
+  number: number;
+  title: string;
+  labels: { name: string }[];
+  createdAt: string;
+  url?: string;
+}
+
+export function renderQueue(issues: QueueIssue[], repo: string): string {
+  const nav = renderNavPills('queue');
+  if (issues.length === 0) {
+    return `${nav}
+<div class="agentbox-card">
+  <h2>Ready Queue</h2>
+  <p class="agentbox-muted">No <code>agentbox-ready</code> issues waiting in <strong>${escapeHtml(repo)}</strong>.</p>
+</div>`;
+  }
+  const sorted = sortQueueIssues(issues);
+  const rows = sorted
+    .map((iss) => {
+      const priority = iss.labels.find((l) => l.name.startsWith('priority:'))?.name ?? '';
+      const otherLabels = iss.labels
+        .filter((l) => !l.name.startsWith('priority:') && l.name !== 'agentbox-ready')
+        .map((l) => l.name);
+      const githubUrl = iss.url ? sanitizeUrl(iss.url) : null;
+      const issueLink = githubUrl
+        ? `<a href="${escapeHtml(githubUrl)}">#${String(iss.number)}</a>`
+        : `#${String(iss.number)}`;
+      const labelHtml = [priority, ...otherLabels]
+        .filter(Boolean)
+        .map((l) => `<span class="agentbox-label">${escapeHtml(l)}</span>`)
+        .join(' ');
+      const created = new Date(iss.createdAt).getTime();
+      const age = Number.isFinite(created) ? formatRelative(created) : 'unknown';
+      return `<tr>
+        <td>${issueLink}</td>
+        <td>${escapeHtml(iss.title)}</td>
+        <td>${labelHtml}</td>
+        <td>${escapeHtml(age)}</td>
+      </tr>`;
+    })
+    .join('');
+  return `${nav}
+<div class="agentbox-card">
+  <h2>Ready Queue (${String(sorted.length)})</h2>
+  <p class="agentbox-muted">Issues labelled <code>agentbox-ready</code> in <strong>${escapeHtml(repo)}</strong>, ordered by priority then age.</p>
+  <table class="agentbox-runs-table">
+    <thead><tr><th>Issue</th><th>Title</th><th>Labels</th><th>Age</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+</div>`;
+}
+
+/**
+ * Order: priority:high first, then oldest createdAt. Mirrors the
+ * scheduler's pickEligibleIssue() so what users see in the queue
+ * matches what the scheduler picks next.
+ */
+export function sortQueueIssues<T extends QueueIssue>(issues: T[]): T[] {
+  return [...issues].sort((a, b) => {
+    const aHigh = a.labels.some((l) => l.name === 'priority:high');
+    const bHigh = b.labels.some((l) => l.name === 'priority:high');
+    if (aHigh && !bHigh) return -1;
+    if (!aHigh && bHigh) return 1;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
 }
 
 function renderStatusBanner(data: DashboardData): string {
@@ -218,6 +307,37 @@ export function formatRelative(timestamp: number, now: number = Date.now()): str
 // ─── Page-level CSS ─────────────────────────────────────────────────
 
 export const DASHBOARD_CSS = `
+.agentbox-nav {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.agentbox-pill {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #444);
+  text-decoration: none;
+  color: var(--text, #fff);
+  font-size: 0.875rem;
+  background: var(--card-bg, #2a2a2a);
+}
+.agentbox-pill.active {
+  background: var(--accent, #bd93f9);
+  color: #fff;
+  border-color: transparent;
+}
+.agentbox-pill:hover { border-color: var(--accent, #bd93f9); }
+.agentbox-label {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  background: var(--surface, #1e1e1e);
+  border: 1px solid var(--border, #444);
+  color: var(--text-muted, #888);
+  margin-right: 4px;
+}
 .agentbox-banner {
   padding: 12px 16px;
   border-radius: 8px;
