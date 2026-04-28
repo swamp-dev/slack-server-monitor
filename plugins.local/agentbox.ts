@@ -580,6 +580,7 @@ const agentboxPlugin: Plugin = {
     { name: 'dashboard', path: '/' },
     { name: 'queue', path: '/queue' },
     { name: 'runs', path: '/runs' },
+    { name: 'run-detail', path: '/runs/1' },
   ],
 
   init: async (ctx: PluginContext) => {

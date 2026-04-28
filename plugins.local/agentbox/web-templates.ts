@@ -525,4 +525,212 @@ export const DASHBOARD_CSS = `
 .agentbox-pagelink:hover { border-color: var(--accent, #bd93f9); }
 .agentbox-pagelink-disabled { opacity: 0.4; cursor: not-allowed; }
 .agentbox-page-indicator { color: var(--text-muted, #888); }
+.agentbox-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.agentbox-detail-cell {
+  background: var(--surface, #1e1e1e);
+  border: 1px solid var(--border, #444);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.agentbox-detail-cell-label {
+  font-size: 0.75rem;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.agentbox-detail-cell-value { font-size: 0.95rem; margin-top: 2px; word-wrap: break-word; }
+.agentbox-finding {
+  border-left: 3px solid var(--border, #444);
+  padding: 8px 12px;
+  margin: 8px 0;
+  background: var(--surface, #1e1e1e);
+}
+.agentbox-finding-critical { border-left-color: var(--red, #ff5555); }
+.agentbox-finding-significant { border-left-color: var(--orange, #ffb86c); }
+.agentbox-finding-minor { border-left-color: var(--text-muted, #6272a4); }
+.agentbox-finding-title { font-weight: 600; margin-bottom: 4px; }
+.agentbox-finding-body { font-size: 0.875rem; white-space: pre-wrap; color: var(--text-muted, #aaa); }
+.agentbox-error-banner {
+  background: rgba(255, 85, 85, 0.1);
+  border: 1px solid var(--red, #ff5555);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 12px 0;
+  white-space: pre-wrap;
+  font-family: 'SF Mono', monospace;
+  font-size: 0.875rem;
+}
 `;
+
+// ─── Run detail page (split #4) ────────────────────────────────────
+
+export interface ReviewFindingRow {
+  id: number;
+  severity: 'critical' | 'significant' | 'minor';
+  title: string;
+  body: string;
+  createdAt: number;
+}
+
+export interface RunDetailData {
+  run: RunRow;
+  /** Findings from the agentbox_reviews table joined on run_id. */
+  findings: ReviewFindingRow[];
+}
+
+/**
+ * Read the run row + any associated review findings. Returns null
+ * if no run with that id exists.
+ *
+ * The agentbox_reviews table is created lazily by runReview in
+ * review.ts. If no review has ever run, the table won't exist;
+ * we silently treat that as zero findings rather than erroring.
+ */
+export function loadRunDetail(db: PluginDatabase, runId: number): RunDetailData | null {
+  const row = db
+    .prepare(
+      `SELECT id, issue_number, repo, status, started_at, finished_at, pr_url, progress_pct,
+              tasks_total, tasks_completed, error
+       FROM ${db.prefix}runs WHERE id = ?`,
+    )
+    .get(runId) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const run = mapRow(row);
+
+  const findings = readFindingsIfTableExists(db, runId);
+  return { run, findings };
+}
+
+function readFindingsIfTableExists(db: PluginDatabase, runId: number): ReviewFindingRow[] {
+  const tableName = `${db.prefix}reviews`;
+  const tableExists = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1`)
+    .get(tableName);
+  if (!tableExists) return [];
+  const rows = db
+    .prepare(
+      `SELECT id, severity, title, body, created_at
+       FROM ${tableName} WHERE run_id = ? ORDER BY id ASC`,
+    )
+    .all(runId) as Array<Record<string, unknown>>;
+  return rows.map((r) => ({
+    id: r.id as number,
+    severity: r.severity as ReviewFindingRow['severity'],
+    title: r.title as string,
+    body: r.body as string,
+    createdAt: r.created_at as number,
+  }));
+}
+
+export function renderRunDetail(detail: RunDetailData): string {
+  const nav = renderNavPills('runs');
+  const { run, findings } = detail;
+  const dur = run.startedAt && run.finishedAt ? formatDurationMs(run.finishedAt - run.startedAt) : '—';
+  const startedAgo = run.startedAt ? formatRelative(run.startedAt) : '—';
+  const finishedAgo = run.finishedAt ? formatRelative(run.finishedAt) : '—';
+  const safePrUrl = run.prUrl ? sanitizeUrl(run.prUrl) : null;
+
+  // Build a GitHub issue link if the repo string matches owner/repo
+  // shape. Defensive — repo is from the DB but better to validate
+  // before constructing a URL we'll hand to the user.
+  const issueLinkHtml = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(run.repo)
+    ? `<a href="${escapeHtml(sanitizeUrl(`https://github.com/${run.repo}/issues/${String(run.issueNumber)}`))}">${escapeHtml(run.repo)}#${String(run.issueNumber)}</a>`
+    : `${escapeHtml(run.repo)}#${String(run.issueNumber)}`;
+
+  const summaryGrid = `<div class="agentbox-detail-grid">
+    <div class="agentbox-detail-cell"><div class="agentbox-detail-cell-label">Issue</div><div class="agentbox-detail-cell-value">${issueLinkHtml}</div></div>
+    <div class="agentbox-detail-cell"><div class="agentbox-detail-cell-label">Status</div><div class="agentbox-detail-cell-value"><span class="agentbox-badge agentbox-badge-${escapeHtml(run.status)}">${escapeHtml(run.status)}</span></div></div>
+    <div class="agentbox-detail-cell"><div class="agentbox-detail-cell-label">Duration</div><div class="agentbox-detail-cell-value">${escapeHtml(dur)}</div></div>
+    <div class="agentbox-detail-cell"><div class="agentbox-detail-cell-label">Started</div><div class="agentbox-detail-cell-value">${escapeHtml(startedAgo)}</div></div>
+    <div class="agentbox-detail-cell"><div class="agentbox-detail-cell-label">Finished</div><div class="agentbox-detail-cell-value">${escapeHtml(finishedAgo)}</div></div>
+    <div class="agentbox-detail-cell"><div class="agentbox-detail-cell-label">PR</div><div class="agentbox-detail-cell-value">${safePrUrl ? `<a href="${escapeHtml(safePrUrl)}">${escapeHtml(safePrUrl)}</a>` : '—'}</div></div>
+  </div>`;
+
+  // Progress + tasks. Clamp progressPct to [0,100] same as the
+  // dashboard's active-run card.
+  const rawProgress = run.progressPct ?? 0;
+  const progress = Math.min(100, Math.max(0, Number.isFinite(rawProgress) ? rawProgress : 0));
+  const tasksLine = run.tasksTotal != null && run.tasksCompleted != null
+    ? `<p class="agentbox-muted">Tasks: ${String(run.tasksCompleted)} / ${String(run.tasksTotal)} complete</p>`
+    : '<p class="agentbox-muted">Task counts not reported by the run.</p>';
+  const progressCard = `<div class="agentbox-card">
+    <h2>Progress</h2>
+    <div class="agentbox-progress"><div class="agentbox-progress-fill" style="width: ${String(progress)}%"></div></div>
+    <p class="agentbox-muted">${String(progress)}% complete</p>
+    ${tasksLine}
+  </div>`;
+
+  // Journal timeline placeholder. Real journal data will arrive in
+  // split #5 alongside SSE wiring; for now we show a placeholder
+  // card so the layout is stable.
+  const journalCard = `<div class="agentbox-card">
+    <h2>Journal Timeline</h2>
+    <p class="agentbox-muted">Live journal entries (confidence / difficulty / momentum) will stream here once SSE wiring lands in split #5.</p>
+  </div>`;
+
+  const errorCard = run.error
+    ? `<div class="agentbox-card"><h2>Error</h2><div class="agentbox-error-banner">${escapeHtml(run.error)}</div></div>`
+    : '';
+
+  const findingsCard = renderReviewFindingsCard(findings);
+
+  return `${nav}
+<div class="agentbox-card">
+  <h2>Run #${String(run.id)}</h2>
+  ${summaryGrid}
+</div>
+${progressCard}
+${errorCard}
+${findingsCard}
+${journalCard}`;
+}
+
+function renderReviewFindingsCard(findings: ReviewFindingRow[]): string {
+  if (findings.length === 0) {
+    return `<div class="agentbox-card">
+      <h2>Review Findings</h2>
+      <p class="agentbox-muted">No review findings recorded for this run.</p>
+    </div>`;
+  }
+  // Order: critical → significant → minor. Fallback to 99 for any
+  // unexpected severity (e.g. corrupted DB row that got past the
+  // CHECK constraint), so sorting stays deterministic.
+  const order: Record<string, number> = { critical: 0, significant: 1, minor: 2 };
+  const sorted = [...findings].sort((a, b) => (order[a.severity] ?? 99) - (order[b.severity] ?? 99));
+  const items = sorted
+    .map((f) => `<div class="agentbox-finding agentbox-finding-${escapeHtml(f.severity)}">
+      <div class="agentbox-finding-title">${escapeHtml(f.severity.toUpperCase())} — ${escapeHtml(f.title)}</div>
+      <div class="agentbox-finding-body">${escapeHtml(f.body)}</div>
+    </div>`)
+    .join('');
+  const counts = sorted.reduce<Record<string, number>>((acc, f) => {
+    acc[f.severity] = (acc[f.severity] ?? 0) + 1;
+    return acc;
+  }, {});
+  const summary = (['critical', 'significant', 'minor'] as const)
+    .filter((s) => (counts[s] ?? 0) > 0)
+    .map((s) => `${String(counts[s])} ${s}`)
+    .join(' · ');
+  return `<div class="agentbox-card">
+    <h2>Review Findings</h2>
+    <p class="agentbox-muted">${escapeHtml(summary)}</p>
+    ${items}
+  </div>`;
+}
+
+/**
+ * Parse a run id from a path parameter. Returns null for missing,
+ * non-numeric, or non-positive input. The route handler uses null
+ * as the signal to send a 404.
+ */
+export function parseRunIdParam(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  const n = parseInt(raw, 10);
+  if (!Number.isInteger(n) || n < 1) return null;
+  return n;
+}

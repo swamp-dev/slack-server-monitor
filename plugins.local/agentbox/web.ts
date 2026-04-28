@@ -2,11 +2,12 @@
  * AgentBox Workflows web UI — route registration (#241 / T11).
  *
  * Pages registered under /p/agentbox/:
- *   - GET /        →  dashboard (status banner + stats + active run + recent)
- *   - GET /queue   →  ready-issue queue (split #2)
- *   - GET /runs    →  paginated run history (split #3)
+ *   - GET /            →  dashboard (status banner + stats + active run + recent)
+ *   - GET /queue       →  ready-issue queue (split #2)
+ *   - GET /runs        →  paginated run history (split #3)
+ *   - GET /runs/:id    →  single-run detail (split #4)
  *
- * Run detail and SSE event broadcasting will land in follow-up PRs.
+ * SSE event broadcasting (split #5) lands in a follow-up PR.
  */
 import type { PluginRouter } from '../../src/plugins/index.js';
 import { renderPluginPage, escapeHtml } from '../../src/web/plugin-helpers.js';
@@ -19,6 +20,9 @@ import {
   loadRunHistory,
   renderRunHistory,
   parsePageParam,
+  loadRunDetail,
+  renderRunDetail,
+  parseRunIdParam,
   DASHBOARD_CSS,
   type QueueIssue,
 } from './web-templates.js';
@@ -134,6 +138,58 @@ export function registerAgentboxWebRoutes(router: PluginRouter): void {
     }
     res.send(renderPluginPage({
       title: 'Workflows · Runs',
+      pluginName: ctx.name,
+      body,
+      styles: DASHBOARD_CSS,
+    }));
+  });
+
+  // GET /runs/:id  →  run detail page
+  router.get('/runs/:id', (req, res, ctx) => {
+    if (!pluginDb) {
+      res.send(renderPluginPage({
+        title: 'Workflows · Run',
+        pluginName: ctx.name,
+        body: `${renderNavPills('runs')}<div class="agentbox-card"><h2>Not initialized</h2><p>The AgentBox plugin database is not available.</p></div>`,
+        styles: DASHBOARD_CSS,
+      }));
+      return;
+    }
+    const runId = parseRunIdParam(req.params?.id);
+    if (runId === null) {
+      // 404 for malformed ids — same shape as a not-found run.
+      res.status(404).send(renderPluginPage({
+        title: 'Workflows · Not Found',
+        pluginName: ctx.name,
+        body: `${renderNavPills('runs')}<div class="agentbox-card"><h2>Run not found</h2><p class="agentbox-muted">The run id in the URL must be a positive integer.</p></div>`,
+        styles: DASHBOARD_CSS,
+      }));
+      return;
+    }
+    let body: string;
+    let statusCode = 200;
+    try {
+      const detail = loadRunDetail(pluginDb, runId);
+      if (!detail) {
+        statusCode = 404;
+        body = `${renderNavPills('runs')}<div class="agentbox-card"><h2>Run not found</h2><p class="agentbox-muted">No run with id ${String(runId)} exists in this workspace.</p></div>`;
+      } else {
+        body = renderRunDetail(detail);
+      }
+    } catch (err) {
+      logger.error('AgentBox web: run detail load failed', {
+        runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      statusCode = 500;
+      body = `${renderNavPills('runs')}
+<div class="agentbox-card">
+  <h2>Error</h2>
+  <p>Could not load run #${String(runId)}: ${escapeHtml(err instanceof Error ? err.message : String(err))}</p>
+</div>`;
+    }
+    res.status(statusCode).send(renderPluginPage({
+      title: `Workflows · Run #${String(runId)}`,
       pluginName: ctx.name,
       body,
       styles: DASHBOARD_CSS,

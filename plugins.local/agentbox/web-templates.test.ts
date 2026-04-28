@@ -501,3 +501,186 @@ describe('renderRunHistory (#241 split #3)', () => {
     expect(html).toContain('&lt;script&gt;');
   });
 });
+
+describe('parseRunIdParam (#241 split #4)', () => {
+  it('returns null for missing / non-string input', async () => {
+    const { parseRunIdParam } = await import('./web-templates.js');
+    expect(parseRunIdParam(undefined)).toBeNull();
+    expect(parseRunIdParam(42)).toBeNull();
+    expect(parseRunIdParam(['1'])).toBeNull();
+  });
+  it('returns null for non-numeric / zero / negative strings', async () => {
+    const { parseRunIdParam } = await import('./web-templates.js');
+    expect(parseRunIdParam('abc')).toBeNull();
+    expect(parseRunIdParam('0')).toBeNull();
+    expect(parseRunIdParam('-3')).toBeNull();
+  });
+  it('parses positive integer strings', async () => {
+    const { parseRunIdParam } = await import('./web-templates.js');
+    expect(parseRunIdParam('7')).toBe(7);
+    expect(parseRunIdParam('1')).toBe(1);
+  });
+  // Documents permissive parseInt behavior: "1.5" → 1, "2abc" → 2.
+  // Same tradeoff as parsePageParam — Express query strings are
+  // noisy and we'd rather coerce than fail.
+  it('takes the leading-integer prefix from noisy input ("1.5" → 1)', async () => {
+    const { parseRunIdParam } = await import('./web-templates.js');
+    expect(parseRunIdParam('1.5')).toBe(1);
+    expect(parseRunIdParam('2abc')).toBe(2);
+  });
+});
+
+describe('loadRunDetail (#241 split #4)', () => {
+  it('returns null when no run with that id exists', async () => {
+    const { loadRunDetail } = await import('./web-templates.js');
+    expect(loadRunDetail(pluginDb, 999)).toBeNull();
+  });
+
+  it('returns the run row + empty findings when reviews table doesn\'t exist yet', async () => {
+    const { loadRunDetail } = await import('./web-templates.js');
+    const id = insertRun({ issueNumber: 1, repo: 'org/r', status: 'success' });
+    const detail = loadRunDetail(pluginDb, id);
+    expect(detail).not.toBeNull();
+    expect(detail?.run.id).toBe(id);
+    expect(detail?.findings).toEqual([]);
+  });
+
+  it('returns findings when the reviews table exists and has rows for the run', async () => {
+    const { loadRunDetail } = await import('./web-templates.js');
+    const id = insertRun({ issueNumber: 1, repo: 'org/r', status: 'failed' });
+
+    // Mirror what runReview's ensureReviewSchema would create.
+    rawDb.exec(`
+      CREATE TABLE IF NOT EXISTS ${pluginDb.prefix}reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id INTEGER NOT NULL,
+        severity TEXT NOT NULL CHECK (severity IN ('critical','significant','minor')),
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )`);
+    const insertFinding = rawDb.prepare(
+      `INSERT INTO ${pluginDb.prefix}reviews (run_id, severity, title, body, created_at) VALUES (?, ?, ?, ?, ?)`,
+    );
+    insertFinding.run(id, 'critical', 'bad thing', 'detail', Date.now());
+    insertFinding.run(id, 'minor', 'nit', 'detail', Date.now());
+
+    const detail = loadRunDetail(pluginDb, id);
+    expect(detail?.findings).toHaveLength(2);
+    expect(detail?.findings[0]?.severity).toBe('critical');
+    expect(detail?.findings[1]?.severity).toBe('minor');
+  });
+});
+
+describe('renderRunDetail (#241 split #4)', () => {
+  function makeDetail(overrides: Partial<DashboardData['activeRun'] & object> = {}, findings: Array<{ id: number; severity: 'critical' | 'significant' | 'minor'; title: string; body: string; createdAt: number }> = []) {
+    const run = {
+      id: 1, issueNumber: 7, repo: 'org/r', status: 'success' as const,
+      startedAt: 1000, finishedAt: 5000, prUrl: 'https://example/pr/1',
+      progressPct: 100, tasksTotal: 5, tasksCompleted: 5, error: null,
+      ...overrides,
+    };
+    return { run, findings };
+  }
+
+  it('renders the summary grid with issue, status, duration, started, finished, PR', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail(makeDetail());
+    expect(html).toContain('agentbox-detail-grid');
+    expect(html).toContain('org/r#7');
+    expect(html).toContain('agentbox-badge-success');
+    expect(html).toContain('https://example/pr/1');
+  });
+
+  it('renders progress bar with clamped width and task counts', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail(makeDetail({ progressPct: 99999 as number, tasksTotal: 10, tasksCompleted: 7 }));
+    expect(html).toContain('width: 100%'); // clamped from 99999
+    expect(html).toContain('7 / 10 complete');
+  });
+
+  it('renders error banner when the run has an error message', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail(makeDetail({ status: 'failed', error: 'boom' }));
+    expect(html).toContain('agentbox-error-banner');
+    expect(html).toContain('boom');
+  });
+
+  it('renders the no-findings card when findings is empty', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail(makeDetail());
+    expect(html).toContain('Review Findings');
+    expect(html).toContain('No review findings recorded');
+  });
+
+  it('renders findings ordered critical → significant → minor with severity-coloured borders', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail(
+      makeDetail({}, [
+        { id: 1, severity: 'minor', title: 'minor item', body: 'm', createdAt: 1000 },
+        { id: 2, severity: 'critical', title: 'critical item', body: 'c', createdAt: 1100 },
+        { id: 3, severity: 'significant', title: 'significant item', body: 's', createdAt: 1200 },
+      ]),
+    );
+    const cIdx = html.indexOf('critical item');
+    const sIdx = html.indexOf('significant item');
+    const mIdx = html.indexOf('minor item');
+    expect(cIdx).toBeGreaterThan(0);
+    expect(cIdx).toBeLessThan(sIdx);
+    expect(sIdx).toBeLessThan(mIdx);
+    expect(html).toContain('agentbox-finding-critical');
+    expect(html).toContain('agentbox-finding-significant');
+    expect(html).toContain('agentbox-finding-minor');
+  });
+
+  it('escapes hostile finding content', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail(
+      makeDetail({}, [
+        { id: 1, severity: 'critical', title: '<script>alert(1)</script>', body: '<img src=x>', createdAt: 1000 },
+      ]),
+    );
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).not.toContain('<img src=x>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  it('sanitizes hostile prUrl scheme', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail(makeDetail({ prUrl: 'javascript:alert(1)' }));
+    expect(html).not.toMatch(/href="javascript:/i);
+  });
+
+  it('escapes hostile repo name in the summary grid', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail(makeDetail({ repo: '<script>x</script>' }));
+    expect(html).not.toContain('<script>x</script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  it('renders a GitHub issue link when the repo matches owner/name shape', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail(makeDetail({ repo: 'swamp-dev/slack-server-monitor', issueNumber: 42 }));
+    expect(html).toContain('href="https://github.com/swamp-dev/slack-server-monitor/issues/42"');
+  });
+
+  it('does NOT render a GitHub link when repo is malformed', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail(makeDetail({ repo: 'not a real repo' }));
+    expect(html).not.toContain('href="https://github.com');
+  });
+
+  it('renders journal placeholder card', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail(makeDetail());
+    expect(html).toContain('Journal Timeline');
+    expect(html).toMatch(/SSE wiring lands in split #5/);
+  });
+
+  it('keeps the runs nav pill active on detail pages', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail(makeDetail());
+    const runsActive = /<a href="\/p\/agentbox\/runs"[^>]*class="agentbox-pill active"/.test(html);
+    expect(runsActive).toBe(true);
+  });
+});
