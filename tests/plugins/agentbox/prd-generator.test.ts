@@ -4,7 +4,7 @@
  * TDD test suite for converting GitHub issue markdown into AgentBox prd.json.
  * Tests cover: parsing, generation, validation, edge cases, and golden fixtures.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import {
@@ -246,6 +246,110 @@ Part of #100.`;
 
     const result = parseFiles(body);
     expect(result).toHaveLength(1);
+  });
+
+  describe('path traversal protection (#193)', () => {
+    it('should reject paths with `..` segments', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const body = '## Files\n\n- `../../etc/passwd` — secrets';
+
+      const result = parseFiles(body);
+
+      expect(result).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/rejected unsafe file path.*\.\.\/\.\.\/etc\/passwd/i));
+      warn.mockRestore();
+    });
+
+    it('should reject paths with embedded `..` not just at the start', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const body = '## Files\n\n- `src/../../../etc/passwd`';
+
+      const result = parseFiles(body);
+
+      expect(result).toEqual([]);
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('should reject absolute paths starting with `/`', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const body = '## Files\n\n- `/etc/passwd` — system file';
+
+      const result = parseFiles(body);
+
+      expect(result).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/rejected unsafe file path.*\/etc\/passwd/i));
+      warn.mockRestore();
+    });
+
+    it('should keep safe paths and reject unsafe ones from the same Files block', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const body = `## Files
+
+- \`src/foo.ts\` — service
+- \`../escape.ts\` — bad
+- \`/abs/path.ts\` — bad
+- \`tests/foo.test.ts\` — tests`;
+
+      const result = parseFiles(body);
+
+      expect(result).toHaveLength(2);
+      expect(result[0]?.path).toBe('src/foo.ts');
+      expect(result[1]?.path).toBe('tests/foo.test.ts');
+      expect(warn).toHaveBeenCalledTimes(2);
+      warn.mockRestore();
+    });
+
+    it('should allow safe relative paths (no leading slash, no `..`)', () => {
+      const body = '## Files\n\n- `plugins/foo/bar.ts` — fine';
+      const result = parseFiles(body);
+      expect(result).toHaveLength(1);
+      expect(result[0]?.path).toBe('plugins/foo/bar.ts');
+    });
+
+    it('should reject whitespace-padded absolute paths', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const body = '## Files\n\n- `  /etc/passwd` — bypass attempt';
+
+      const result = parseFiles(body);
+
+      expect(result).toEqual([]);
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('should reject home-relative paths starting with `~`', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const body = '## Files\n\n- `~/.ssh/id_rsa` — secrets';
+
+      const result = parseFiles(body);
+
+      expect(result).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/rejected unsafe file path.*~\/\.ssh\/id_rsa/i));
+      warn.mockRestore();
+    });
+
+    it('should reject URL-encoded `..` traversal attempts', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const body = '## Files\n\n- `src/%2e%2e/%2e%2e/etc/passwd` — encoded';
+
+      const result = parseFiles(body);
+
+      expect(result).toEqual([]);
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('should reject empty / whitespace-only paths', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const body = '## Files\n\n- `   ` — empty';
+
+      const result = parseFiles(body);
+
+      expect(result).toEqual([]);
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    });
   });
 });
 

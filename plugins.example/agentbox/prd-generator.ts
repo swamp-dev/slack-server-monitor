@@ -143,6 +143,33 @@ export function parseAcceptanceCriteria(body: string): ParsedCriterion[] {
   return result;
 }
 
+/**
+ * Reject paths that would let downstream tooling escape the repo root
+ * if it ever uses these as filesystem inputs (#193). Issue bodies are
+ * untrusted markdown, so unsafe shapes are dropped with a warning
+ * rather than passed through.
+ *
+ * Trims first so leading whitespace can't bypass the `/` check.
+ * Rejects:
+ *   - empty / whitespace-only
+ *   - absolute POSIX paths (`/etc/passwd`)
+ *   - home-relative paths (`~/.ssh/id_rsa`) — shells expand these
+ *   - any segment equal to `..` (POSIX or Windows separator)
+ *   - URL-encoded `..` (`%2e%2e`, case-insensitive) anywhere in the path
+ */
+function isSafeFilePath(path: string): boolean {
+  const trimmed = path.trim();
+  if (trimmed === '') return false;
+  if (trimmed.startsWith('/')) return false;
+  if (trimmed.startsWith('~')) return false;
+  if (/%2e%2e/i.test(trimmed)) return false;
+  // Split on both POSIX and Windows separators so `src\..\..\etc` is
+  // caught even though we don't target Windows — defense in depth.
+  const segments = trimmed.split(/[/\\]/);
+  if (segments.includes('..')) return false;
+  return true;
+}
+
 export function parseFiles(body: string): IssueFile[] {
   const section = extractSection(body, 'Files');
   if (!section) return [];
@@ -154,8 +181,13 @@ export function parseFiles(body: string): IssueFile[] {
     // Match: - `path` — description  or  - `path` - description  or  - `path`: description  or  - `path`
     const match = line.match(/^-\s+`([^`]+)`(?:\s*[—\-:]\s*(.+))?/);
     if (match) {
+      const path = match[1];
+      if (!isSafeFilePath(path)) {
+        console.warn(`agentbox: rejected unsafe file path "${path}" from issue body`);
+        continue;
+      }
       result.push({
-        path: match[1],
+        path,
         role: match[2]?.trim() ?? '',
       });
     }
