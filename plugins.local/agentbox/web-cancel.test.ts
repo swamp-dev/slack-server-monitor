@@ -15,10 +15,12 @@ import type { PluginContext } from '../../src/plugins/types.js';
 
 vi.mock('./scheduler.js', () => ({
   cancelRun: vi.fn(),
+  pauseRun: vi.fn(),
+  resumeRun: vi.fn(),
   listReadyIssues: vi.fn(),
 }));
 
-import { cancelRun } from './scheduler.js';
+import { cancelRun, pauseRun, resumeRun } from './scheduler.js';
 import {
   registerAgentboxWebRoutes,
   setWebPluginDb,
@@ -96,6 +98,8 @@ beforeEach(() => {
   setWebPluginDb(pluginDb);
   setWebDefaultRepo('org/repo');
   vi.mocked(cancelRun).mockReset();
+  vi.mocked(pauseRun).mockReset();
+  vi.mocked(resumeRun).mockReset();
 });
 
 afterEach(() => {

@@ -99,6 +99,8 @@ import {
   startScheduler,
   pickEligibleIssue,
   cancelRun,
+  pauseRun,
+  resumeRun,
   _resetSchedulerState,
   type ReadyIssue,
 } from './scheduler.js';
@@ -111,6 +113,7 @@ function setExecHandler(fn: (bin: string, args: string[]) => ExecResult): void {
 function setSpawnHandler(fn: (bin: string, args: string[]) => MockChild): void { bag().spawnHandler = fn; }
 import { _resetActiveProcess } from './executor.js';
 import { createSchema } from '../../plugins.example/agentbox/schema.js';
+import { migrateRunsTable } from '../agentbox.js';
 
 let rawDb: Database.Database;
 let pluginDb: PluginDatabase;
@@ -126,6 +129,9 @@ async function setup(): Promise<void> {
   rawDb.pragma('journal_mode = WAL');
   pluginDb = new PluginDatabase(rawDb, 'agentbox');
   createSchema(pluginDb);
+  // Adds T10 columns + the T14 'paused' status CHECK widening so
+  // pauseRun/resumeRun tests can write through cleanly.
+  migrateRunsTable(pluginDb);
   workDirRoot = path.join(os.tmpdir(), `sched-test-${String(Date.now())}-${String(process.pid)}-${String(Math.random()).slice(2, 8)}`);
   await mkdir(workDirRoot, { recursive: true });
   mockCtx = {
@@ -425,5 +431,172 @@ describe('cancelRun (#239)', () => {
 
     activeChild!.emit('exit', null, 'SIGTERM');
     await handle.shutdown();
+  });
+});
+
+describe('runIssuePipeline paused-exit cleanup (#244 / T14)', () => {
+  beforeEach(async () => { await setup(); });
+  afterEach(async () => { await teardown(); });
+
+  it('preserves the workdir when executeRun exits paused — required for resume to find the checkpoint', async () => {
+    const issues: ReadyIssue[] = [
+      { number: 7, title: 't', body: '## Summary\n\nx', createdAt: '2026-01-01', labels: [{ name: 'agentbox-ready' }] },
+    ];
+    setExecHandler(defaultExecHandler(issues));
+
+    let activeChild: MockChild | null = null;
+    setSpawnHandler(() => {
+      activeChild = makeChild();
+      return activeChild;
+    });
+
+    const handle = startScheduler({
+      db: pluginDb,
+      ctx: mockCtx,
+      config: { enabled: true, intervalMinutes: 60, repo: 'org/r', workDirRoot, agentboxBinaryPath: '/fake/agentbox', initialDelayMs: 5 },
+    });
+    await new Promise((r) => setTimeout(r, 40));
+
+    // Pause the active subprocess; agentbox checkpoints and exits.
+    const row = rawDb.prepare(`SELECT id FROM ${pluginDb.prefix}runs ORDER BY id DESC LIMIT 1`).get() as { id: number };
+    await pauseRun(row.id, { db: pluginDb, repo: 'org/r' });
+    activeChild!.emit('exit', 0, 'SIGTERM');
+    await handle.shutdown();
+
+    // The workdir recorded on the row must still exist on disk.
+    // Without this, executor.resumeRun's `cwd: workDir` spawn would
+    // fail to find the agentbox session.
+    const finalRow = rawDb
+      .prepare(`SELECT status, output_path FROM ${pluginDb.prefix}runs WHERE id = ?`)
+      .get(row.id) as { status: string; output_path: string };
+    expect(finalRow.status).toBe('paused');
+    expect(finalRow.output_path).toBeTruthy();
+
+    const workDir = path.dirname(finalRow.output_path);
+    const fs = await import('node:fs/promises');
+    const stat = await fs.stat(workDir).catch(() => null);
+    expect(stat?.isDirectory()).toBe(true);
+  });
+});
+
+describe('pauseRun (#244 / T14)', () => {
+  beforeEach(async () => { await setup(); });
+  afterEach(async () => { await teardown(); });
+
+  it('throws when the runId does not exist', async () => {
+    await expect(pauseRun(999, { db: pluginDb, repo: 'org/r' })).rejects.toThrow(/does not exist/i);
+  });
+
+  it('is a no-op for terminal runs', async () => {
+    pluginDb
+      .prepare(`INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, created_at) VALUES (?, ?, ?, ?)`)
+      .run(1, 'org/r', 'success', Date.now());
+    const row = rawDb.prepare(`SELECT id FROM ${pluginDb.prefix}runs ORDER BY id DESC LIMIT 1`).get() as { id: number };
+
+    await expect(pauseRun(row.id, { db: pluginDb, repo: 'org/r' })).resolves.toBeUndefined();
+    // No label transitions for an already-settled run.
+    expect(execCalls().some((c) => c.args.includes('--add-label'))).toBe(false);
+  });
+
+  it('is a no-op for already-paused runs (idempotent)', async () => {
+    pluginDb
+      .prepare(`INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, created_at) VALUES (?, ?, ?, ?)`)
+      .run(1, 'org/r', 'paused', Date.now());
+    const row = rawDb.prepare(`SELECT id FROM ${pluginDb.prefix}runs ORDER BY id DESC LIMIT 1`).get() as { id: number };
+
+    await expect(pauseRun(row.id, { db: pluginDb, repo: 'org/r' })).resolves.toBeUndefined();
+    expect(execCalls().some((c) => c.args.includes('--add-label'))).toBe(false);
+  });
+
+  it('SIGTERMs the active subprocess and transitions labels', async () => {
+    const issues: ReadyIssue[] = [
+      { number: 7, title: 't', body: '## Summary\n\nx', createdAt: '2026-01-01', labels: [{ name: 'agentbox-ready' }] },
+    ];
+    setExecHandler(defaultExecHandler(issues));
+
+    let activeChild: MockChild | null = null;
+    setSpawnHandler(() => {
+      activeChild = makeChild();
+      return activeChild;
+    });
+
+    const handle = startScheduler({
+      db: pluginDb,
+      ctx: mockCtx,
+      config: { enabled: true, intervalMinutes: 60, repo: 'org/r', workDirRoot, agentboxBinaryPath: '/fake/agentbox', initialDelayMs: 5 },
+    });
+    await new Promise((r) => setTimeout(r, 40));
+
+    const row = rawDb.prepare(`SELECT id FROM ${pluginDb.prefix}runs ORDER BY id DESC LIMIT 1`).get() as { id: number };
+    await pauseRun(row.id, { db: pluginDb, repo: 'org/r' });
+
+    expect(activeChild!.killSignals).toContain('SIGTERM');
+    expect(execCalls().some((c) => c.args.includes('--remove-label') && c.args.includes('agentbox-running'))).toBe(true);
+    expect(execCalls().some((c) => c.args.includes('--add-label') && c.args.includes('agentbox-paused'))).toBe(true);
+    // No issue comment — pause is reversible, unlike cancel.
+    expect(execCalls().some((c) => c.args[0] === 'issue' && c.args[1] === 'comment')).toBe(false);
+
+    // Clean exit with code 0 — agentbox checkpointed.
+    activeChild!.emit('exit', 0, 'SIGTERM');
+    await handle.shutdown();
+
+    const finalRow = rawDb.prepare(`SELECT status, paused_at FROM ${pluginDb.prefix}runs WHERE id = ?`).get(row.id) as { status: string; paused_at: number | null };
+    expect(finalRow.status).toBe('paused');
+    expect(finalRow.paused_at).toBeTypeOf('number');
+  });
+});
+
+describe('resumeRun (#244 / T14)', () => {
+  beforeEach(async () => { await setup(); });
+  afterEach(async () => { await teardown(); });
+
+  it('throws when the runId does not exist', async () => {
+    await expect(resumeRun(999, { db: pluginDb, repo: 'org/r' })).rejects.toThrow(/does not exist/i);
+  });
+
+  it('throws when the run is not paused', async () => {
+    pluginDb
+      .prepare(`INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, output_path, created_at) VALUES (?, ?, ?, ?, ?)`)
+      .run(1, 'org/r', 'success', '/tmp/r.log', Date.now());
+    const row = rawDb.prepare(`SELECT id FROM ${pluginDb.prefix}runs ORDER BY id DESC LIMIT 1`).get() as { id: number };
+    await expect(resumeRun(row.id, { db: pluginDb, repo: 'org/r' })).rejects.toThrow(/is not paused/i);
+  });
+
+  it('throws when the row has no recorded workDir', async () => {
+    pluginDb
+      .prepare(`INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, output_path, created_at) VALUES (?, ?, ?, ?, ?)`)
+      .run(1, 'org/r', 'paused', null, Date.now());
+    const row = rawDb.prepare(`SELECT id FROM ${pluginDb.prefix}runs ORDER BY id DESC LIMIT 1`).get() as { id: number };
+    await expect(resumeRun(row.id, { db: pluginDb, repo: 'org/r' })).rejects.toThrow(/no recorded workDir/i);
+  });
+
+  it('transitions labels and dispatches the executor for a paused run', async () => {
+    // Seed a paused row pointing at our temp work dir.
+    const logPath = path.join(workDirRoot, 'run.log');
+    pluginDb
+      .prepare(`INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, output_path, paused_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(7, 'org/r', 'paused', logPath, Date.now(), Date.now());
+    const row = rawDb.prepare(`SELECT id FROM ${pluginDb.prefix}runs ORDER BY id DESC LIMIT 1`).get() as { id: number };
+
+    setExecHandler(() => ({ stdout: '', stderr: '', code: 0 }));
+    let activeChild: MockChild | null = null;
+    setSpawnHandler((bin, args) => {
+      activeChild = makeChild();
+      // The resume path should invoke `agentbox sprint --resume`.
+      expect(args).toEqual(['sprint', '--resume']);
+      return activeChild;
+    });
+
+    const promise = resumeRun(row.id, { db: pluginDb, repo: 'org/r', binaryPath: '/fake/agentbox' });
+    await new Promise((r) => setImmediate(r));
+
+    // Subprocess exits cleanly.
+    activeChild!.emit('exit', 0, null);
+    const result = await promise;
+
+    expect(result.status).toBe('success');
+    expect(execCalls().some((c) => c.args.includes('--remove-label') && c.args.includes('agentbox-paused'))).toBe(true);
+    expect(execCalls().some((c) => c.args.includes('--add-label') && c.args.includes('agentbox-running'))).toBe(true);
+    expect(execCalls().some((c) => c.args.includes('--add-label') && c.args.includes('agentbox-done'))).toBe(true);
   });
 });

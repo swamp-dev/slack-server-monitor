@@ -33,7 +33,7 @@ import {
   buildWidgetSummary,
   type QueueIssue,
 } from './web-templates.js';
-import { listReadyIssues, cancelRun } from './scheduler.js';
+import { listReadyIssues, cancelRun, pauseRun, resumeRun } from './scheduler.js';
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
 import type { PluginContext, DashboardWidget } from '../../src/plugins/types.js';
 
@@ -393,5 +393,105 @@ export function registerAgentboxWebRoutes(router: PluginRouter): void {
       const notFound = /does not exist/i.test(message);
       res.status(notFound ? 404 : 500).send(`Failed to cancel run #${String(runId)}: ${message}`);
     }
+  });
+
+  // POST /runs/:id/pause  →  checkpoint + pause an in-flight run (T14).
+  // pauseRun is idempotent for already-terminal/already-paused runs
+  // and a no-op when the runId isn't the active one.
+  router.post('/runs/:id/pause', async (req, res, _ctx) => {
+    if (!pluginDb) {
+      res.status(503).send('AgentBox plugin database is not available.');
+      return;
+    }
+    const runId = parseRunIdParam(req.params?.id);
+    if (runId === null) {
+      res.status(400).send('Invalid run id.');
+      return;
+    }
+    if (!defaultRepo) {
+      res.status(500).send('AGENTBOX_DEFAULT_REPO is not configured.');
+      return;
+    }
+    try {
+      await pauseRun(runId, { db: pluginDb, repo: defaultRepo });
+      // Live update so any open dashboard re-renders without waiting
+      // for the next 10s poll. The run-complete event is intentionally
+      // NOT broadcast on pause — the run isn't done.
+      if (pluginCtxRef && pluginCtxRef.sse.clientCount() > 0) {
+        try {
+          const data = loadDashboardData(pluginDb);
+          pluginCtxRef.sse.broadcast('dashboard-update', {
+            stats: data.stats,
+            activeRun: data.activeRun,
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
+      res.redirect(`/p/agentbox/runs/${String(runId)}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('AgentBox web: pause failed', { runId, error: message });
+      const notFound = /does not exist/i.test(message);
+      res.status(notFound ? 404 : 500).send(`Failed to pause run #${String(runId)}: ${message}`);
+    }
+  });
+
+  // POST /runs/:id/resume  →  resume a paused run (T14).
+  // The resume itself runs for as long as the agentbox session takes
+  // (potentially hours), so we can't await it. We pre-validate the
+  // row synchronously, then kick off resumeRun fire-and-forget.
+  router.post('/runs/:id/resume', (req, res, _ctx) => {
+    if (!pluginDb) {
+      res.status(503).send('AgentBox plugin database is not available.');
+      return;
+    }
+    const runId = parseRunIdParam(req.params?.id);
+    if (runId === null) {
+      res.status(400).send('Invalid run id.');
+      return;
+    }
+    if (!defaultRepo) {
+      res.status(500).send('AGENTBOX_DEFAULT_REPO is not configured.');
+      return;
+    }
+
+    // Pre-validate the row before kicking off the long-running
+    // resume. The user-visible 4xx errors must surface before we
+    // return; once resumeRun is dispatched its errors land in logs.
+    const row = pluginDb
+      .prepare(`SELECT id, status, output_path FROM ${pluginDb.prefix}runs WHERE id = ?`)
+      .get(runId) as { id: number; status: string; output_path: string | null } | undefined;
+    if (!row) {
+      res.status(404).send(`Run #${String(runId)} does not exist.`);
+      return;
+    }
+    if (row.status !== 'paused') {
+      res.status(409).send(`Run #${String(runId)} is not paused (status=${row.status}).`);
+      return;
+    }
+    if (!row.output_path) {
+      res.status(409).send(`Run #${String(runId)} has no recorded workDir — cannot resume.`);
+      return;
+    }
+
+    // Validation passed — kick off the resume. Don't await: the
+    // session can run for hours. The resume goes through label
+    // transitions before flipping the row to 'running', so we don't
+    // broadcast a dashboard-update here (it would still show the
+    // paused state). The 10s polling loop catches the transition.
+    //
+    // ExecutorBusyError lands as a logged error in the .catch — if
+    // a second run is already in flight we can't actually resume,
+    // and the operator will see the row stuck at 'paused' on next
+    // poll.
+    void resumeRun(runId, { db: pluginDb, repo: defaultRepo }).catch((err) => {
+      logger.error('AgentBox web: resumed run failed', {
+        runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    res.redirect(`/p/agentbox/runs/${String(runId)}`);
   });
 }

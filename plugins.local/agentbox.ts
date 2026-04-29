@@ -61,8 +61,13 @@ export function handleStatus(db: PluginDatabase): string {
 }
 
 /**
- * Idempotent schema migration — adds columns introduced in T10 (ingestion layer).
- * Uses PRAGMA table_info to check existing columns before ALTER TABLE ADD COLUMN.
+ * Idempotent schema migration — adds columns introduced in T10 (ingestion layer)
+ * and widens the status CHECK constraint to allow 'paused' (T14, #244).
+ *
+ * Adding a column is a single ALTER TABLE; widening a CHECK constraint
+ * isn't supported in SQLite, so for the latter we do the standard
+ * rename-create-copy-drop dance — gated on detecting the old CHECK in
+ * sqlite_master so the migration is a no-op on already-migrated tables.
  */
 export function migrateRunsTable(db: PluginDatabase): void {
   const columns = db
@@ -88,6 +93,57 @@ export function migrateRunsTable(db: PluginDatabase): void {
       }
     });
   }
+
+  migrateStatusCheckForPaused(db);
+}
+
+/**
+ * Rebuild the runs table to add 'paused' to the status CHECK
+ * constraint. SQLite can't ALTER a CHECK in place, so we rename the
+ * existing table, recreate it with the new CHECK, copy rows back, and
+ * drop the old table. Skipped if 'paused' is already present.
+ */
+function migrateStatusCheckForPaused(db: PluginDatabase): void {
+  const tableName = `${db.prefix}runs`;
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name = ?`)
+    .get(tableName) as { sql?: string } | undefined;
+  if (!row?.sql || row.sql.includes("'paused'")) return;
+
+  // Capture the current column list (in original order) so the
+  // INSERT...SELECT copies every value, including the ones T10 added.
+  const cols = (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>)
+    .map((c) => c.name);
+  const colList = cols.join(', ');
+  const oldName = `${tableName}_pre244`;
+
+  db.transaction(() => {
+    db.exec(`ALTER TABLE ${tableName} RENAME TO ${oldName}`);
+    db.exec(`
+      CREATE TABLE ${tableName} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        issue_number INTEGER,
+        repo TEXT,
+        status TEXT CHECK(status IN ('pending','running','paused','success','failed','cancelled')),
+        branch TEXT,
+        pr_url TEXT,
+        started_at INTEGER,
+        finished_at INTEGER,
+        output_path TEXT,
+        error TEXT,
+        created_at INTEGER NOT NULL,
+        session_id TEXT,
+        progress_pct INTEGER DEFAULT 0,
+        tasks_total INTEGER,
+        tasks_completed INTEGER,
+        prd_path TEXT,
+        cancelled_by TEXT,
+        paused_at INTEGER
+      )
+    `);
+    db.exec(`INSERT INTO ${tableName} (${colList}) SELECT ${colList} FROM ${oldName}`);
+    db.exec(`DROP TABLE ${oldName}`);
+  });
 }
 
 const REPO_FORMAT = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
@@ -602,7 +658,7 @@ const agentboxPlugin: Plugin = {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         issue_number INTEGER,
         repo TEXT,
-        status TEXT CHECK(status IN ('pending','running','success','failed','cancelled')),
+        status TEXT CHECK(status IN ('pending','running','paused','success','failed','cancelled')),
         branch TEXT,
         pr_url TEXT,
         started_at INTEGER,

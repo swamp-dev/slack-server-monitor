@@ -51,6 +51,10 @@ vi.mock('node:child_process', () => ({
     spawnCalls.push({ bin, args, opts });
     return spawnHandler(bin, args);
   }),
+  // execFile is unused by the executor itself but is imported
+  // transitively through scheduler.js (via migrateRunsTable's
+  // sibling). Provide a stub so the module graph loads.
+  execFile: vi.fn(),
 }));
 
 import {
@@ -58,10 +62,13 @@ import {
   getActiveProcess,
   getActiveRunId,
   cancelActiveRun,
+  pauseActiveRun,
+  resumeRun as executorResumeRun,
   ExecutorBusyError,
   _resetActiveProcess,
 } from './executor.js';
 import { createSchema } from '../../plugins.example/agentbox/schema.js';
+import { migrateRunsTable } from '../agentbox.js';
 
 let rawDb: Database.Database;
 let pluginDb: PluginDatabase;
@@ -87,6 +94,9 @@ describe('executor (#238)', () => {
     rawDb.pragma('journal_mode = WAL');
     pluginDb = new PluginDatabase(rawDb, 'agentbox');
     createSchema(pluginDb);
+    // Adds T10 columns (session_id, paused_at, etc.) and the T14
+    // CHECK widening for 'paused' status.
+    migrateRunsTable(pluginDb);
     await setupWorkspace();
   });
   afterEach(async () => { rawDb.close(); await teardownWorkspace(); _resetActiveProcess(); });
@@ -393,6 +403,114 @@ describe('executor (#238)', () => {
       const row = rawDb.prepare(`SELECT status, error FROM ${pluginDb.prefix}runs WHERE id = ?`).get(result.runId) as { status: string; error: string };
       expect(row.status).toBe('cancelled');
       expect(row.error).toMatch(/cancelled by request/i);
+    });
+  });
+
+  describe('pauseActiveRun() (#244 / T14)', () => {
+    it('returns false when no run is active', () => {
+      expect(pauseActiveRun()).toBe(false);
+    });
+
+    it('sends SIGTERM and lands the row at status=paused with paused_at set', async () => {
+      let child: MockChild | null = null;
+      spawnHandler = () => { child = makeChild(); return child; };
+
+      const promise = executeRun({
+        db: pluginDb, issueNumber: 1, repo: 'org/r', workDir,
+        mode: 'sprint', binaryPath: '/fake/agentbox',
+      });
+      await new Promise((r) => setImmediate(r));
+
+      expect(pauseActiveRun()).toBe(true);
+      expect(child!.killSignals).toContain('SIGTERM');
+
+      // agentbox catches SIGTERM, checkpoints, exits cleanly.
+      child!.emit('exit', 0, 'SIGTERM');
+      const result = await promise;
+
+      expect(result.status).toBe('paused');
+      const row = rawDb
+        .prepare(`SELECT status, paused_at, finished_at, error FROM ${pluginDb.prefix}runs WHERE id = ?`)
+        .get(result.runId) as { status: string; paused_at: number | null; finished_at: number | null; error: string | null };
+      expect(row.status).toBe('paused');
+      expect(row.paused_at).toBeTypeOf('number');
+      // Paused isn't terminal — finished_at must remain null so the
+      // run detail page doesn't claim a duration.
+      expect(row.finished_at).toBeNull();
+      expect(row.error).toBeNull();
+    });
+  });
+
+  describe('resumeRun() (#244 / T14)', () => {
+    it('throws when the row does not exist', async () => {
+      await expect(executorResumeRun({
+        db: pluginDb, runId: 99999, workDir, binaryPath: '/fake/agentbox',
+      })).rejects.toThrow(/does not exist/);
+    });
+
+    it('throws when the row is not in paused state', async () => {
+      rawDb.prepare(
+        `INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, output_path, created_at) VALUES (?, ?, ?, ?, ?)`,
+      ).run(1, 'org/r', 'success', `${workDir}/run.log`, Date.now());
+      const id = (rawDb.prepare(`SELECT id FROM ${pluginDb.prefix}runs LIMIT 1`).get() as { id: number }).id;
+
+      await expect(executorResumeRun({
+        db: pluginDb, runId: id, workDir, binaryPath: '/fake/agentbox',
+      })).rejects.toThrow(/is not paused/);
+    });
+
+    it('flips a paused row back to running, then through to terminal status', async () => {
+      // Seed a paused row pointing at our temp workDir.
+      rawDb.prepare(
+        `INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, output_path, paused_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(7, 'org/r', 'paused', `${workDir}/run.log`, Date.now(), Date.now());
+      const id = (rawDb.prepare(`SELECT id FROM ${pluginDb.prefix}runs LIMIT 1`).get() as { id: number }).id;
+
+      let child: MockChild | null = null;
+      spawnHandler = () => { child = makeChild(); return child; };
+
+      const promise = executorResumeRun({
+        db: pluginDb, runId: id, workDir, binaryPath: '/fake/agentbox',
+      });
+      await new Promise((r) => setImmediate(r));
+
+      // Row should already be running before the subprocess exits.
+      const midRow = rawDb.prepare(`SELECT status FROM ${pluginDb.prefix}runs WHERE id = ?`).get(id) as { status: string };
+      expect(midRow.status).toBe('running');
+
+      // Subprocess exits successfully.
+      child!.emit('exit', 0, null);
+      const result = await promise;
+
+      expect(result.status).toBe('success');
+      const finalRow = rawDb.prepare(`SELECT status, finished_at FROM ${pluginDb.prefix}runs WHERE id = ?`).get(id) as { status: string; finished_at: number | null };
+      expect(finalRow.status).toBe('success');
+      expect(finalRow.finished_at).toBeTypeOf('number');
+    });
+
+    it('rejects with ExecutorBusyError if another run is in flight', async () => {
+      // Seed a paused row.
+      rawDb.prepare(
+        `INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, output_path, created_at) VALUES (?, ?, ?, ?, ?)`,
+      ).run(7, 'org/r', 'paused', `${workDir}/run.log`, Date.now());
+      const id = (rawDb.prepare(`SELECT id FROM ${pluginDb.prefix}runs LIMIT 1`).get() as { id: number }).id;
+
+      // Start a regular run to occupy the executor lock.
+      let firstChild: MockChild | null = null;
+      spawnHandler = () => { firstChild = makeChild(); return firstChild; };
+      const blocking = executeRun({
+        db: pluginDb, issueNumber: 99, repo: 'org/r', workDir,
+        mode: 'sprint', binaryPath: '/fake/agentbox',
+      });
+      await new Promise((r) => setImmediate(r));
+
+      await expect(executorResumeRun({
+        db: pluginDb, runId: id, workDir, binaryPath: '/fake/agentbox',
+      })).rejects.toBeInstanceOf(ExecutorBusyError);
+
+      // Cleanup — let the blocking run finish.
+      firstChild!.emit('exit', 0, null);
+      await blocking;
     });
   });
 

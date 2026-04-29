@@ -37,7 +37,7 @@ export function createSchema(db: PluginDatabase): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       issue_number INTEGER,
       repo TEXT,
-      status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'success', 'failed', 'cancelled')),
+      status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'paused', 'success', 'failed', 'cancelled')),
       branch TEXT,
       pr_url TEXT,
       started_at INTEGER,

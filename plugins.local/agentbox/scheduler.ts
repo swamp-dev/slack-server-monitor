@@ -23,7 +23,16 @@ import { logger } from '../../src/utils/logger.js';
 import type { PluginContext } from '../../src/plugins/types.js';
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
 import { prepareEnvironment, cleanupEnvironment } from './environment.js';
-import { executeRun, cancelActiveRun, getActiveRunId, ExecutorBusyError } from './executor.js';
+import {
+  executeRun,
+  cancelActiveRun,
+  pauseActiveRun,
+  resumeRun as executorResumeRun,
+  getActiveRunId,
+  ExecutorBusyError,
+  type ExecuteRunResult,
+} from './executor.js';
+import path from 'node:path';
 
 const execFileAsync = promisify(execFile);
 
@@ -179,11 +188,12 @@ export async function runIssuePipeline(
   ctx: PluginContext,
   config: SchedulerConfig,
   picked: ReadyIssue,
-): Promise<{ runId: number; status: 'success' | 'failed' | 'cancelled' } | null> {
+): Promise<{ runId: number; status: 'success' | 'failed' | 'cancelled' | 'paused' } | null> {
   await ghLabelRemove(picked.number, config.repo, 'agentbox-ready').catch(() => { /* best-effort */ });
   await ghLabelAdd(picked.number, config.repo, 'agentbox-running').catch(() => { /* best-effort */ });
 
   let envWorkDir: string | null = null;
+  let pipelineResult: { runId: number; status: 'success' | 'failed' | 'cancelled' | 'paused' } | null = null;
   try {
     const env = await prepareEnvironment({
       issueNumber: picked.number,
@@ -205,7 +215,18 @@ export async function runIssuePipeline(
     });
 
     await ghLabelRemove(picked.number, config.repo, 'agentbox-running').catch(() => { /* best-effort */ });
-    const finalLabel = result.status === 'success' ? 'agentbox-done' : 'agentbox-failed';
+    // Map executor status → final label. Paused runs already had
+    // their label transitioned by scheduler.pauseRun, but if the
+    // operator paused mid-pipeline we re-apply agentbox-paused here
+    // to ensure the label sticks (the label-remove above clears it).
+    let finalLabel: string;
+    if (result.status === 'paused') {
+      finalLabel = 'agentbox-paused';
+    } else if (result.status === 'success') {
+      finalLabel = 'agentbox-done';
+    } else {
+      finalLabel = 'agentbox-failed';
+    }
     await ghLabelAdd(picked.number, config.repo, finalLabel).catch(() => { /* best-effort */ });
 
     ctx.sse.broadcast('agentbox:run_finished', {
@@ -213,7 +234,8 @@ export async function runIssuePipeline(
       issueNumber: picked.number,
       status: result.status,
     });
-    return { runId: result.runId, status: result.status };
+    pipelineResult = { runId: result.runId, status: result.status };
+    return pipelineResult;
   } catch (err) {
     // ExecutorBusyError means another run is already in flight — the
     // pipeline never started, so don't transition labels or mark this
@@ -230,7 +252,15 @@ export async function runIssuePipeline(
     await ghLabelAdd(picked.number, config.repo, 'agentbox-failed').catch(() => { /* best-effort */ });
     return null;
   } finally {
-    if (envWorkDir) {
+    // Preserve the workdir when the run paused — agentbox checkpoints
+    // its session into that directory, and resumeRun re-spawns
+    // `agentbox sprint --resume` with the same cwd. Cleanup at this
+    // point would destroy the checkpoint and make the row
+    // permanently un-resumable. The eventual terminal exit (success/
+    // failed/cancelled, possibly after one or more resume cycles)
+    // takes a different code path through executor.resumeRun and is
+    // responsible for its own cleanup.
+    if (envWorkDir && pipelineResult?.status !== 'paused') {
       await cleanupEnvironment(envWorkDir).catch(() => { /* best-effort */ });
     }
   }
@@ -312,7 +342,11 @@ export function pickEligibleIssue(issues: ReadyIssue[], db: PluginDatabase): Rea
   const eligible = issues.filter((iss) => {
     const row = db
       .prepare(
-        `SELECT 1 FROM ${db.prefix}runs WHERE issue_number = ? AND status IN ('running', 'success') LIMIT 1`,
+        // 'paused' included so the picker doesn't re-spawn a fresh
+        // run for an issue with a paused session waiting to resume.
+        // Layered-defence against a label-transition failure leaving
+        // the issue with both agentbox-ready and a paused row.
+        `SELECT 1 FROM ${db.prefix}runs WHERE issue_number = ? AND status IN ('running', 'paused', 'success') LIMIT 1`,
       )
       .get(iss.number);
     return !row;
@@ -395,6 +429,89 @@ export async function cancelRun(
     ],
     { timeout: GH_TIMEOUT_MS },
   ).catch(() => { /* best-effort */ });
+}
+
+/**
+ * Pause the active run. Sends SIGTERM via the executor; agentbox
+ * checkpoints its session and exits cleanly. Marks the issue with
+ * `agentbox-paused` so the queue scheduler skips it. No GitHub
+ * comment is posted — pause is reversible, unlike cancel.
+ *
+ * Throws if the named runId isn't currently active. Idempotent for
+ * already-terminal runs (success/failed/cancelled) — no-op.
+ */
+export async function pauseRun(
+  runId: number,
+  opts: { db: PluginDatabase; repo: string },
+): Promise<void> {
+  const row = opts.db
+    .prepare(`SELECT issue_number, status FROM ${opts.db.prefix}runs WHERE id = ?`)
+    .get(runId) as { issue_number: number; status: string } | undefined;
+  if (!row) throw new Error(`Run ${String(runId)} does not exist`);
+  if (row.status === 'success' || row.status === 'failed' || row.status === 'cancelled' || row.status === 'paused') {
+    logger.debug('pauseRun: run not in pausable state, no-op', { runId, status: row.status });
+    return;
+  }
+  if (getActiveRunId() !== runId) {
+    logger.debug('pauseRun: not the active run, no-op', { runId, activeId: getActiveRunId() });
+    return;
+  }
+
+  pauseActiveRun();
+
+  await ghLabelRemove(row.issue_number, opts.repo, 'agentbox-running').catch(() => { /* best-effort */ });
+  await ghLabelAdd(row.issue_number, opts.repo, 'agentbox-paused').catch(() => { /* best-effort */ });
+}
+
+/**
+ * Resume a paused run. Looks up the saved workDir from the row's
+ * `output_path`, then dispatches to executor.resumeRun which spawns
+ * `agentbox sprint --resume` in that cwd. Transitions the issue
+ * label back to `agentbox-running`.
+ *
+ * Returns the final ExecuteRunResult (success/failed/cancelled/paused
+ * — yes, a resumed run can be paused again).
+ *
+ * Throws if the run doesn't exist or isn't paused.
+ */
+export async function resumeRun(
+  runId: number,
+  opts: { db: PluginDatabase; repo: string; binaryPath?: string },
+): Promise<ExecuteRunResult> {
+  const row = opts.db
+    .prepare(`SELECT issue_number, status, output_path FROM ${opts.db.prefix}runs WHERE id = ?`)
+    .get(runId) as { issue_number: number; status: string; output_path: string | null } | undefined;
+  if (!row) throw new Error(`Run ${String(runId)} does not exist`);
+  if (row.status !== 'paused') {
+    throw new Error(`Run ${String(runId)} is not paused (status=${row.status})`);
+  }
+  if (!row.output_path) {
+    throw new Error(`Run ${String(runId)} has no recorded workDir — cannot resume`);
+  }
+  const workDir = path.dirname(row.output_path);
+
+  await ghLabelRemove(row.issue_number, opts.repo, 'agentbox-paused').catch(() => { /* best-effort */ });
+  await ghLabelAdd(row.issue_number, opts.repo, 'agentbox-running').catch(() => { /* best-effort */ });
+
+  const result = await executorResumeRun({
+    db: opts.db,
+    runId,
+    workDir,
+    binaryPath: opts.binaryPath,
+  });
+
+  // Transition labels on terminal exit. Paused-again leaves the
+  // agentbox-running label off and re-applies agentbox-paused.
+  if (result.status === 'success' || result.status === 'failed' || result.status === 'cancelled') {
+    await ghLabelRemove(row.issue_number, opts.repo, 'agentbox-running').catch(() => { /* best-effort */ });
+    const finalLabel = result.status === 'success' ? 'agentbox-done' : 'agentbox-failed';
+    await ghLabelAdd(row.issue_number, opts.repo, finalLabel).catch(() => { /* best-effort */ });
+  } else if (result.status === 'paused') {
+    await ghLabelRemove(row.issue_number, opts.repo, 'agentbox-running').catch(() => { /* best-effort */ });
+    await ghLabelAdd(row.issue_number, opts.repo, 'agentbox-paused').catch(() => { /* best-effort */ });
+  }
+
+  return result;
 }
 
 /**

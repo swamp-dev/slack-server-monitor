@@ -43,13 +43,30 @@ export interface ExecuteRunResult {
   /** runs.id of the created row. */
   runId: number;
   /** Final status the row landed on. */
-  status: 'success' | 'failed' | 'cancelled';
+  status: 'success' | 'failed' | 'cancelled' | 'paused';
   /** Absolute path to the captured log file. */
   logPath: string;
   /** Raw exit code from the CLI (null if the process was killed before exit). */
   exitCode: number | null;
   /** Optional error message persisted on failure. */
   error?: string;
+}
+
+/**
+ * Inputs for `resumeRun`. Resumes a previously-paused run by spawning
+ * `agentbox sprint --resume` in the original workDir; agentbox finds
+ * its own resumable session in that cwd.
+ */
+export interface ResumeRunOpts {
+  db: PluginDatabase;
+  /** Existing paused runs.id row — status will flip back to 'running'. */
+  runId: number;
+  /** Workspace root from the original run (typically dirname of output_path). */
+  workDir: string;
+  /** Path to the agentbox binary. Defaults to AGENTBOX_BINARY_PATH. */
+  binaryPath?: string;
+  /** Hard timeout in ms. Defaults to 1h, same as executeRun. */
+  timeoutMs?: number;
 }
 
 const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000; // 1h
@@ -78,6 +95,7 @@ export function _resetActiveProcess(): void {
   activeProcess = null;
   activeRunId = null;
   cancelRequested = false;
+  pauseRequested = false;
 }
 
 /**
@@ -115,7 +133,7 @@ function insertPendingRun(db: PluginDatabase, opts: ExecuteRunOpts, logPath: str
 }
 
 function setStatus(db: PluginDatabase, runId: number, status: string, fields: Record<string, unknown> = {}): void {
-  const allowed = ['started_at', 'finished_at', 'error'];
+  const allowed = ['started_at', 'finished_at', 'error', 'paused_at'];
   const setClauses: string[] = ['status = ?'];
   const values: unknown[] = [status];
   for (const key of allowed) {
@@ -136,6 +154,14 @@ function setStatus(db: PluginDatabase, runId: number, status: string, fields: Re
 let cancelRequested = false;
 
 /**
+ * Like cancelRequested, but the exit is recorded as 'paused' instead
+ * of 'cancelled'. Set by pauseActiveRun(). agentbox itself catches
+ * SIGTERM and writes a checkpoint before exiting, so a paused row
+ * can later be resumed via resumeRun().
+ */
+let pauseRequested = false;
+
+/**
  * Cancel the active run, if any, by sending SIGTERM and marking the
  * exit as cancelled (so the resulting status row reads `cancelled`
  * rather than `failed`). The caller doesn't need to await; the
@@ -147,6 +173,25 @@ let cancelRequested = false;
 export function cancelActiveRun(): boolean {
   if (activeProcess === null) return false;
   cancelRequested = true;
+  try {
+    activeProcess.kill('SIGTERM');
+  } catch {
+    /* already gone — exit handler will fire */
+  }
+  return true;
+}
+
+/**
+ * Pause the active run. Sends SIGTERM so agentbox checkpoints
+ * cleanly; the exit handler records status='paused' and a paused_at
+ * timestamp on the row. Returns false if no run is active.
+ *
+ * The caller doesn't need to await — the executeRun promise will
+ * resolve with status='paused' once the subprocess exits.
+ */
+export function pauseActiveRun(): boolean {
+  if (activeProcess === null) return false;
+  pauseRequested = true;
   try {
     activeProcess.kill('SIGTERM');
   } catch {
@@ -240,7 +285,16 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<ExecuteRunResult
       activeProcess = null;
       activeRunId = null;
       cancelRequested = false;
-      setStatus(opts.db, runId, status, { finished_at: Date.now(), error: error ?? null });
+      pauseRequested = false;
+      // Paused runs aren't terminal — leave finished_at null so
+      // duration calculations on the run detail page show "—".
+      const fields: Record<string, unknown> = { error: error ?? null };
+      if (status === 'paused') {
+        fields.paused_at = Date.now();
+      } else {
+        fields.finished_at = Date.now();
+      }
+      setStatus(opts.db, runId, status, fields);
       resolve({ runId, status, logPath, exitCode: code, error });
     }
 
@@ -260,7 +314,149 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<ExecuteRunResult
 
       let status: ExecuteRunResult['status'];
       let error: string | undefined;
-      if (cancelRequested) {
+      if (pauseRequested) {
+        status = 'paused';
+        error = undefined;
+      } else if (cancelRequested) {
+        status = 'cancelled';
+        error = timeoutFired
+          ? `Killed after ${String(timeoutMs)}ms timeout (signal ${signal ?? 'unknown'})`
+          : `Cancelled by request (signal ${signal ?? 'unknown'})`;
+      } else if (code === 0) {
+        status = 'success';
+      } else {
+        status = 'failed';
+        error = `agentbox exited with code ${String(code)}${signal ? ` (signal ${signal})` : ''}`;
+      }
+      void finalize(status, code, error);
+    });
+  });
+}
+
+/**
+ * Resume a previously-paused run. Reuses the existing runs row by
+ * updating its status back to 'running' and clearing the prior
+ * `paused_at` (preserving it would be misleading since the row
+ * conceptually represents one continuous run from the operator's POV).
+ *
+ * Spawns `agentbox sprint --resume` in the saved workDir; agentbox
+ * locates its own session in that cwd. Same single-run lock and
+ * SIGTERM/SIGKILL escalation as executeRun.
+ *
+ * Throws ExecutorBusyError if another run is already in flight.
+ */
+export async function resumeRun(opts: ResumeRunOpts): Promise<ExecuteRunResult> {
+  if (activeProcess !== null) {
+    throw new ExecutorBusyError(activeRunId ?? -1);
+  }
+  cancelRequested = false;
+  pauseRequested = false;
+
+  // Verify the row exists and is actually paused. The route layer is
+  // expected to gate on this too, but defending here keeps the
+  // executor self-consistent if someone else calls it directly.
+  const row = opts.db
+    .prepare(`SELECT id, status, output_path FROM ${opts.db.prefix}runs WHERE id = ?`)
+    .get(opts.runId) as { id: number; status: string; output_path: string | null } | undefined;
+  if (!row) throw new Error(`Run ${String(opts.runId)} does not exist`);
+  if (row.status !== 'paused') {
+    throw new Error(`Run ${String(opts.runId)} is not paused (status=${row.status})`);
+  }
+
+  const logPath = row.output_path ?? path.join(opts.workDir, 'run.log');
+  const binary = opts.binaryPath ?? process.env.AGENTBOX_BINARY_PATH ?? '/root/agentbox/agentbox';
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+  let logStream: WriteStream | null = null;
+  try {
+    // Append so the resumed log continues where the paused one left
+    // off; operators reading run.log get a single timeline.
+    logStream = createWriteStream(logPath, { flags: 'a' });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    setStatus(opts.db, opts.runId, 'failed', { finished_at: Date.now(), error: `Failed to open log: ${msg}` });
+    return { runId: opts.runId, status: 'failed', logPath, exitCode: null, error: msg };
+  }
+
+  const spawnOpts: SpawnOptions = {
+    cwd: opts.workDir,
+    shell: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+  };
+
+  const child = spawn(binary, ['sprint', '--resume'], spawnOpts);
+  activeProcess = child;
+  activeRunId = opts.runId;
+
+  setStatus(opts.db, opts.runId, 'running', { started_at: Date.now(), error: null });
+
+  const drainPromises: Promise<void>[] = [];
+  function attachPipe(src: NodeJS.ReadableStream | null): void {
+    if (!src) return;
+    src.pipe(logStream!, { end: false });
+    drainPromises.push(new Promise<void>((resolve) => {
+      src.on('end', () => resolve());
+      src.on('close', () => resolve());
+      src.on('error', () => resolve());
+    }));
+  }
+  attachPipe(child.stdout);
+  attachPipe(child.stderr);
+
+  return new Promise<ExecuteRunResult>((resolve) => {
+    let resolved = false;
+    let timeoutFired = false;
+    let killTimer: NodeJS.Timeout | null = null;
+
+    const timeoutTimer = setTimeout(() => {
+      if (resolved) return;
+      timeoutFired = true;
+      cancelRequested = true;
+      logger.warn('AgentBox executor timeout (resume) — sending SIGTERM', { runId: opts.runId, timeoutMs });
+      try { child.kill('SIGTERM'); } catch { /* already gone */ }
+      killTimer = setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+      }, SIGKILL_GRACE_MS);
+    }, timeoutMs);
+
+    async function finalize(status: ExecuteRunResult['status'], code: number | null, error: string | undefined): Promise<void> {
+      await Promise.allSettled(drainPromises);
+      logStream?.end();
+      activeProcess = null;
+      activeRunId = null;
+      cancelRequested = false;
+      pauseRequested = false;
+      const fields: Record<string, unknown> = { error: error ?? null };
+      if (status === 'paused') {
+        fields.paused_at = Date.now();
+      } else {
+        fields.finished_at = Date.now();
+      }
+      setStatus(opts.db, opts.runId, status, fields);
+      resolve({ runId: opts.runId, status, logPath, exitCode: code, error });
+    }
+
+    child.on('error', (err) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeoutTimer);
+      if (killTimer) clearTimeout(killTimer);
+      void finalize('failed', null, err.message);
+    });
+
+    child.on('exit', (code, signal) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeoutTimer);
+      if (killTimer) clearTimeout(killTimer);
+
+      let status: ExecuteRunResult['status'];
+      let error: string | undefined;
+      if (pauseRequested) {
+        status = 'paused';
+        error = undefined;
+      } else if (cancelRequested) {
         status = 'cancelled';
         error = timeoutFired
           ? `Killed after ${String(timeoutMs)}ms timeout (signal ${signal ?? 'unknown'})`

@@ -741,22 +741,37 @@ describe('renderCancelControls (#242 split 1)', () => {
     expect(renderCancelControls({ id: 1, status: 'cancelled' })).toBe('');
   });
 
-  it('renders cancel + disabled-pause buttons when the run is running', async () => {
+  it('renders cancel + pause forms when the run is running', async () => {
     const { renderCancelControls } = await import('./web-templates.js');
     const html = renderCancelControls({ id: 42, status: 'running' });
     expect(html).toContain('action="/p/agentbox/runs/42/cancel"');
+    expect(html).toContain('action="/p/agentbox/runs/42/pause"');
     expect(html).toContain('method="post"');
     expect(html).toContain('Cancel run #42?');
+    expect(html).toContain('Pause run #42?');
     expect(html).toContain('Cancel</button>');
-    expect(html).toContain('disabled');
-    expect(html).toContain('Pause');
-    expect(html).toContain('coming soon');
+    expect(html).toContain('Pause</button>');
+    // Pause is no longer disabled — T14 implements it.
+    expect(html).not.toContain('disabled');
   });
 
   it('renders controls for pending runs too (race-window guard)', async () => {
     const { renderCancelControls } = await import('./web-templates.js');
     const html = renderCancelControls({ id: 7, status: 'pending' });
     expect(html).toContain('action="/p/agentbox/runs/7/cancel"');
+    expect(html).toContain('action="/p/agentbox/runs/7/pause"');
+  });
+
+  it('renders resume + cancel for paused runs (#244)', async () => {
+    const { renderCancelControls } = await import('./web-templates.js');
+    const html = renderCancelControls({ id: 11, status: 'paused' });
+    expect(html).toContain('action="/p/agentbox/runs/11/resume"');
+    expect(html).toContain('Resume run #11?');
+    expect(html).toContain('Resume</button>');
+    expect(html).toContain('action="/p/agentbox/runs/11/cancel"');
+    // Pause button shouldn't appear on a paused run.
+    expect(html).not.toContain('action="/p/agentbox/runs/11/pause"');
+    expect(html).not.toContain('Pause</button>');
   });
 });
 
@@ -801,6 +816,20 @@ describe('renderRunDetail cancel integration (#242 split 1)', () => {
     });
     expect(html).toContain('Controls');
     expect(html).toContain('action="/p/agentbox/runs/5/cancel"');
+  });
+
+  it('renders Controls card with resume button for a paused run (#244)', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail({
+      run: {
+        id: 5, issueNumber: 12, repo: 'org/r', status: 'paused' as const,
+        startedAt: 1000, finishedAt: null, prUrl: null, progressPct: 25,
+        tasksTotal: 4, tasksCompleted: 1, error: null,
+      },
+      findings: [],
+    });
+    expect(html).toContain('Controls');
+    expect(html).toContain('action="/p/agentbox/runs/5/resume"');
   });
 
   it('omits the Controls card for terminal runs', async () => {

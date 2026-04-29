@@ -427,4 +427,58 @@ describe('migrateRunsTable()', () => {
     expect(row.cancelled_by).toBeNull();
     expect(row.paused_at).toBeNull();
   });
+
+  it('widens the status CHECK constraint to allow paused (#244)', async () => {
+    // Simulate a pre-T14 table: legacy CHECK without 'paused'.
+    pluginDb.exec(`
+      CREATE TABLE ${pluginDb.prefix}runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        issue_number INTEGER,
+        repo TEXT,
+        status TEXT CHECK(status IN ('pending','running','success','failed','cancelled')),
+        branch TEXT,
+        pr_url TEXT,
+        started_at INTEGER,
+        finished_at INTEGER,
+        output_path TEXT,
+        error TEXT,
+        created_at INTEGER NOT NULL
+      )
+    `);
+    pluginDb.prepare(
+      `INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, created_at) VALUES (?, ?, ?, ?)`,
+    ).run(1, 'org/r', 'running', Date.now());
+    // Pre-migration: paused fails CHECK.
+    expect(() => {
+      pluginDb.prepare(
+        `INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, created_at) VALUES (?, ?, ?, ?)`,
+      ).run(2, 'org/r', 'paused', Date.now());
+    }).toThrow();
+
+    const { migrateRunsTable } = await import('../agentbox.js');
+    migrateRunsTable(pluginDb);
+
+    // Post-migration: paused inserts succeed, and the existing row is preserved.
+    pluginDb.prepare(
+      `INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, created_at) VALUES (?, ?, ?, ?)`,
+    ).run(3, 'org/r', 'paused', Date.now());
+    const rows = pluginDb.prepare(`SELECT issue_number, status FROM ${pluginDb.prefix}runs ORDER BY issue_number`).all() as Array<{ issue_number: number; status: string }>;
+    expect(rows).toEqual([
+      { issue_number: 1, status: 'running' },
+      { issue_number: 3, status: 'paused' },
+    ]);
+  });
+
+  it('CHECK widening is idempotent (running it twice is a no-op)', async () => {
+    const { default: plugin, migrateRunsTable } = await import('../agentbox.js');
+    await plugin.init!(createMockContext());
+    // Migrate twice — second call should detect 'paused' already in CHECK and bail.
+    migrateRunsTable(pluginDb);
+    migrateRunsTable(pluginDb);
+    pluginDb.prepare(
+      `INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, created_at) VALUES (?, ?, ?, ?)`,
+    ).run(1, 'org/r', 'paused', Date.now());
+    const row = pluginDb.prepare(`SELECT status FROM ${pluginDb.prefix}runs WHERE issue_number = 1`).get() as { status: string };
+    expect(row.status).toBe('paused');
+  });
 });

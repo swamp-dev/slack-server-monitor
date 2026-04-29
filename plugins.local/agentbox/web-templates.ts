@@ -30,7 +30,7 @@ export interface RunRow {
   id: number;
   issueNumber: number;
   repo: string;
-  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+  status: 'pending' | 'running' | 'paused' | 'success' | 'failed' | 'cancelled';
   startedAt: number | null;
   finishedAt: number | null;
   prUrl: string | null;
@@ -90,7 +90,7 @@ function countAll(db: PluginDatabase): number {
  * as a parameter (?) rather than concatenated, so callers can't
  * inject SQL via a future query-string-driven dashboard filter.
  */
-function countByStatus(db: PluginDatabase, status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled'): number {
+function countByStatus(db: PluginDatabase, status: 'pending' | 'running' | 'paused' | 'success' | 'failed' | 'cancelled'): number {
   const row = db.prepare(`SELECT COUNT(*) AS n FROM ${db.prefix}runs WHERE status = ?`).get(status) as { n: number };
   return Number(row.n);
 }
@@ -366,14 +366,29 @@ function renderActiveRun(active: RunRow | null): string {
 }
 
 /**
- * Cancel + (placeholder) pause buttons for a running run. Cancel
- * posts to /p/agentbox/runs/:id/cancel; pause is rendered disabled
- * with a "Coming soon" tooltip — implemented in T14 (#244).
+ * Run controls: cancel + pause for in-flight runs, resume for paused
+ * runs. Each form posts to /p/agentbox/runs/:id/{cancel,pause,resume}
+ * and uses inline `onsubmit="return confirm(...)"` so confirmation
+ * dialogs appear even with no plugin client JS.
  *
- * The form uses inline `onsubmit="return confirm(...)"` so a
- * confirmation dialog appears even with no plugin client JS.
+ * Returns empty for terminal runs (success/failed/cancelled) — no
+ * actions are available once a run has finished.
  */
 export function renderCancelControls(run: RunRow | { id: number; status: string }): string {
+  if (run.status === 'paused') {
+    return `<div class="agentbox-controls">
+    <form method="post" action="/p/agentbox/runs/${String(run.id)}/resume"
+          onsubmit="return confirm('Resume run #${String(run.id)}? agentbox sprint --resume will pick up the saved session.');"
+          style="display:inline">
+      <button type="submit" class="agentbox-btn agentbox-btn-primary">Resume</button>
+    </form>
+    <form method="post" action="/p/agentbox/runs/${String(run.id)}/cancel"
+          onsubmit="return confirm('Cancel run #${String(run.id)}? This will terminate the saved session — it cannot be resumed afterwards.');"
+          style="display:inline">
+      <button type="submit" class="agentbox-btn agentbox-btn-danger">Cancel</button>
+    </form>
+  </div>`;
+  }
   if (run.status !== 'running' && run.status !== 'pending') return '';
   return `<div class="agentbox-controls">
     <form method="post" action="/p/agentbox/runs/${String(run.id)}/cancel"
@@ -381,8 +396,11 @@ export function renderCancelControls(run: RunRow | { id: number; status: string 
           style="display:inline">
       <button type="submit" class="agentbox-btn agentbox-btn-danger">Cancel</button>
     </form>
-    <button type="button" class="agentbox-btn agentbox-btn-disabled" disabled
-            title="Pause/resume coming soon (T14)">Pause</button>
+    <form method="post" action="/p/agentbox/runs/${String(run.id)}/pause"
+          onsubmit="return confirm('Pause run #${String(run.id)}? agentbox checkpoints the session — you can resume it later.');"
+          style="display:inline">
+      <button type="submit" class="agentbox-btn">Pause</button>
+    </form>
   </div>`;
 }
 
@@ -599,6 +617,10 @@ export const DASHBOARD_CSS = `
 .agentbox-btn-danger:hover { background: var(--red, #ff5555); color: var(--bg, #1e1e1e); }
 .agentbox-btn-disabled { opacity: 0.4; cursor: not-allowed; }
 .agentbox-btn-disabled:hover { border-color: var(--border, #444); background: var(--surface, #1e1e1e); }
+.agentbox-btn-primary { color: var(--green, #50fa7b); border-color: var(--green, #50fa7b); }
+.agentbox-btn-primary:hover { background: var(--green, #50fa7b); color: var(--bg, #1e1e1e); }
+.agentbox-badge-paused { background: var(--orange, #ffb86c); color: var(--bg, #1e1e1e); }
+.agentbox-row-paused { opacity: 0.85; }
 .agentbox-toasts {
   position: fixed;
   right: 1rem;
@@ -750,8 +772,13 @@ export function renderRunDetail(detail: RunDetailData): string {
 
   const findingsCard = renderReviewFindingsCard(findings);
 
-  const controlsCard = run.status === 'running' || run.status === 'pending'
-    ? `<div class="agentbox-card"><h2>Controls</h2>${renderCancelControls(run)}</div>`
+  // Single source of truth — renderCancelControls returns '' for
+  // statuses that have no actions. Wrap the card only when there's
+  // real content to render; this avoids a future status being added
+  // to renderCancelControls but missed here.
+  const controls = renderCancelControls(run);
+  const controlsCard = controls
+    ? `<div class="agentbox-card"><h2>Controls</h2>${controls}</div>`
     : '';
 
   return `${nav}
