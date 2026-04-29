@@ -12,11 +12,49 @@ npm test                  # full suite
 npm run test:coverage     # full suite + v8 coverage report
 npm run test:smoke        # smoke tests only (tests/smoke/)
 npm run test:e2e          # Playwright end-to-end (separate runner)
+npm run test:mutation     # Stryker mutation testing on the security perimeter
 ```
 
 Coverage output lands in `coverage/` (HTML at `coverage/index.html`,
 machine-readable at `coverage/lcov.info`). The repo does **not** enforce a
 coverage threshold in CI — focus is on critical-path coverage, not a number.
+
+## Mutation testing
+
+`npm run test:mutation` runs [Stryker](https://stryker-mutator.io/) against
+the **security perimeter** only:
+
+- `src/utils/shell.ts` — command allowlist + sensitive-path blocklist
+- `src/utils/sanitize.ts` — input validation (Zod + shell-metachar rejection)
+- `src/formatters/scrub.ts` — log/secret redaction
+
+Whole-repo mutation testing on a 3000+ test suite is too slow to be useful;
+the perimeter is where weak assertions matter most. Stryker produces an HTML
+report at `reports/mutation/index.html`.
+
+Configured thresholds (`stryker.conf.json`):
+
+| Score | Behaviour |
+|-------|-----------|
+| `>= 90` | high (green) |
+| `>= 75` | low (yellow) |
+| `< 70`  | break — CI fails |
+
+Baseline at 2026-04-29: overall **76.39** (scrub 94.12, shell 77.35,
+sanitize 66.67). The `break: 70` floor leaves ~6 pts of headroom over
+the current baseline.
+
+`ignoreStatic: true` in the config skips Stryker's "static" mutants
+(module-level constants — ~94% of generated mutants on this codebase).
+This brings runtime from ~14 min/file to ~1 min total, but it's a real
+coverage gap to be aware of: the regex patterns in `scrub.ts`
+(`PASSWORD_PATTERNS`, `SECRET_PATTERNS`, etc.) are module-level
+constants and are NOT mutated. A regex regression that drops an
+alternation or weakens a quantifier won't be caught by the score
+alone — pair regex changes with explicit unit-test cases.
+
+Re-run after editing the perimeter files; the score will drop if a new
+branch or condition isn't covered by any assertion.
 
 ## Auth-feature coverage snapshot
 
