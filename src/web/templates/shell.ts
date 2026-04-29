@@ -95,6 +95,7 @@ export function wrapInShell(opts: ShellOptions): string {
     ${isAdmin ? `<a href="/admin/users" class="nav-link">${icon('user', 14)} Admin</a>` : ''}
     ${pluginNavHtml ? `<div class="nav-plugins">${pluginNavHtml}</div>` : ''}
     <button class="nav-hamburger" id="nav-hamburger" type="button" aria-label="Menu">${icon('chevron-down', 20)}</button>
+    <div class="nav-backdrop" id="nav-backdrop" aria-hidden="true"></div>
     <div class="nav-actions" id="nav-actions">
       ${isAuthenticated ? `<div class="notif-bell-wrapper">${renderNotificationBell(unreadCount)}${renderNotificationDropdown([])}</div>` : ''}
       <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme"><span class="icon-sun">${icon('sun', 18)}</span><span class="icon-moon">${icon('moon', 18)}</span></button>
@@ -212,14 +213,19 @@ export function wrapInShell(opts: ShellOptions): string {
   (function() {
     var btn = document.getElementById('nav-hamburger');
     var actions = document.getElementById('nav-actions');
+    var backdrop = document.getElementById('nav-backdrop');
     var plugins = document.querySelector('.nav-plugins');
     var navLinks = document.querySelectorAll('.nav-link');
     if (!btn || !actions) return;
-    btn.addEventListener('click', function() {
-      actions.classList.toggle('open');
-      if (plugins) plugins.classList.toggle('open');
-      navLinks.forEach(function(link) { link.classList.toggle('open'); });
-    });
+    function toggleMenu() {
+      var willOpen = !actions.classList.contains('open');
+      actions.classList.toggle('open', willOpen);
+      if (backdrop) backdrop.classList.toggle('open', willOpen);
+      if (plugins) plugins.classList.toggle('open', willOpen);
+      navLinks.forEach(function(link) { link.classList.toggle('open', willOpen); });
+    }
+    btn.addEventListener('click', toggleMenu);
+    if (backdrop) backdrop.addEventListener('click', toggleMenu);
   })();
   // Notification bell dropdown
   (function() {

@@ -384,7 +384,12 @@ export function getBaseStyles(): string {
     .nav-plugins { display: none; }
     .nav-plugins.open { display: flex; flex-direction: column; position: absolute; top: 100%; left: 0; background: var(--nav-bg); border: 1px solid var(--border); border-radius: 0 0 8px 8px; padding: 12px; gap: 8px; z-index: 50; }
     .nav-actions { display: none; }
-    .nav-actions.open { display: flex; flex-direction: column; position: absolute; top: 100%; right: 0; background: var(--nav-bg); border: 1px solid var(--border); border-radius: 0 0 8px 8px; padding: 12px; gap: 8px; }
+    .nav-actions.open { display: flex; flex-direction: column; position: absolute; top: 100%; right: 0; background: var(--nav-bg); border: 1px solid var(--border); border-radius: 0 0 8px 8px; padding: 12px; gap: 8px; z-index: 50; }
+    /* Backdrop behind the mobile hamburger menu — focuses the open menu and
+       gives users an obvious tap target to close it. Mobile-only because the
+       hamburger itself is mobile-only. */
+    .nav-backdrop { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 40; }
+    .nav-backdrop.open { display: block; }
   }
 
   /* Messages */
@@ -1058,7 +1063,18 @@ export function getBaseStyles(): string {
     padding: 28px 36px;
     max-width: 480px;
     width: 90%;
+    /* Cap height so the modal scrolls internally rather than getting clipped
+       by the viewport at common laptop heights (e.g. 720px). */
+    max-height: 90vh;
+    overflow-y: auto;
     box-shadow: 0 8px 32px var(--shadow);
+  }
+
+  /* Native <dialog> backdrop — used by the reset-password dialog and any
+     other showModal() call. The browser default is rgba(0,0,0,0.1), nearly
+     invisible against either theme. */
+  dialog::backdrop {
+    background: rgba(0, 0, 0, 0.6);
   }
   .kb-overlay-content h2 {
     margin-bottom: 16px;
