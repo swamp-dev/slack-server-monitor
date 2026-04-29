@@ -197,6 +197,17 @@ export function wrapInShell(opts: ShellOptions): string {
     var banner = document.getElementById('hint-banner');
     var dismiss = document.getElementById('hint-banner-dismiss');
     if (!banner || !dismiss) return;
+    // Only show the keyboard-shortcut tip on pages where Ctrl+K and ?
+    // actually do something useful — list views and the notifications
+    // page. Skip on conversation detail (focused task), admin (different
+    // work mode), and error pages (tip is noise when the user just hit
+    // a problem). Conversation detail also lives under /c/ but has
+    // additional path segments, so we use an explicit list rather than
+    // a /c prefix match.
+    var p = location.pathname.replace(/\/$/, '') || '/';
+    var listViews = ['/', '/c', '/c/search', '/c/favorites', '/c/archived', '/notifications'];
+    var pathAllowed = listViews.indexOf(p) !== -1 || p.indexOf('/c/tag/') === 0;
+    if (!pathAllowed) return;
     try {
       var onboarded = localStorage.getItem('ssm-onboarded') === 'true';
       var dismissed = localStorage.getItem('ssm-hints-dismissed') === 'true';

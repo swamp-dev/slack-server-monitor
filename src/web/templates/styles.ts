@@ -194,8 +194,13 @@ export function getBaseStyles(): string {
     display: none;
     position: absolute;
     top: calc(100% + 8px);
-    right: 0;
+    /* Pull the panel inside the viewport edge so it doesn't sit flush
+       against the right border at narrow widths. */
+    right: 8px;
     width: 320px;
+    /* Cap to viewport width on tablet/narrow desktop so the panel
+       never gets clipped or wraps oddly. */
+    max-width: calc(100vw - 16px);
     max-height: 400px;
     overflow-y: auto;
     background: var(--surface);
