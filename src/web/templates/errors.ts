@@ -199,13 +199,24 @@ export function renderLogin(error?: string, returnTo?: string, showRegisterLink 
       opacity: 0.9;
     }
     .login-error {
-      background: rgba(255, 85, 85, 0.15);
+      background: rgba(255, 85, 85, 0.22);
       border: 1px solid var(--red);
+      border-left: 4px solid var(--red);
       border-radius: 6px;
       padding: 10px 14px;
       margin-bottom: 16px;
       font-size: 0.875rem;
+      font-weight: 500;
       color: var(--red);
+    }
+    [data-theme="dracula"] .login-error {
+      /* Dracula's --red (#ff5555) on dark surfaces lost contrast at 15%
+         background; the brighter shade + boosted alpha keeps the alert
+         legible without overwhelming the form. The hardcoded #ffaaaa
+         (no --red-light token in the palette) clears WCAG AA on the
+         compositied dark card surface. */
+      background: rgba(255, 110, 110, 0.28);
+      color: #ffaaaa;
     }
     /* Token validation checkmark */
     .token-check {

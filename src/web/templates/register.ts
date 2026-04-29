@@ -91,13 +91,21 @@ export function renderRegister(error?: string, prefill: RegisterPagePrefill = {}
     }
     .login-form button[type="submit"]:hover { opacity: 0.9; }
     .login-error {
-      background: rgba(255, 85, 85, 0.15);
+      background: rgba(255, 85, 85, 0.22);
       border: 1px solid var(--red);
+      border-left: 4px solid var(--red);
       border-radius: 6px;
       padding: 10px 14px;
       margin-bottom: 16px;
       font-size: 0.875rem;
+      font-weight: 500;
       color: var(--red);
+    }
+    [data-theme="dracula"] .login-error {
+      /* Hardcoded #ffaaaa (no --red-light token in the palette) clears
+         WCAG AA against the dark card after the alpha-blend. */
+      background: rgba(255, 110, 110, 0.28);
+      color: #ffaaaa;
     }
     .login-help { margin-top: 10px; margin-bottom: 0; font-size: 0.75rem; color: var(--text-muted); }
     .login-back {
