@@ -30,6 +30,9 @@ export default tseslint.config(
     ...tseslint.configs.disableTypeChecked,
   },
   {
-    ignores: ['dist/', 'node_modules/', '*.config.js', '*.config.cjs'],
+    // Test fixtures invoked as standalone scripts (e.g. fake-agentbox.mjs)
+    // aren't in tsconfig.json's include list and don't benefit from
+    // typescript-eslint's project-aware checks.
+    ignores: ['dist/', 'node_modules/', '*.config.js', '*.config.cjs', 'tests/fixtures/**/*.mjs'],
   }
 );
