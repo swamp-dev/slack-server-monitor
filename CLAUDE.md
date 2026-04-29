@@ -150,7 +150,11 @@ npm run typecheck       # Type checking
 npm run lint            # Linting
 npm run build           # Production build
 npm run screenshots     # Capture web UI screenshots (Playwright)
+npm run ci              # Run every CI check locally (lint, typecheck, build, coverage, smoke, e2e, audit)
+npm run ci:fast         # Inner-loop subset of ci (skips e2e + audit)
 ```
+
+Use `nvm use` in the repo root to pick the same Node version CI runs (pinned in `.nvmrc`).
 
 ### UI Development Workflow
 

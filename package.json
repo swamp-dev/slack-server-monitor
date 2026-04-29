@@ -17,6 +17,8 @@
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",
     "typecheck": "tsc --noEmit",
+    "ci": "npm run lint && npm run typecheck && npm run build && npm run test:coverage && npm run test:smoke && npm run test:e2e && npm audit --audit-level=high",
+    "ci:fast": "npm run lint && npm run typecheck && npm run build && npm run test:coverage && npm run test:smoke",
     "setup": "tsx src/setup/wizard.ts",
     "screenshots": "tsx scripts/take-screenshots.ts",
     "manage-users": "tsx src/cli/manage-users.ts"

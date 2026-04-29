@@ -16,7 +16,25 @@ npm run lint:fix        # ESLint with auto-fix
 npm run build           # Production build
 npm run screenshots     # Capture web UI screenshots
 npm run deploy:check    # Deployment validation
+npm run ci              # Run every CI check locally
+npm run ci:fast         # Inner-loop subset (skips e2e + audit)
 ```
+
+The repo pins Node 20 in `.nvmrc` -- run `nvm use` in the repo root to match CI.
+
+## Local CI Parity
+
+`npm run ci` runs the full set of checks `.github/workflows/ci.yml` runs:
+
+```
+lint -> typecheck -> build -> test:coverage -> test:smoke -> test:e2e -> npm audit
+```
+
+Run it before opening any PR. If every step exits 0 locally and hosted CI still fails, that's an infrastructure issue, not your diff.
+
+`npm run ci:fast` skips `test:e2e` and the audit -- useful for tight inner-loop work where you want a fast confidence check between commits.
+
+If `test:e2e` fails with a missing browser error, run `npx playwright install chromium` once -- the local `ci` script doesn't auto-install browsers (CI does, with `--with-deps`).
 
 ## Testing
 
