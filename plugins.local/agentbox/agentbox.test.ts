@@ -239,6 +239,170 @@ describe('agentbox SSE run-complete event (#242 split 2)', () => {
   });
 });
 
+describe('agentbox SSE journal-entry events (#343)', () => {
+  beforeEach(() => setupTestDb());
+  afterEach(() => teardownTestDb());
+
+  it('broadcasts a journal-entry event for each new entry in agentbox.db while a run is active', async () => {
+    // Build a real workDir with a fake agentbox.db the polling loop
+    // can read. Stamp the runs row's output_path so workDir resolves
+    // to this tmp dir.
+    const { mkdir } = await import('node:fs/promises');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const Database = (await import('better-sqlite3')).default;
+    const workDir = path.join(os.tmpdir(), `journal-int-${String(Date.now())}-${String(process.pid)}-${String(Math.random()).slice(2, 8)}`);
+    await mkdir(path.join(workDir, '.agentbox'), { recursive: true });
+
+    const fakeAgentboxDb = new Database(path.join(workDir, '.agentbox', 'agentbox.db'));
+    fakeAgentboxDb.pragma('journal_mode = WAL');
+    fakeAgentboxDb.exec(`
+      CREATE TABLE sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at DATETIME);
+      CREATE TABLE journal_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL REFERENCES sessions(id),
+        kind TEXT NOT NULL, task_id TEXT, sprint INTEGER,
+        iteration INTEGER NOT NULL, summary TEXT NOT NULL,
+        reflection TEXT NOT NULL, confidence INTEGER, difficulty INTEGER,
+        momentum INTEGER, duration_ms INTEGER DEFAULT 0,
+        timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    fakeAgentboxDb.prepare(`INSERT INTO sessions (id) VALUES (1)`).run();
+
+    vi.useFakeTimers();
+    try {
+      const { default: plugin } = await import('../agentbox.js');
+      const broadcast = vi.fn();
+      const ctx = {
+        db: pluginDb, name: 'agentbox', version: '1.0.0',
+        notify: vi.fn(),
+        sse: { broadcast, clientCount: () => 1 },
+      };
+      await plugin.init!(ctx);
+
+      // Seed a running row pointing at our tmp workDir.
+      pluginDb.prepare(
+        `INSERT INTO plugin_agentbox_runs (issue_number, repo, status, output_path, started_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(7, 'org/repo', 'running', path.join(workDir, 'run.log'), Date.now(), Date.now());
+
+      // Tick 1: agentbox.db has no entries yet — no journal events.
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(broadcast.mock.calls.find((c) => c[0] === 'journal-entry')).toBeUndefined();
+
+      // Now agentbox writes two entries. Tick 2 should broadcast both.
+      const insert = fakeAgentboxDb.prepare(`INSERT INTO journal_entries
+        (session_id, kind, iteration, summary, reflection, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)`);
+      insert.run(1, 'reflection', 1, 'a', 'r1', '2026-04-29 10:00:00');
+      insert.run(1, 'reflection', 2, 'b', 'r2', '2026-04-29 10:01:00');
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      const journalCalls = broadcast.mock.calls.filter((c) => c[0] === 'journal-entry');
+      expect(journalCalls).toHaveLength(2);
+      const summaries = journalCalls.map((c) => (c[1] as { entry: { summary: string } }).entry.summary);
+      expect(summaries).toEqual(['a', 'b']);
+
+      // Tick 3 with no new entries: no duplicate broadcast.
+      await vi.advanceTimersByTimeAsync(10_000);
+      const stillTwo = broadcast.mock.calls.filter((c) => c[0] === 'journal-entry');
+      expect(stillTwo).toHaveLength(2);
+
+      // Tick 4 after a third entry: only the new one broadcasts.
+      insert.run(1, 'reflection', 3, 'c', 'r3', '2026-04-29 10:02:00');
+      await vi.advanceTimersByTimeAsync(10_000);
+      const final = broadcast.mock.calls.filter((c) => c[0] === 'journal-entry');
+      expect(final).toHaveLength(3);
+      expect((final[2]![1] as { entry: { summary: string } }).entry.summary).toBe('c');
+
+      await plugin.destroy!(ctx);
+      fakeAgentboxDb.close();
+    } finally {
+      vi.useRealTimers();
+      const { rm } = await import('node:fs/promises');
+      await rm(workDir, { recursive: true, force: true }).catch(() => { /* best-effort */ });
+    }
+  });
+
+  it('does NOT re-broadcast all entries when a run goes running→paused→running', async () => {
+    // Regression for the pause/resume cursor bug: dropping the cursor
+    // on running→paused (because activeRun goes null) would re-emit
+    // every prior journal-entry on resume. The fix only drops the
+    // cursor on terminal transitions.
+    const { mkdir } = await import('node:fs/promises');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const Database = (await import('better-sqlite3')).default;
+    const workDir = path.join(os.tmpdir(), `journal-pause-${String(Date.now())}-${String(process.pid)}-${String(Math.random()).slice(2, 8)}`);
+    await mkdir(path.join(workDir, '.agentbox'), { recursive: true });
+
+    const fakeAgentboxDb = new Database(path.join(workDir, '.agentbox', 'agentbox.db'));
+    fakeAgentboxDb.pragma('journal_mode = WAL');
+    fakeAgentboxDb.exec(`
+      CREATE TABLE sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at DATETIME);
+      CREATE TABLE journal_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL REFERENCES sessions(id),
+        kind TEXT NOT NULL, task_id TEXT, sprint INTEGER,
+        iteration INTEGER NOT NULL, summary TEXT NOT NULL,
+        reflection TEXT NOT NULL, confidence INTEGER, difficulty INTEGER,
+        momentum INTEGER, duration_ms INTEGER DEFAULT 0,
+        timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    fakeAgentboxDb.prepare(`INSERT INTO sessions (id) VALUES (1)`).run();
+    const insert = fakeAgentboxDb.prepare(`INSERT INTO journal_entries
+      (session_id, kind, iteration, summary, reflection, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?)`);
+    insert.run(1, 'reflection', 1, 'a', 'r1', '2026-04-29 10:00:00');
+    insert.run(1, 'reflection', 2, 'b', 'r2', '2026-04-29 10:01:00');
+
+    vi.useFakeTimers();
+    try {
+      const { default: plugin } = await import('../agentbox.js');
+      const broadcast = vi.fn();
+      const ctx = {
+        db: pluginDb, name: 'agentbox', version: '1.0.0',
+        notify: vi.fn(),
+        sse: { broadcast, clientCount: () => 1 },
+      };
+      await plugin.init!(ctx);
+
+      pluginDb.prepare(
+        `INSERT INTO plugin_agentbox_runs (issue_number, repo, status, output_path, started_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(7, 'org/repo', 'running', path.join(workDir, 'run.log'), Date.now(), Date.now());
+
+      // Tick 1: 2 journal entries broadcast; cursor advances to 2.
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(broadcast.mock.calls.filter((c) => c[0] === 'journal-entry')).toHaveLength(2);
+
+      // Pause: row flips to paused. agentbox itself catches SIGTERM
+      // and writes a final entry while checkpointing.
+      pluginDb.prepare(`UPDATE plugin_agentbox_runs SET status = 'paused', paused_at = ? WHERE issue_number = 7`).run(Date.now());
+      insert.run(1, 'reflection', 3, 'paused-checkpoint', 'r', '2026-04-29 10:02:00');
+      await vi.advanceTimersByTimeAsync(10_000);
+      // No journal-entry events while paused (active run is null).
+      expect(broadcast.mock.calls.filter((c) => c[0] === 'journal-entry')).toHaveLength(2);
+
+      // Resume: row flips back to running. The cursor must have
+      // survived; only the new "paused-checkpoint" entry should
+      // broadcast — NOT 'a' and 'b' a second time.
+      pluginDb.prepare(`UPDATE plugin_agentbox_runs SET status = 'running' WHERE issue_number = 7`).run();
+      await vi.advanceTimersByTimeAsync(10_000);
+      const finalCalls = broadcast.mock.calls.filter((c) => c[0] === 'journal-entry');
+      expect(finalCalls).toHaveLength(3);
+      expect((finalCalls[2]![1] as { entry: { summary: string } }).entry.summary).toBe('paused-checkpoint');
+
+      await plugin.destroy!(ctx);
+      fakeAgentboxDb.close();
+    } finally {
+      vi.useRealTimers();
+      const { rm } = await import('node:fs/promises');
+      await rm(workDir, { recursive: true, force: true }).catch(() => { /* best-effort */ });
+    }
+  });
+});
+
 describe('agentbox init()', () => {
   beforeEach(() => setupTestDb());
   afterEach(() => teardownTestDb());

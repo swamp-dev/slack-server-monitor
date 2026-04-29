@@ -580,7 +580,7 @@ describe('renderRunDetail (#241 split #4)', () => {
       progressPct: 100, tasksTotal: 5, tasksCompleted: 5, error: null,
       ...overrides,
     };
-    return { run, findings };
+    return { run, findings, journalEntries: [] };
   }
 
   it('renders the summary grid with issue, status, duration, started, finished, PR', async () => {
@@ -670,11 +670,12 @@ describe('renderRunDetail (#241 split #4)', () => {
     expect(html).not.toContain('href="https://github.com');
   });
 
-  it('renders journal placeholder card', async () => {
+  it('renders the journal timeline card with empty-state when no entries are present', async () => {
     const { renderRunDetail } = await import('./web-templates.js');
     const html = renderRunDetail(makeDetail());
     expect(html).toContain('Journal Timeline');
-    expect(html).toMatch(/journal events are wired to the SSE channel/);
+    expect(html).toContain('id="agentbox-journal-list"');
+    expect(html).toContain('No journal entries yet');
   });
 
   it('keeps the runs nav pill active on detail pages', async () => {
@@ -813,6 +814,7 @@ describe('renderRunDetail cancel integration (#242 split 1)', () => {
         tasksTotal: 4, tasksCompleted: 1, error: null,
       },
       findings: [],
+      journalEntries: [],
     });
     expect(html).toContain('Controls');
     expect(html).toContain('action="/p/agentbox/runs/5/cancel"');
@@ -827,6 +829,7 @@ describe('renderRunDetail cancel integration (#242 split 1)', () => {
         tasksTotal: 4, tasksCompleted: 1, error: null,
       },
       findings: [],
+      journalEntries: [],
     });
     expect(html).toContain('Controls');
     expect(html).toContain('action="/p/agentbox/runs/5/resume"');
@@ -841,6 +844,7 @@ describe('renderRunDetail cancel integration (#242 split 1)', () => {
         tasksTotal: 4, tasksCompleted: 4, error: null,
       },
       findings: [],
+      journalEntries: [],
     });
     expect(html).not.toContain('action="/p/agentbox/runs/5/cancel"');
     expect(html).not.toContain('<h2>Controls</h2>');
@@ -896,6 +900,114 @@ describe('DASHBOARD_CLIENT_JS run-complete toast (#242 split 2)', () => {
     const { DASHBOARD_CLIENT_JS } = await import('./web-templates.js');
     // The IIFE adds the leaving class before removing the node.
     expect(DASHBOARD_CLIENT_JS).toContain('agentbox-toast-leaving');
+  });
+});
+
+describe('renderJournalEntry (#343)', () => {
+  it('renders summary, meta, and reflection fields', async () => {
+    const { renderJournalEntry } = await import('./web-templates.js');
+    const html = renderJournalEntry({
+      id: 5, sessionId: 1, kind: 'reflection', taskId: null,
+      sprint: 2, iteration: 7, summary: 'first crack at it',
+      reflection: 'felt clean', confidence: 4, difficulty: 3,
+      momentum: 5, durationMs: 1200, timestamp: '2026-04-29 10:00:00',
+    });
+    expect(html).toContain('data-entry-id="5"');
+    expect(html).toContain('first crack at it');
+    expect(html).toContain('felt clean');
+    expect(html).toContain('Iteration 7');
+    expect(html).toContain('Sprint 2');
+    expect(html).toContain('Confidence 4/5');
+    expect(html).toContain('Difficulty 3/5');
+    expect(html).toContain('Momentum 5/5');
+    expect(html).toContain('2026-04-29 10:00:00');
+  });
+
+  it('escapes hostile summary and reflection content', async () => {
+    const { renderJournalEntry } = await import('./web-templates.js');
+    const html = renderJournalEntry({
+      id: 1, sessionId: 1, kind: 'reflection', taskId: null,
+      sprint: null, iteration: 1, summary: '<script>alert(1)</script>',
+      reflection: '<img src=x onerror=y>', confidence: null,
+      difficulty: null, momentum: null, durationMs: 0,
+      timestamp: '2026-04-29 10:00:00',
+    });
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).not.toContain('<img src=x');
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  it('omits optional metric labels when their values are zero/null', async () => {
+    const { renderJournalEntry } = await import('./web-templates.js');
+    const html = renderJournalEntry({
+      id: 1, sessionId: 1, kind: 'reflection', taskId: null,
+      sprint: null, iteration: 1, summary: 's', reflection: 'r',
+      confidence: null, difficulty: null, momentum: null,
+      durationMs: 0, timestamp: '2026-04-29 10:00:00',
+    });
+    expect(html).not.toContain('Sprint');
+    expect(html).not.toContain('Confidence');
+    expect(html).not.toContain('Difficulty');
+    expect(html).not.toContain('Momentum');
+    expect(html).toContain('Iteration 1');
+  });
+});
+
+describe('renderRunDetail journal integration (#343)', () => {
+  it('renders the populated timeline when entries are present', async () => {
+    const { renderRunDetail } = await import('./web-templates.js');
+    const html = renderRunDetail({
+      run: {
+        id: 5, issueNumber: 12, repo: 'org/r', status: 'running' as const,
+        startedAt: 1000, finishedAt: null, prUrl: null, progressPct: 25,
+        tasksTotal: 4, tasksCompleted: 1, error: null,
+      },
+      findings: [],
+      journalEntries: [
+        {
+          id: 1, sessionId: 1, kind: 'reflection', taskId: null,
+          sprint: 1, iteration: 1, summary: 'thing one',
+          reflection: 'looking good', confidence: 3, difficulty: 2,
+          momentum: 4, durationMs: 800, timestamp: '2026-04-29 10:00:00',
+        },
+      ],
+    });
+    expect(html).toContain('Journal Timeline');
+    expect(html).toContain('agentbox-journal-list');
+    expect(html).toContain('thing one');
+    expect(html).toContain('looking good');
+    expect(html).not.toContain('No journal entries yet');
+  });
+});
+
+describe('DASHBOARD_CLIENT_JS journal-entry handler (#343)', () => {
+  it('listens for journal-entry events and appends to the timeline list', async () => {
+    const { DASHBOARD_CLIENT_JS } = await import('./web-templates.js');
+    expect(DASHBOARD_CLIENT_JS).toContain("addEventListener('journal-entry'");
+    expect(DASHBOARD_CLIENT_JS).toContain('agentbox-journal-list');
+  });
+
+  it('uses textContent for all journal payload values (no HTML injection path)', async () => {
+    const { DASHBOARD_CLIENT_JS } = await import('./web-templates.js');
+    expect(DASHBOARD_CLIENT_JS).toContain('summary.textContent');
+    expect(DASHBOARD_CLIENT_JS).toContain('refl.textContent');
+    expect(DASHBOARD_CLIENT_JS).not.toMatch(/list\.innerHTML/);
+  });
+
+  it('skips entries whose id is already rendered (idempotent on reconnect)', async () => {
+    const { DASHBOARD_CLIENT_JS } = await import('./web-templates.js');
+    expect(DASHBOARD_CLIENT_JS).toContain('data-entry-id');
+    expect(DASHBOARD_CLIENT_JS).toContain('querySelector');
+  });
+});
+
+describe('DASHBOARD_CSS journal classes (#343)', () => {
+  it('includes the journal-list and entry styling', async () => {
+    const { DASHBOARD_CSS } = await import('./web-templates.js');
+    expect(DASHBOARD_CSS).toContain('.agentbox-journal-list');
+    expect(DASHBOARD_CSS).toContain('.agentbox-journal-entry');
+    expect(DASHBOARD_CSS).toContain('.agentbox-journal-summary');
+    expect(DASHBOARD_CSS).toContain('.agentbox-journal-reflection');
   });
 });
 

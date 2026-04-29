@@ -5,8 +5,10 @@
  * cards + active run + recent completions). Queue page, run history,
  * run detail, and SSE wiring land in follow-up PRs.
  */
+import path from 'node:path';
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
 import { escapeHtml, sanitizeUrl } from '../../src/web/plugin-helpers.js';
+import { readJournalEntries, type JournalEntry } from './journal-reader.js';
 
 /**
  * Numbers feeding the dashboard's stat cards. Pure DTO so callers
@@ -648,6 +650,22 @@ export const DASHBOARD_CSS = `
 .agentbox-toast-failed { border-left-color: var(--red, #ff5555); }
 .agentbox-toast-cancelled { border-left-color: var(--orange, #ffb86c); }
 .agentbox-toast-leaving { opacity: 0; transform: translateY(8px); }
+.agentbox-journal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 600px;
+  overflow-y: auto;
+}
+.agentbox-journal-entry {
+  border-left: 3px solid var(--accent, #bd93f9);
+  padding: 8px 12px;
+  background: var(--surface, #1e1e1e);
+  border-radius: 0 4px 4px 0;
+}
+.agentbox-journal-summary { font-weight: 600; margin-bottom: 4px; }
+.agentbox-journal-meta { font-size: 0.75rem; color: var(--text-muted, #888); margin-bottom: 6px; }
+.agentbox-journal-reflection { font-size: 0.875rem; white-space: pre-wrap; color: var(--text, #f8f8f2); }
 .agentbox-error-banner {
   background: rgba(255, 85, 85, 0.1);
   border: 1px solid var(--red, #ff5555);
@@ -674,6 +692,14 @@ export interface RunDetailData {
   run: RunRow;
   /** Findings from the agentbox_reviews table joined on run_id. */
   findings: ReviewFindingRow[];
+  /**
+   * Journal entries read live from agentbox's own SQLite DB at
+   * <workDir>/.agentbox/agentbox.db. Empty when the DB doesn't
+   * exist yet (sprint hasn't started) or the run has no workDir
+   * recorded. Populated newest-last (id ASC) so the rendered
+   * timeline reads top-down chronologically.
+   */
+  journalEntries: JournalEntry[];
 }
 
 /**
@@ -688,15 +714,22 @@ export function loadRunDetail(db: PluginDatabase, runId: number): RunDetailData 
   const row = db
     .prepare(
       `SELECT id, issue_number, repo, status, started_at, finished_at, pr_url, progress_pct,
-              tasks_total, tasks_completed, error
+              tasks_total, tasks_completed, error, output_path
        FROM ${db.prefix}runs WHERE id = ?`,
     )
-    .get(runId) as Record<string, unknown> | undefined;
+    .get(runId) as (Record<string, unknown> & { output_path: string | null }) | undefined;
   if (!row) return null;
   const run = mapRow(row);
 
   const findings = readFindingsIfTableExists(db, runId);
-  return { run, findings };
+
+  // Best-effort journal read. Failures (missing DB, schema mismatch)
+  // surface as an empty array — readJournalEntries logs and swallows.
+  const journalEntries = row.output_path
+    ? readJournalEntries(path.dirname(row.output_path))
+    : [];
+
+  return { run, findings, journalEntries };
 }
 
 function readFindingsIfTableExists(db: PluginDatabase, runId: number): ReviewFindingRow[] {
@@ -722,7 +755,7 @@ function readFindingsIfTableExists(db: PluginDatabase, runId: number): ReviewFin
 
 export function renderRunDetail(detail: RunDetailData): string {
   const nav = renderNavPills('runs');
-  const { run, findings } = detail;
+  const { run, findings, journalEntries } = detail;
   const dur = run.startedAt && run.finishedAt ? formatDurationMs(run.finishedAt - run.startedAt) : '—';
   const startedAgo = run.startedAt ? formatRelative(run.startedAt) : '—';
   const finishedAgo = run.finishedAt ? formatRelative(run.finishedAt) : '—';
@@ -758,13 +791,7 @@ export function renderRunDetail(detail: RunDetailData): string {
     ${tasksLine}
   </div>`;
 
-  // Journal timeline placeholder. SSE plumbing landed in split #5;
-  // streaming journal entries themselves are T12 split 2 work. The
-  // card stays so the layout is stable.
-  const journalCard = `<div class="agentbox-card">
-    <h2>Journal Timeline</h2>
-    <p class="agentbox-muted">Live journal entries (confidence / difficulty / momentum) will stream here once journal events are wired to the SSE channel.</p>
-  </div>`;
+  const journalCard = renderJournalTimeline(journalEntries);
 
   const errorCard = run.error
     ? `<div class="agentbox-card"><h2>Error</h2><div class="agentbox-error-banner">${escapeHtml(run.error)}</div></div>`
@@ -791,6 +818,45 @@ ${progressCard}
 ${errorCard}
 ${findingsCard}
 ${journalCard}`;
+}
+
+/**
+ * Render the journal timeline card. Empty state shows a muted note;
+ * populated state renders one entry per row, newest at the bottom so
+ * a connected SSE client appending live entries reads naturally.
+ *
+ * The container has a stable id (`agentbox-journal-list`) so the
+ * client-side IIFE can find it and append new entries without a
+ * full page reload.
+ */
+function renderJournalTimeline(entries: JournalEntry[]): string {
+  const items = entries.length === 0
+    ? '<p class="agentbox-muted" data-empty>No journal entries yet — agentbox writes one per iteration once the sprint starts.</p>'
+    : entries.map(renderJournalEntry).join('\n');
+  return `<div class="agentbox-card">
+    <h2>Journal Timeline</h2>
+    <div id="agentbox-journal-list" class="agentbox-journal-list">${items}</div>
+  </div>`;
+}
+
+/**
+ * Render a single journal entry. All user-derived strings (summary,
+ * reflection, kind) are HTML-escaped. Numeric fields (sprint,
+ * iteration, confidence/difficulty/momentum) come from the agentbox
+ * INTEGER columns and are safe to interpolate after String().
+ */
+export function renderJournalEntry(entry: JournalEntry): string {
+  const meta: string[] = [];
+  meta.push(`Iteration ${String(entry.iteration)}`);
+  if (entry.sprint) meta.push(`Sprint ${String(entry.sprint)}`);
+  if (entry.confidence) meta.push(`Confidence ${String(entry.confidence)}/5`);
+  if (entry.difficulty) meta.push(`Difficulty ${String(entry.difficulty)}/5`);
+  if (entry.momentum) meta.push(`Momentum ${String(entry.momentum)}/5`);
+  return `<div class="agentbox-journal-entry" data-entry-id="${String(entry.id)}">
+    <div class="agentbox-journal-summary">${escapeHtml(entry.summary)}</div>
+    <div class="agentbox-journal-meta">${escapeHtml(meta.join(' · '))} · <span class="agentbox-muted">${escapeHtml(entry.timestamp)}</span></div>
+    <div class="agentbox-journal-reflection">${escapeHtml(entry.reflection)}</div>
+  </div>`;
 }
 
 function renderReviewFindingsCard(findings: ReviewFindingRow[]): string {
@@ -938,6 +1004,50 @@ export const DASHBOARD_CLIENT_JS = `
     } catch (e) { /* best-effort */ }
   }
 
+  function appendJournalEntry(payload) {
+    try {
+      var entry = payload && payload.entry;
+      if (!entry || typeof entry.id !== 'number') return;
+      var list = document.getElementById('agentbox-journal-list');
+      if (!list) return;
+      // Idempotent: skip if this id is already rendered (e.g. SSE
+      // reconnect re-delivered an entry that was on the page from
+      // initial render).
+      if (list.querySelector('[data-entry-id="' + String(entry.id) + '"]')) return;
+
+      // Drop the empty-state placeholder once the first entry arrives.
+      var emptyMarker = list.querySelector('[data-empty]');
+      if (emptyMarker && emptyMarker.parentNode) emptyMarker.parentNode.removeChild(emptyMarker);
+
+      // textContent throughout — no payload value reaches innerHTML.
+      var div = document.createElement('div');
+      div.className = 'agentbox-journal-entry';
+      div.setAttribute('data-entry-id', String(entry.id));
+
+      var summary = document.createElement('div');
+      summary.className = 'agentbox-journal-summary';
+      summary.textContent = String(entry.summary || '');
+      div.appendChild(summary);
+
+      var metaParts = ['Iteration ' + String(entry.iteration)];
+      if (entry.sprint) metaParts.push('Sprint ' + String(entry.sprint));
+      if (entry.confidence) metaParts.push('Confidence ' + String(entry.confidence) + '/5');
+      if (entry.difficulty) metaParts.push('Difficulty ' + String(entry.difficulty) + '/5');
+      if (entry.momentum) metaParts.push('Momentum ' + String(entry.momentum) + '/5');
+      var meta = document.createElement('div');
+      meta.className = 'agentbox-journal-meta';
+      meta.textContent = metaParts.join(' · ') + ' · ' + String(entry.timestamp || '');
+      div.appendChild(meta);
+
+      var refl = document.createElement('div');
+      refl.className = 'agentbox-journal-reflection';
+      refl.textContent = String(entry.reflection || '');
+      div.appendChild(refl);
+
+      list.appendChild(div);
+    } catch (e) { /* best-effort */ }
+  }
+
   function connect() {
     es = new EventSource(url);
     es.addEventListener('dashboard-update', function(ev) {
@@ -947,6 +1057,11 @@ export const DASHBOARD_CLIENT_JS = `
     });
     es.addEventListener('run-complete', function(ev) {
       try { showToast(JSON.parse(ev.data)); }
+      catch (e) { /* ignore malformed payload */ }
+      backoff = 1000;
+    });
+    es.addEventListener('journal-entry', function(ev) {
+      try { appendJournalEntry(JSON.parse(ev.data)); }
       catch (e) { /* ignore malformed payload */ }
       backoff = 1000;
     });

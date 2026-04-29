@@ -34,6 +34,8 @@ import {
   type QueueIssue,
 } from './web-templates.js';
 import { listReadyIssues, cancelRun, pauseRun, resumeRun } from './scheduler.js';
+import { readJournalEntries } from './journal-reader.js';
+import path from 'node:path';
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
 import type { PluginContext, DashboardWidget } from '../../src/plugins/types.js';
 
@@ -47,6 +49,12 @@ let sseTimer: ReturnType<typeof setInterval> | null = null;
 // `run-complete` event for client toast notifications. Reset whenever
 // startSSEPolling is (re)called and on stopSSEPolling.
 let lastActiveRunId: number | null = null;
+
+// Per-active-run cursor of the highest journal_entries.id we've
+// already broadcast. Reset when the active run changes (different
+// run = different agentbox session = id space restarts at 0 anyway,
+// but resetting is the unambiguous behaviour).
+let lastJournalIdByRun = new Map<number, number>();
 
 const SSE_POLL_INTERVAL_MS = 10_000;
 
@@ -119,9 +127,23 @@ export function startSSEPolling(ctx: PluginContext): void {
             repo: completed.repo,
             status: completed.status,
           });
+          // The terminal run's cursor is no longer interesting — drop
+          // it so the map doesn't grow without bound across many runs.
+          // IMPORTANT: only delete on terminal status — running→paused
+          // also drops out of `activeRun`, but the cursor must survive
+          // so resume continues from where it left off rather than
+          // re-broadcasting every journal entry.
+          lastJournalIdByRun.delete(lastActiveRunId);
         }
       }
       lastActiveRunId = currentActiveId;
+
+      // Stream new journal entries for the active run (#343). Reads
+      // agentbox's own SQLite DB at <workDir>/.agentbox/agentbox.db
+      // read-only; safe alongside the running subprocess.
+      if (data.activeRun) {
+        broadcastNewJournalEntries(pluginCtxRef, data.activeRun.id);
+      }
     } catch (err) {
       logger.warn('AgentBox SSE poll failed', {
         error: err instanceof Error ? err.message : String(err),
@@ -137,6 +159,29 @@ export function stopSSEPolling(): void {
   }
   pluginCtxRef = null;
   lastActiveRunId = null;
+  lastJournalIdByRun = new Map();
+}
+
+/**
+ * For an active run, look up its workDir, read agentbox's journal DB
+ * for entries newer than the cursor we last broadcast, then fire one
+ * `journal-entry` SSE event per new row. Best-effort: any failure
+ * (no DB yet, malformed row, etc.) is logged and swallowed.
+ */
+function broadcastNewJournalEntries(ctx: PluginContext, activeRunId: number): void {
+  if (!pluginDb) return;
+  const row = pluginDb
+    .prepare(`SELECT output_path FROM ${pluginDb.prefix}runs WHERE id = ?`)
+    .get(activeRunId) as { output_path: string | null } | undefined;
+  if (!row?.output_path) return;
+  const workDir = path.dirname(row.output_path);
+  const cursor = lastJournalIdByRun.get(activeRunId) ?? 0;
+  const entries = readJournalEntries(workDir, cursor);
+  if (entries.length === 0) return;
+  for (const entry of entries) {
+    ctx.sse.broadcast('journal-entry', { runId: activeRunId, entry });
+  }
+  lastJournalIdByRun.set(activeRunId, entries[entries.length - 1]!.id);
 }
 
 /**
@@ -323,6 +368,9 @@ export function registerAgentboxWebRoutes(router: PluginRouter): void {
       pluginName: ctx.name,
       body,
       styles: DASHBOARD_CSS,
+      // Include the SSE client so journal-entry events from the
+      // polling loop can append to the timeline live.
+      scripts: DASHBOARD_CLIENT_JS,
     }));
   });
 
