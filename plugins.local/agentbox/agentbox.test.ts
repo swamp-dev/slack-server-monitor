@@ -143,6 +143,102 @@ describe('agentbox SSE polling (#241 split #5)', () => {
   });
 });
 
+describe('agentbox SSE run-complete event (#242 split 2)', () => {
+  beforeEach(() => setupTestDb());
+  afterEach(() => teardownTestDb());
+
+  it('emits run-complete on running→terminal transition', async () => {
+    vi.useFakeTimers();
+    try {
+      const { default: plugin } = await import('../agentbox.js');
+      const broadcast = vi.fn();
+      const ctx = {
+        db: pluginDb, name: 'agentbox', version: '1.0.0',
+        notify: vi.fn(),
+        sse: { broadcast, clientCount: () => 1 },
+      };
+      await plugin.init!(ctx);
+
+      // Tick 1: a running row exists. Polling sees it, captures
+      // lastActiveRunId, broadcasts dashboard-update.
+      pluginDb.prepare(
+        `INSERT INTO plugin_agentbox_runs (issue_number, repo, status, started_at, created_at) VALUES (?, ?, ?, ?, ?)`,
+      ).run(7, 'org/repo', 'running', Date.now(), Date.now());
+      await vi.advanceTimersByTimeAsync(10_000);
+      const dashboardOnly = broadcast.mock.calls.filter((c) => c[0] === 'dashboard-update');
+      expect(dashboardOnly.length).toBeGreaterThan(0);
+      expect(broadcast.mock.calls.find((c) => c[0] === 'run-complete')).toBeUndefined();
+
+      // Flip the row to success. Tick 2 should detect the transition
+      // and emit run-complete.
+      pluginDb.prepare(`UPDATE plugin_agentbox_runs SET status = 'success', finished_at = ? WHERE issue_number = 7`).run(Date.now());
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      const completes = broadcast.mock.calls.filter((c) => c[0] === 'run-complete');
+      expect(completes).toHaveLength(1);
+      const payload = completes[0]![1] as Record<string, unknown>;
+      expect(payload.status).toBe('success');
+      expect(payload.runId).toBeTypeOf('number');
+      expect(payload.repo).toBe('org/repo');
+      expect(payload.issueNumber).toBe(7);
+
+      await plugin.destroy!(ctx);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not emit run-complete when there was no prior active run', async () => {
+    vi.useFakeTimers();
+    try {
+      const { default: plugin } = await import('../agentbox.js');
+      const broadcast = vi.fn();
+      const ctx = {
+        db: pluginDb, name: 'agentbox', version: '1.0.0',
+        notify: vi.fn(),
+        sse: { broadcast, clientCount: () => 1 },
+      };
+      await plugin.init!(ctx);
+      // Idle DB — no rows. Tick. No run-complete.
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(broadcast.mock.calls.find((c) => c[0] === 'run-complete')).toBeUndefined();
+      await plugin.destroy!(ctx);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits run-complete only once per terminal transition', async () => {
+    vi.useFakeTimers();
+    try {
+      const { default: plugin } = await import('../agentbox.js');
+      const broadcast = vi.fn();
+      const ctx = {
+        db: pluginDb, name: 'agentbox', version: '1.0.0',
+        notify: vi.fn(),
+        sse: { broadcast, clientCount: () => 1 },
+      };
+      await plugin.init!(ctx);
+
+      pluginDb.prepare(
+        `INSERT INTO plugin_agentbox_runs (issue_number, repo, status, started_at, created_at) VALUES (?, ?, ?, ?, ?)`,
+      ).run(9, 'org/r', 'running', Date.now(), Date.now());
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      pluginDb.prepare(`UPDATE plugin_agentbox_runs SET status = 'failed' WHERE issue_number = 9`).run();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      const completes = broadcast.mock.calls.filter((c) => c[0] === 'run-complete');
+      expect(completes).toHaveLength(1);
+      await plugin.destroy!(ctx);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('agentbox init()', () => {
   beforeEach(() => setupTestDb());
   afterEach(() => teardownTestDb());

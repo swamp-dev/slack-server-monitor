@@ -599,6 +599,33 @@ export const DASHBOARD_CSS = `
 .agentbox-btn-danger:hover { background: var(--red, #ff5555); color: var(--bg, #1e1e1e); }
 .agentbox-btn-disabled { opacity: 0.4; cursor: not-allowed; }
 .agentbox-btn-disabled:hover { border-color: var(--border, #444); background: var(--surface, #1e1e1e); }
+.agentbox-toasts {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 1000;
+  pointer-events: none;
+}
+.agentbox-toast {
+  background: var(--surface, #1e1e1e);
+  border: 1px solid var(--border, #444);
+  border-left-width: 3px;
+  border-radius: 4px;
+  padding: 10px 14px;
+  font-size: 0.875rem;
+  color: var(--text, #f8f8f2);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  opacity: 1;
+  transition: opacity 0.4s ease, transform 0.4s ease;
+  pointer-events: auto;
+}
+.agentbox-toast-success { border-left-color: var(--green, #50fa7b); }
+.agentbox-toast-failed { border-left-color: var(--red, #ff5555); }
+.agentbox-toast-cancelled { border-left-color: var(--orange, #ffb86c); }
+.agentbox-toast-leaving { opacity: 0; transform: translateY(8px); }
 .agentbox-error-banner {
   background: rgba(255, 85, 85, 0.1);
   border: 1px solid var(--red, #ff5555);
@@ -853,10 +880,46 @@ export const DASHBOARD_CLIENT_JS = `
     } catch (e) { /* best-effort UI update */ }
   }
 
+  function showToast(payload) {
+    try {
+      var status = payload && payload.status;
+      var runId = payload && payload.runId;
+      var repo = payload && payload.repo;
+      var issueNumber = payload && payload.issueNumber;
+      if (!status || typeof runId !== 'number') return;
+      var container = document.getElementById('agentbox-toasts');
+      if (!container) {
+        container = document.createElement('div');
+        container.id = 'agentbox-toasts';
+        container.className = 'agentbox-toasts';
+        document.body.appendChild(container);
+      }
+      var toast = document.createElement('div');
+      toast.className = 'agentbox-toast agentbox-toast-' + status;
+      toast.setAttribute('role', 'status');
+      // textContent is safe — we never inject HTML from the payload.
+      var label = repo && typeof issueNumber === 'number'
+        ? repo + '#' + issueNumber + ' (run #' + runId + ')'
+        : 'Run #' + runId;
+      toast.textContent = label + ': ' + status;
+      container.appendChild(toast);
+      // Auto-dismiss after 6s; CSS transitions the opacity.
+      setTimeout(function() { toast.classList.add('agentbox-toast-leaving'); }, 6000);
+      setTimeout(function() {
+        if (toast.parentNode) toast.parentNode.removeChild(toast);
+      }, 6500);
+    } catch (e) { /* best-effort */ }
+  }
+
   function connect() {
     es = new EventSource(url);
     es.addEventListener('dashboard-update', function(ev) {
       try { applyUpdate(JSON.parse(ev.data)); }
+      catch (e) { /* ignore malformed payload */ }
+      backoff = 1000;
+    });
+    es.addEventListener('run-complete', function(ev) {
+      try { showToast(JSON.parse(ev.data)); }
       catch (e) { /* ignore malformed payload */ }
       backoff = 1000;
     });

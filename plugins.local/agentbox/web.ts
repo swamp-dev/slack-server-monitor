@@ -42,6 +42,12 @@ let defaultRepo = '';
 let pluginCtxRef: PluginContext | null = null;
 let sseTimer: ReturnType<typeof setInterval> | null = null;
 
+// Tracks the last active run we observed in the polling loop so we
+// can detect the running→terminal transition and emit a one-shot
+// `run-complete` event for client toast notifications. Reset whenever
+// startSSEPolling is (re)called and on stopSSEPolling.
+let lastActiveRunId: number | null = null;
+
 const SSE_POLL_INTERVAL_MS = 10_000;
 
 export function setWebPluginDb(db: PluginDatabase | null): void {
@@ -71,6 +77,10 @@ export function setWebDefaultRepo(repo: string): void {
 export function startSSEPolling(ctx: PluginContext): void {
   pluginCtxRef = ctx;
   if (sseTimer) return;
+  // Only reset transition state when actually starting a fresh
+  // timer — bailing early on an already-running poller shouldn't
+  // wipe in-progress run tracking.
+  lastActiveRunId = null;
   sseTimer = setInterval(() => {
     if (!pluginCtxRef || !pluginDb) return;
     if (pluginCtxRef.sse.clientCount() === 0) return;
@@ -80,6 +90,38 @@ export function startSSEPolling(ctx: PluginContext): void {
         stats: data.stats,
         activeRun: data.activeRun,
       });
+
+      // Detect running→terminal transition and emit a one-shot
+      // run-complete event so connected clients can show a toast.
+      // The lookup re-reads the runs table because activeRun is null
+      // at the moment the run finishes — we need the row's terminal
+      // status to populate the toast.
+      //
+      // Known limitation: if two runs both start AND finish within
+      // a single 10s tick, only the first will fire run-complete —
+      // the second's transition is invisible because lastActiveRunId
+      // is already null when its row appears terminal. Acceptable
+      // for the toast UX since agentbox runs are minutes long, not
+      // seconds.
+      const currentActiveId = data.activeRun ? data.activeRun.id : null;
+      if (lastActiveRunId !== null && currentActiveId !== lastActiveRunId) {
+        const completed = pluginDb
+          .prepare(
+            `SELECT id, issue_number, repo, status FROM ${pluginDb.prefix}runs WHERE id = ?`,
+          )
+          .get(lastActiveRunId) as
+          | { id: number; issue_number: number; repo: string; status: string }
+          | undefined;
+        if (completed && (completed.status === 'success' || completed.status === 'failed' || completed.status === 'cancelled')) {
+          pluginCtxRef.sse.broadcast('run-complete', {
+            runId: completed.id,
+            issueNumber: completed.issue_number,
+            repo: completed.repo,
+            status: completed.status,
+          });
+        }
+      }
+      lastActiveRunId = currentActiveId;
     } catch (err) {
       logger.warn('AgentBox SSE poll failed', {
         error: err instanceof Error ? err.message : String(err),
@@ -94,6 +136,7 @@ export function stopSSEPolling(): void {
     sseTimer = null;
   }
   pluginCtxRef = null;
+  lastActiveRunId = null;
 }
 
 /**
@@ -312,9 +355,9 @@ export function registerAgentboxWebRoutes(router: PluginRouter): void {
         (typeof res.locals?.userId === 'string' && res.locals.userId) || 'web';
       await cancelRun(runId, cancelledBy, { db: pluginDb, repo: defaultRepo });
 
-      // Push a fresh dashboard snapshot so connected clients see the
-      // status flip immediately. Best-effort — failures here don't
-      // affect the cancel itself.
+      // Push a fresh dashboard snapshot + run-complete event so
+      // connected clients see the status flip immediately and surface
+      // a toast. Best-effort — failures here don't affect the cancel.
       if (pluginCtxRef && pluginCtxRef.sse.clientCount() > 0) {
         try {
           const data = loadDashboardData(pluginDb);
@@ -322,6 +365,21 @@ export function registerAgentboxWebRoutes(router: PluginRouter): void {
             stats: data.stats,
             activeRun: data.activeRun,
           });
+          const cancelledRow = pluginDb
+            .prepare(
+              `SELECT id, issue_number, repo, status FROM ${pluginDb.prefix}runs WHERE id = ?`,
+            )
+            .get(runId) as
+            | { id: number; issue_number: number; repo: string; status: string }
+            | undefined;
+          if (cancelledRow && cancelledRow.status === 'cancelled') {
+            pluginCtxRef.sse.broadcast('run-complete', {
+              runId: cancelledRow.id,
+              issueNumber: cancelledRow.issue_number,
+              repo: cancelledRow.repo,
+              status: cancelledRow.status,
+            });
+          }
         } catch {
           /* best-effort */
         }

@@ -251,6 +251,62 @@ describe('POST /runs/:id/cancel (#242 split 1)', () => {
     expect('recentRuns' in payload).toBe(false);
   });
 
+  it('broadcasts run-complete after a successful cancel (#242 split 2)', async () => {
+    rawDb.prepare(
+      `INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, created_at) VALUES (?, ?, ?, ?)`,
+    ).run(7, 'org/repo', 'cancelled', Date.now());
+    vi.mocked(cancelRun).mockResolvedValueOnce(undefined);
+
+    const broadcast = vi.fn();
+    const ctx: PluginContext = {
+      db: pluginDb, name: 'agentbox', version: '1.0.0', notify: vi.fn(),
+      sse: { broadcast, clientCount: () => 1 },
+    };
+    startSSEPolling(ctx);
+
+    const { router, routes } = makeFakeRouter();
+    registerAgentboxWebRoutes(router);
+    const handler = findCancelHandler(routes);
+    const res = makeRes();
+
+    await handler({ params: { id: '1' } } as never, res as never, ctx);
+
+    const completes = broadcast.mock.calls.filter((c) => c[0] === 'run-complete');
+    expect(completes).toHaveLength(1);
+    const payload = completes[0]![1] as Record<string, unknown>;
+    expect(payload.status).toBe('cancelled');
+    expect(payload.runId).toBe(1);
+    expect(payload.repo).toBe('org/repo');
+    expect(payload.issueNumber).toBe(7);
+  });
+
+  it('does not broadcast run-complete if the row is not actually cancelled (race)', async () => {
+    // Edge case: cancelRun resolved (the run was already terminal,
+    // e.g. it succeeded a microsecond before the cancel hit), so the
+    // row's status is something other than 'cancelled'. The cancel
+    // route should not falsely claim a cancel completed.
+    rawDb.prepare(
+      `INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, created_at) VALUES (?, ?, ?, ?)`,
+    ).run(7, 'org/repo', 'success', Date.now());
+    vi.mocked(cancelRun).mockResolvedValueOnce(undefined);
+
+    const broadcast = vi.fn();
+    const ctx: PluginContext = {
+      db: pluginDb, name: 'agentbox', version: '1.0.0', notify: vi.fn(),
+      sse: { broadcast, clientCount: () => 1 },
+    };
+    startSSEPolling(ctx);
+
+    const { router, routes } = makeFakeRouter();
+    registerAgentboxWebRoutes(router);
+    const handler = findCancelHandler(routes);
+    const res = makeRes();
+
+    await handler({ params: { id: '1' } } as never, res as never, ctx);
+
+    expect(broadcast.mock.calls.find((c) => c[0] === 'run-complete')).toBeUndefined();
+  });
+
   it('does not broadcast when no SSE clients are connected', async () => {
     rawDb.prepare(
       `INSERT INTO ${pluginDb.prefix}runs (issue_number, repo, status, created_at) VALUES (?, ?, ?, ?)`,

@@ -846,3 +846,38 @@ describe('DASHBOARD_CLIENT_JS (#241 split #5)', () => {
     expect(DASHBOARD_CLIENT_JS).toContain('setTimeout(connect');
   });
 });
+
+describe('DASHBOARD_CLIENT_JS run-complete toast (#242 split 2)', () => {
+  it('listens for run-complete events and renders a toast', async () => {
+    const { DASHBOARD_CLIENT_JS } = await import('./web-templates.js');
+    expect(DASHBOARD_CLIENT_JS).toContain("addEventListener('run-complete'");
+    expect(DASHBOARD_CLIENT_JS).toContain('agentbox-toasts');
+    expect(DASHBOARD_CLIENT_JS).toContain('agentbox-toast-');
+  });
+
+  it('uses textContent for payload values to avoid HTML injection', async () => {
+    const { DASHBOARD_CLIENT_JS } = await import('./web-templates.js');
+    // The toast body is set via textContent — never innerHTML — so
+    // a hostile repo string can't escape the toast.
+    expect(DASHBOARD_CLIENT_JS).toContain('toast.textContent');
+    expect(DASHBOARD_CLIENT_JS).not.toMatch(/toast\.innerHTML/);
+  });
+
+  it('auto-dismisses toasts after a fixed delay', async () => {
+    const { DASHBOARD_CLIENT_JS } = await import('./web-templates.js');
+    // The IIFE adds the leaving class before removing the node.
+    expect(DASHBOARD_CLIENT_JS).toContain('agentbox-toast-leaving');
+  });
+});
+
+describe('DASHBOARD_CSS toast classes (#242 split 2)', () => {
+  it('includes toast container and per-status border classes', async () => {
+    const { DASHBOARD_CSS } = await import('./web-templates.js');
+    expect(DASHBOARD_CSS).toContain('.agentbox-toasts');
+    expect(DASHBOARD_CSS).toContain('.agentbox-toast');
+    expect(DASHBOARD_CSS).toContain('.agentbox-toast-success');
+    expect(DASHBOARD_CSS).toContain('.agentbox-toast-failed');
+    expect(DASHBOARD_CSS).toContain('.agentbox-toast-cancelled');
+    expect(DASHBOARD_CSS).toContain('.agentbox-toast-leaving');
+  });
+});
