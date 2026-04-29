@@ -33,7 +33,7 @@ import {
   buildWidgetSummary,
   type QueueIssue,
 } from './web-templates.js';
-import { listReadyIssues } from './scheduler.js';
+import { listReadyIssues, cancelRun } from './scheduler.js';
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
 import type { PluginContext, DashboardWidget } from '../../src/plugins/types.js';
 
@@ -281,5 +281,59 @@ export function registerAgentboxWebRoutes(router: PluginRouter): void {
       body,
       styles: DASHBOARD_CSS,
     }));
+  });
+
+  // POST /runs/:id/cancel  →  cancel an in-flight run (T12 split 1).
+  // Wraps scheduler.cancelRun() — which is idempotent for already-
+  // terminal runs and a no-op when the runId isn't the active one.
+  // After a successful cancel, broadcasts a `dashboard-update` SSE
+  // event (same channel split #5's poller uses) so any open dashboard
+  // re-renders without waiting for the next 10s poll.
+  router.post('/runs/:id/cancel', async (req, res, _ctx) => {
+    if (!pluginDb) {
+      res.status(503).send('AgentBox plugin database is not available.');
+      return;
+    }
+    const runId = parseRunIdParam(req.params?.id);
+    if (runId === null) {
+      res.status(400).send('Invalid run id.');
+      return;
+    }
+    if (!defaultRepo) {
+      res.status(500).send('AGENTBOX_DEFAULT_REPO is not configured.');
+      return;
+    }
+    try {
+      // The actor is best-effort — auth middleware populates
+      // res.locals.userId when a session is present. The cancel
+      // attribution is just a comment string, not an authorisation
+      // gate, so 'web' is a safe fallback.
+      const cancelledBy =
+        (typeof res.locals?.userId === 'string' && res.locals.userId) || 'web';
+      await cancelRun(runId, cancelledBy, { db: pluginDb, repo: defaultRepo });
+
+      // Push a fresh dashboard snapshot so connected clients see the
+      // status flip immediately. Best-effort — failures here don't
+      // affect the cancel itself.
+      if (pluginCtxRef && pluginCtxRef.sse.clientCount() > 0) {
+        try {
+          const data = loadDashboardData(pluginDb);
+          pluginCtxRef.sse.broadcast('dashboard-update', {
+            stats: data.stats,
+            activeRun: data.activeRun,
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
+      res.redirect(`/p/agentbox/runs/${String(runId)}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('AgentBox web: cancel failed', { runId, error: message });
+      // cancelRun throws "Run X does not exist" for unknown ids —
+      // surface as 404 so the caller can distinguish from a real 500.
+      const notFound = /does not exist/i.test(message);
+      res.status(notFound ? 404 : 500).send(`Failed to cancel run #${String(runId)}: ${message}`);
+    }
   });
 }

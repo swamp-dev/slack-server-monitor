@@ -361,6 +361,28 @@ function renderActiveRun(active: RunRow | null): string {
     <div class="agentbox-progress"><div class="agentbox-progress-fill" style="width: ${String(progress)}%"></div></div>
     <p class="agentbox-muted">${String(progress)}% complete</p>
     ${taskLine}
+    ${renderCancelControls(active)}
+  </div>`;
+}
+
+/**
+ * Cancel + (placeholder) pause buttons for a running run. Cancel
+ * posts to /p/agentbox/runs/:id/cancel; pause is rendered disabled
+ * with a "Coming soon" tooltip — implemented in T14 (#244).
+ *
+ * The form uses inline `onsubmit="return confirm(...)"` so a
+ * confirmation dialog appears even with no plugin client JS.
+ */
+export function renderCancelControls(run: RunRow | { id: number; status: string }): string {
+  if (run.status !== 'running' && run.status !== 'pending') return '';
+  return `<div class="agentbox-controls">
+    <form method="post" action="/p/agentbox/runs/${String(run.id)}/cancel"
+          onsubmit="return confirm('Cancel run #${String(run.id)}? The agentbox process will be terminated.');"
+          style="display:inline">
+      <button type="submit" class="agentbox-btn agentbox-btn-danger">Cancel</button>
+    </form>
+    <button type="button" class="agentbox-btn agentbox-btn-disabled" disabled
+            title="Pause/resume coming soon (T14)">Pause</button>
   </div>`;
 }
 
@@ -555,6 +577,28 @@ export const DASHBOARD_CSS = `
 .agentbox-finding-minor { border-left-color: var(--text-muted, #6272a4); }
 .agentbox-finding-title { font-weight: 600; margin-bottom: 4px; }
 .agentbox-finding-body { font-size: 0.875rem; white-space: pre-wrap; color: var(--text-muted, #aaa); }
+.agentbox-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+.agentbox-btn {
+  appearance: none;
+  border: 1px solid var(--border, #444);
+  background: var(--surface, #1e1e1e);
+  color: var(--text, #f8f8f2);
+  padding: 6px 14px;
+  font-size: 0.875rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.agentbox-btn:hover { border-color: var(--accent, #bd93f9); }
+.agentbox-btn-danger { color: var(--red, #ff5555); border-color: var(--red, #ff5555); }
+.agentbox-btn-danger:hover { background: var(--red, #ff5555); color: var(--bg, #1e1e1e); }
+.agentbox-btn-disabled { opacity: 0.4; cursor: not-allowed; }
+.agentbox-btn-disabled:hover { border-color: var(--border, #444); background: var(--surface, #1e1e1e); }
 .agentbox-error-banner {
   background: rgba(255, 85, 85, 0.1);
   border: 1px solid var(--red, #ff5555);
@@ -665,12 +709,12 @@ export function renderRunDetail(detail: RunDetailData): string {
     ${tasksLine}
   </div>`;
 
-  // Journal timeline placeholder. Real journal data will arrive in
-  // split #5 alongside SSE wiring; for now we show a placeholder
-  // card so the layout is stable.
+  // Journal timeline placeholder. SSE plumbing landed in split #5;
+  // streaming journal entries themselves are T12 split 2 work. The
+  // card stays so the layout is stable.
   const journalCard = `<div class="agentbox-card">
     <h2>Journal Timeline</h2>
-    <p class="agentbox-muted">Live journal entries (confidence / difficulty / momentum) will stream here once SSE wiring lands in split #5.</p>
+    <p class="agentbox-muted">Live journal entries (confidence / difficulty / momentum) will stream here once journal events are wired to the SSE channel.</p>
   </div>`;
 
   const errorCard = run.error
@@ -679,11 +723,16 @@ export function renderRunDetail(detail: RunDetailData): string {
 
   const findingsCard = renderReviewFindingsCard(findings);
 
+  const controlsCard = run.status === 'running' || run.status === 'pending'
+    ? `<div class="agentbox-card"><h2>Controls</h2>${renderCancelControls(run)}</div>`
+    : '';
+
   return `${nav}
 <div class="agentbox-card">
   <h2>Run #${String(run.id)}</h2>
   ${summaryGrid}
 </div>
+${controlsCard}
 ${progressCard}
 ${errorCard}
 ${findingsCard}
