@@ -1,0 +1,70 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Manual trigger from GitHub UI
+
+# Queue deploys (don't kill an in-flight Ansible run by re-firing).
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+# NOTE: this repo is a git submodule of swamp-dev/ansible. The sibling
+# update-parent-submodule.yml workflow opens a PR in the parent repo
+# bumping the submodule pointer. This deploy runs Ansible against
+# whatever code is currently checked out in $ANSIBLE_REPO_PATH on the
+# self-hosted runner — so a push here only takes effect AFTER the
+# parent's submodule-bump PR merges and the runner pulls. If you push
+# expecting an immediate deploy of the new code, merge the parent PR
+# first or use `workflow_dispatch` after it lands.
+
+jobs:
+  # Run CI checks first by invoking the reusable CI workflow.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Deploy via Ansible
+    runs-on: [self-hosted, home]
+    needs: ci
+    timeout-minutes: 15
+
+    steps:
+      - name: Deploy slack_monitor role
+        env:
+          # Promote the safe enum-valued context var into an env var so
+          # the shell block below doesn't directly expand a ${{ }}
+          # expression — keeps the run block free of expression
+          # interpolation as a defensive habit.
+          FORCE_REBUILD_FLAG: ${{ github.event_name == 'workflow_dispatch' && '-e slack_monitor_force_rebuild=true' || '' }}
+        run: |
+          set -euo pipefail
+          : "${ANSIBLE_REPO_PATH:?ANSIBLE_REPO_PATH not set on runner}"
+          : "${VAULT_PASSWORD_FILE:?VAULT_PASSWORD_FILE not set on runner}"
+          test -d "$ANSIBLE_REPO_PATH" || { echo "ANSIBLE_REPO_PATH does not exist: $ANSIBLE_REPO_PATH" >&2; exit 1; }
+          cd "$ANSIBLE_REPO_PATH"
+          # shellcheck disable=SC2086 -- intentional word-splitting on the optional flag
+          ansible-playbook -i inventory/hosts playbooks/site.yml \
+            --tags slack_monitor \
+            --vault-password-file "$VAULT_PASSWORD_FILE" \
+            -e slack_monitor_pull_latest=true \
+            $FORCE_REBUILD_FLAG
+
+      - name: Verify deployment
+        run: |
+          set -euo pipefail
+          # Poll for up to ~30s; a container that crashes after a
+          # one-shot start should fail this check, not pass it.
+          for i in $(seq 10); do
+            sleep 3
+            status=$(docker ps --filter "name=slack-monitor" --format "{{.Status}}" || true)
+            if printf '%s' "$status" | grep -q "Up"; then
+              echo "Deployment successful — container status: $status"
+              exit 0
+            fi
+            echo "Waiting for slack-monitor to report Up (attempt $i/10, current: ${status:-not running})..."
+          done
+          echo "Deployment verification failed — slack-monitor did not reach Up state within 30s" >&2
+          docker ps --filter "name=slack-monitor" >&2 || true
+          exit 1
