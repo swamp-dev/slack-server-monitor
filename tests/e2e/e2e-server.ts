@@ -4,6 +4,11 @@
  * This module is imported by Playwright's globalSetup/globalTeardown.
  * It mocks external dependencies (Slack, Claude, Docker) so the web UI
  * can be tested end-to-end in a browser without real infrastructure.
+ *
+ * IMPORTANT: this file registers unauthenticated test-only endpoints
+ * under /__test__/* for fixture seeding and inspection. Never import
+ * this module outside tests/e2e/ — those endpoints have no business
+ * being mounted on a production server.
  */
 
 import type { Server } from 'http';
@@ -134,6 +139,8 @@ interface AgentboxFixture {
   rawDb: Database.Database;
   pluginDb: PluginDatabase;
   runningRunId: number;
+  pausedRunId: number;
+  successRunId: number;
 }
 
 function insertAgentboxRun(
@@ -146,18 +153,21 @@ function insertAgentboxRun(
     finishedAt?: number | null;
     prUrl?: string | null;
     progressPct?: number | null;
+    outputPath?: string | null;
+    pausedAt?: number | null;
   },
 ): number {
   const result = rawDb
     .prepare(
       `INSERT INTO ${pluginDb.prefix}runs
-       (issue_number, repo, status, started_at, finished_at, pr_url, progress_pct, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (issue_number, repo, status, started_at, finished_at, pr_url, progress_pct, output_path, paused_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       opts.issueNumber, AGENTBOX_FIXTURE_REPO, opts.status,
       opts.startedAt ?? null, opts.finishedAt ?? null,
       opts.prUrl ?? null, opts.progressPct ?? null,
+      opts.outputPath ?? null, opts.pausedAt ?? null,
       Date.now(),
     );
   return Number(result.lastInsertRowid);
@@ -171,13 +181,19 @@ function setupAgentboxFixture(): AgentboxFixture {
   migrateRunsTable(pluginDb);
 
   const now = Date.now();
-  // One running, one success, one failed — enough to populate stats,
-  // active-run section, recent list, and the run-detail page.
+  // One running, one paused (with output_path so resume can reach the
+  // success path), one success, one failed — enough to populate stats,
+  // active-run section, recent list, run-detail, and the controls flow.
   const runningRunId = insertAgentboxRun(rawDb, pluginDb, {
     issueNumber: 42, status: 'running',
     startedAt: now - 60_000, progressPct: 35,
   });
-  insertAgentboxRun(rawDb, pluginDb, {
+  const pausedRunId = insertAgentboxRun(rawDb, pluginDb, {
+    issueNumber: 41, status: 'paused',
+    startedAt: now - 1_800_000, pausedAt: now - 30_000, progressPct: 50,
+    outputPath: '/tmp/agentbox-runs/41/run.log',
+  });
+  const successRunId = insertAgentboxRun(rawDb, pluginDb, {
     issueNumber: 40, status: 'success',
     startedAt: now - 7_200_000, finishedAt: now - 7_080_000,
     prUrl: 'https://github.com/test-org/test-repo/pull/45',
@@ -188,7 +204,7 @@ function setupAgentboxFixture(): AgentboxFixture {
     startedAt: now - 14_400_000, finishedAt: now - 14_280_000,
     progressPct: 60,
   });
-  return { rawDb, pluginDb, runningRunId };
+  return { rawDb, pluginDb, runningRunId, pausedRunId, successRunId };
 }
 
 function wrapPluginPage(title: string, body: string): string {
@@ -655,7 +671,38 @@ export async function startE2EServer(): Promise<void> {
   // Expose the seeded run ids so specs can target them without
   // depending on insert order. Playwright reads this once in beforeAll.
   app.get('/__test__/agentbox/fixture', (_req, res) => {
-    res.json({ runningRunId: fixture.runningRunId });
+    res.json({
+      runningRunId: fixture.runningRunId,
+      pausedRunId: fixture.pausedRunId,
+      successRunId: fixture.successRunId,
+    });
+  });
+
+  // Test-only endpoint: insert a fresh row so specs that mutate state
+  // (cancel, pause, resume) don't fight each other. Body matches the
+  // insertAgentboxRun options shape.
+  app.post('/__test__/agentbox/seed-run', (req, res) => {
+    interface SeedBody {
+      issueNumber: number;
+      status: 'pending' | 'running' | 'paused' | 'success' | 'failed' | 'cancelled';
+      progressPct?: number;
+      outputPath?: string;
+    }
+    const VALID_STATUSES = ['pending', 'running', 'paused', 'success', 'failed', 'cancelled'] as const;
+    const body = req.body as Partial<SeedBody>;
+    if (!body.issueNumber || !body.status || !VALID_STATUSES.includes(body.status)) {
+      res.status(400).json({ error: 'issueNumber and a valid status required' });
+      return;
+    }
+    const id = insertAgentboxRun(fixture.rawDb, fixture.pluginDb, {
+      issueNumber: body.issueNumber,
+      status: body.status,
+      startedAt: Date.now() - 60_000,
+      progressPct: body.progressPct ?? null,
+      outputPath: body.outputPath ?? null,
+      pausedAt: body.status === 'paused' ? Date.now() : null,
+    });
+    res.json({ id });
   });
 
   app.get('/p/agentbox/', sessionAuth, (_req, res) => {
@@ -687,6 +734,77 @@ export async function startE2EServer(): Promise<void> {
       return;
     }
     res.type('html').send(wrapPluginPage('Workflows · Run', renderRunDetail(detail)));
+  });
+
+  // POST controls — mirror the production status transitions in
+  // plugins.local/agentbox/web.ts (lines ~395–545) without invoking
+  // the real scheduler. Errors mirror the same status codes so the
+  // E2E covers the same failure paths the prod routes expose.
+  // NOTE: getRunStatus + setRunStatus are non-atomic by design — the
+  // E2E suite runs serially (workers: 1 in playwright.config.ts), so
+  // there's no read-modify-write race today. If a future spec opts
+  // into parallel execution, wrap both reads and writes in
+  // fixture.rawDb.transaction(...) before flipping the workers count.
+  function getRunStatus(id: number): string | null {
+    const row = fixture.rawDb
+      .prepare(`SELECT status FROM ${agentboxDb.prefix}runs WHERE id = ?`)
+      .get(id) as { status: string } | undefined;
+    return row?.status ?? null;
+  }
+  function setRunStatus(id: number, status: string, extras: Record<string, unknown> = {}): void {
+    const now = Date.now();
+    const sets: string[] = ['status = ?'];
+    const params: unknown[] = [status];
+    if (status === 'cancelled' || status === 'success' || status === 'failed') {
+      sets.push('finished_at = ?'); params.push(now);
+    }
+    if (status === 'paused') {
+      sets.push('paused_at = ?'); params.push(now);
+    }
+    if (status === 'running' && extras.clearPausedAt) {
+      sets.push('paused_at = NULL');
+    }
+    params.push(id);
+    fixture.rawDb
+      .prepare(`UPDATE ${agentboxDb.prefix}runs SET ${sets.join(', ')} WHERE id = ?`)
+      .run(...params);
+  }
+
+  app.post('/p/agentbox/runs/:id/cancel', sessionAuth, (req, res) => {
+    const id = parseRunIdParam(req.params.id);
+    if (id === null) { res.status(400).send('Invalid run id.'); return; }
+    const status = getRunStatus(id);
+    if (status === null) { res.status(404).send(`Run #${id} does not exist.`); return; }
+    // cancel is idempotent on terminal/cancelled — just redirect
+    if (status === 'running' || status === 'paused' || status === 'pending') {
+      setRunStatus(id, 'cancelled');
+    }
+    res.redirect(`/p/agentbox/runs/${String(id)}`);
+  });
+
+  app.post('/p/agentbox/runs/:id/pause', sessionAuth, (req, res) => {
+    const id = parseRunIdParam(req.params.id);
+    if (id === null) { res.status(400).send('Invalid run id.'); return; }
+    const status = getRunStatus(id);
+    if (status === null) { res.status(404).send(`Run #${id} does not exist.`); return; }
+    // pause is idempotent on already-paused / terminal — just redirect
+    if (status === 'running') {
+      setRunStatus(id, 'paused');
+    }
+    res.redirect(`/p/agentbox/runs/${String(id)}`);
+  });
+
+  app.post('/p/agentbox/runs/:id/resume', sessionAuth, (req, res) => {
+    const id = parseRunIdParam(req.params.id);
+    if (id === null) { res.status(400).send('Invalid run id.'); return; }
+    const status = getRunStatus(id);
+    if (status === null) { res.status(404).send(`Run #${id} does not exist.`); return; }
+    if (status !== 'paused') {
+      res.status(409).send(`Run #${id} is not paused (status=${status}).`);
+      return;
+    }
+    setRunStatus(id, 'running', { clearPausedAt: true });
+    res.redirect(`/p/agentbox/runs/${String(id)}`);
   });
 
   // 404
