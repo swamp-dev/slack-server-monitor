@@ -8,6 +8,23 @@
 
 import type { Server } from 'http';
 import express, { type Request, type Response, type NextFunction } from 'express';
+import Database from 'better-sqlite3';
+import { PluginDatabase } from '../../src/services/plugin-database.js';
+import { createSchema } from '../../plugins.example/agentbox/schema.js';
+import { migrateRunsTable } from '../../plugins.local/agentbox.js';
+import {
+  loadDashboardData,
+  renderDashboard,
+  renderQueue,
+  renderRunHistory,
+  loadRunHistory,
+  loadRunDetail,
+  renderRunDetail,
+  renderNavPills,
+  parsePageParam,
+  parseRunIdParam,
+  type QueueIssue,
+} from '../../plugins.local/agentbox/web-templates.js';
 
 function esc(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -93,6 +110,94 @@ let quickLinks = [
   { id: 1, userId: 'admin', title: 'Grafana', url: 'https://grafana.local', icon: 'chart', sortOrder: 0 },
 ];
 
+// ─── Agentbox plugin fixture ───────────────────────────────────────
+const AGENTBOX_FIXTURE_REPO = 'test-org/test-repo';
+
+const AGENTBOX_QUEUE_ISSUES: QueueIssue[] = [
+  {
+    number: 101,
+    title: 'Add feature X',
+    labels: [{ name: 'agentbox-ready' }, { name: 'priority: high' }],
+    createdAt: new Date(Date.now() - 3_600_000).toISOString(),
+    url: 'https://github.com/test-org/test-repo/issues/101',
+  },
+  {
+    number: 102,
+    title: 'Fix bug Y',
+    labels: [{ name: 'agentbox-ready' }, { name: 'priority: medium' }],
+    createdAt: new Date(Date.now() - 7_200_000).toISOString(),
+    url: 'https://github.com/test-org/test-repo/issues/102',
+  },
+];
+
+interface AgentboxFixture {
+  rawDb: Database.Database;
+  pluginDb: PluginDatabase;
+  runningRunId: number;
+}
+
+function insertAgentboxRun(
+  rawDb: Database.Database,
+  pluginDb: PluginDatabase,
+  opts: {
+    issueNumber: number;
+    status: 'pending' | 'running' | 'paused' | 'success' | 'failed' | 'cancelled';
+    startedAt?: number | null;
+    finishedAt?: number | null;
+    prUrl?: string | null;
+    progressPct?: number | null;
+  },
+): number {
+  const result = rawDb
+    .prepare(
+      `INSERT INTO ${pluginDb.prefix}runs
+       (issue_number, repo, status, started_at, finished_at, pr_url, progress_pct, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      opts.issueNumber, AGENTBOX_FIXTURE_REPO, opts.status,
+      opts.startedAt ?? null, opts.finishedAt ?? null,
+      opts.prUrl ?? null, opts.progressPct ?? null,
+      Date.now(),
+    );
+  return Number(result.lastInsertRowid);
+}
+
+function setupAgentboxFixture(): AgentboxFixture {
+  const rawDb = new Database(':memory:');
+  rawDb.pragma('journal_mode = WAL');
+  const pluginDb = new PluginDatabase(rawDb, 'agentbox');
+  createSchema(pluginDb);
+  migrateRunsTable(pluginDb);
+
+  const now = Date.now();
+  // One running, one success, one failed — enough to populate stats,
+  // active-run section, recent list, and the run-detail page.
+  const runningRunId = insertAgentboxRun(rawDb, pluginDb, {
+    issueNumber: 42, status: 'running',
+    startedAt: now - 60_000, progressPct: 35,
+  });
+  insertAgentboxRun(rawDb, pluginDb, {
+    issueNumber: 40, status: 'success',
+    startedAt: now - 7_200_000, finishedAt: now - 7_080_000,
+    prUrl: 'https://github.com/test-org/test-repo/pull/45',
+    progressPct: 100,
+  });
+  insertAgentboxRun(rawDb, pluginDb, {
+    issueNumber: 38, status: 'failed',
+    startedAt: now - 14_400_000, finishedAt: now - 14_280_000,
+    progressPct: 60,
+  });
+  return { rawDb, pluginDb, runningRunId };
+}
+
+function wrapPluginPage(title: string, body: string): string {
+  return `<!DOCTYPE html><html><head><title>${esc(title)}</title></head><body>
+    <nav><a href="/">Dashboard</a> <a href="/p/agentbox/">Workflows</a> <a href="/c">Conversations</a></nav>
+    <main class="container"><div class="plugin-agentbox">${body}</div></main>
+  </body></html>`;
+}
+
 function parseCookies(header: string | undefined): Record<string, string> {
   if (!header) return {};
   return Object.fromEntries(
@@ -137,6 +242,7 @@ function sessionAuth(req: Request, res: Response, next: NextFunction): void {
 }
 
 let server: Server | null = null;
+let agentboxFixtureForTeardown: { rawDb: Database.Database } | null = null;
 
 export async function startE2EServer(): Promise<void> {
   const app = express();
@@ -538,6 +644,51 @@ export async function startE2EServer(): Promise<void> {
     </body></html>`);
   });
 
+  // ─── Agentbox plugin routes (real renderers, in-memory SQLite) ───
+  // Mounts the plugin's pure render functions at /p/agentbox/* against
+  // a seeded in-memory SQLite. Lets Playwright drive the real template
+  // code without needing the full PluginRouter / shell wrapper stack.
+  const fixture = setupAgentboxFixture();
+  agentboxFixtureForTeardown = fixture;
+  const agentboxDb = fixture.pluginDb;
+
+  // Expose the seeded run ids so specs can target them without
+  // depending on insert order. Playwright reads this once in beforeAll.
+  app.get('/__test__/agentbox/fixture', (_req, res) => {
+    res.json({ runningRunId: fixture.runningRunId });
+  });
+
+  app.get('/p/agentbox/', sessionAuth, (_req, res) => {
+    const body = renderDashboard(loadDashboardData(agentboxDb));
+    res.type('html').send(wrapPluginPage('Workflows', body));
+  });
+
+  app.get('/p/agentbox/queue', sessionAuth, (_req, res) => {
+    const issues: QueueIssue[] = AGENTBOX_QUEUE_ISSUES;
+    const body = renderQueue(issues, AGENTBOX_FIXTURE_REPO);
+    res.type('html').send(wrapPluginPage('Workflows · Queue', body));
+  });
+
+  app.get('/p/agentbox/runs', sessionAuth, (req, res) => {
+    const page = parsePageParam(req.query.page);
+    const body = renderRunHistory(loadRunHistory(agentboxDb, page));
+    res.type('html').send(wrapPluginPage('Workflows · Runs', body));
+  });
+
+  app.get('/p/agentbox/runs/:id', sessionAuth, (req, res) => {
+    const id = parseRunIdParam(req.params.id);
+    if (id === null) {
+      res.status(400).type('html').send(wrapPluginPage('Workflows · Run', `${renderNavPills('runs')}<div class="agentbox-card"><h2>Bad request</h2></div>`));
+      return;
+    }
+    const detail = loadRunDetail(agentboxDb, id);
+    if (!detail) {
+      res.status(404).type('html').send(wrapPluginPage('Workflows · Run', `${renderNavPills('runs')}<div class="agentbox-card"><h2>Run not found</h2></div>`));
+      return;
+    }
+    res.type('html').send(wrapPluginPage('Workflows · Run', renderRunDetail(detail)));
+  });
+
   // 404
   app.use((_req, res) => {
     res.status(404).type('html').send('<!DOCTYPE html><html><body><h1>Not Found</h1></body></html>');
@@ -552,6 +703,10 @@ export async function startE2EServer(): Promise<void> {
 }
 
 export async function stopE2EServer(): Promise<void> {
+  if (agentboxFixtureForTeardown) {
+    try { agentboxFixtureForTeardown.rawDb.close(); } catch { /* ignore */ }
+    agentboxFixtureForTeardown = null;
+  }
   if (!server) return;
   return new Promise((resolve, reject) => {
     (server as Server).close((err) => {
