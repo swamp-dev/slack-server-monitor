@@ -28,6 +28,7 @@ import {
   renderNavPills,
   parsePageParam,
   parseRunIdParam,
+  DASHBOARD_CLIENT_JS,
   type QueueIssue,
 } from '../../plugins.local/agentbox/web-templates.js';
 
@@ -207,10 +208,12 @@ function setupAgentboxFixture(): AgentboxFixture {
   return { rawDb, pluginDb, runningRunId, pausedRunId, successRunId };
 }
 
-function wrapPluginPage(title: string, body: string): string {
+function wrapPluginPage(title: string, body: string, opts: { withClientJs?: boolean } = {}): string {
+  const clientJs = opts.withClientJs ? DASHBOARD_CLIENT_JS : '';
   return `<!DOCTYPE html><html><head><title>${esc(title)}</title></head><body>
     <nav><a href="/">Dashboard</a> <a href="/p/agentbox/">Workflows</a> <a href="/c">Conversations</a></nav>
     <main class="container"><div class="plugin-agentbox">${body}</div></main>
+    ${clientJs}
   </body></html>`;
 }
 
@@ -678,6 +681,40 @@ export async function startE2EServer(): Promise<void> {
     });
   });
 
+  // ─── Agentbox SSE channel ──────────────────────────────────────
+  // The dashboard's client JS opens an EventSource to
+  // /p/agentbox/stream and listens for `dashboard-update`,
+  // `journal-entry`, `run-complete` events. We hold a set of open
+  // responses here and let the test push events via
+  // /__test__/agentbox/sse-broadcast.
+  const sseClients = new Set<Response>();
+  app.get('/p/agentbox/stream', sessionAuth, (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+    res.write(': ok\n\n');
+    sseClients.add(res);
+    req.on('close', () => { sseClients.delete(res); });
+  });
+
+  app.get('/__test__/agentbox/sse-clients', (_req, res) => {
+    res.json({ count: sseClients.size });
+  });
+
+  app.post('/__test__/agentbox/sse-broadcast', (req, res) => {
+    const body = req.body as { event?: string; data?: unknown };
+    if (!body.event) {
+      res.status(400).json({ error: 'event required' });
+      return;
+    }
+    const payload = `event: ${body.event}\ndata: ${JSON.stringify(body.data ?? {})}\n\n`;
+    for (const client of sseClients) {
+      try { client.write(payload); } catch { /* dead client */ }
+    }
+    res.json({ delivered: sseClients.size });
+  });
+
   // Test-only endpoint: insert a fresh row so specs that mutate state
   // (cancel, pause, resume) don't fight each other. Body matches the
   // insertAgentboxRun options shape.
@@ -706,8 +743,12 @@ export async function startE2EServer(): Promise<void> {
   });
 
   app.get('/p/agentbox/', sessionAuth, (_req, res) => {
-    const body = renderDashboard(loadDashboardData(agentboxDb));
-    res.type('html').send(wrapPluginPage('Workflows', body));
+    const body = renderDashboard(loadDashboardData(agentboxDb))
+      // Inject the journal-list element the dashboard client JS appends to.
+      // The production page emits this list under the active-run section;
+      // for the E2E we keep it minimal so the spec can assert on it.
+      + `<div id="agentbox-journal-list"></div>`;
+    res.type('html').send(wrapPluginPage('Workflows', body, { withClientJs: true }));
   });
 
   app.get('/p/agentbox/queue', sessionAuth, (_req, res) => {
