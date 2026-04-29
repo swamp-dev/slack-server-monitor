@@ -77,7 +77,45 @@ const styles = `
   }
   .admin-table tbody tr:hover { background: rgba(139,233,253,0.04); }
   .admin-table tbody tr.deactivated { opacity: 0.55; }
+  /* Activate is the primary CTA on a deactivated row, so it should ignore the
+     row-wide opacity dimming. Promote and Reset-password stay muted because
+     they're not meaningful actions on an inactive user. Hover uses filter
+     instead of opacity so it doesn't compound with the row-level dim. */
+  .admin-table tbody tr.deactivated .activate-btn { opacity: 1; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-secondary)); border-color: transparent; }
+  .admin-table tbody tr.deactivated .activate-btn:hover { filter: brightness(1.1); }
   .admin-table .mono { font-family: 'SF Mono', monospace; font-size: 0.8125rem; }
+
+  /* Mobile: convert tables to stacked cards so the admin page is usable
+     below 640px. Each row becomes a card; each cell carries a data-label
+     attribute that renders as an inline label above the value. */
+  @media (max-width: 640px) {
+    .admin-page { padding: 12px; }
+    .admin-section { padding: 16px; }
+    .admin-table thead { display: none; }
+    .admin-table, .admin-table tbody, .admin-table tr, .admin-table td { display: block; width: 100%; }
+    .admin-table tr {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 12px;
+      padding: 8px 12px;
+    }
+    .admin-table td {
+      border-bottom: none;
+      padding: 6px 0;
+    }
+    .admin-table td::before {
+      content: attr(data-label);
+      display: block;
+      margin-bottom: 2px;
+      color: var(--text-muted);
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    /* The empty-state cell uses colspan and shouldn't carry a label. */
+    .admin-table td.empty-state::before { content: none; }
+  }
   .role-pill {
     display: inline-block;
     padding: 2px 10px;
@@ -210,22 +248,22 @@ function fmtExpiry(ts: number): string {
 
 function renderUsersSection(users: User[]): string {
   const rows = users.length === 0
-    ? `<tr><td colspan="6" class="empty-state">No users yet.</td></tr>`
+    ? `<tr><td colspan="7" class="empty-state">No users yet.</td></tr>`
     : users.map((u) => `
       <tr class="${u.isActive ? '' : 'deactivated'}">
-        <td class="mono">${escapeHtml(u.username ?? '—')}</td>
-        <td class="mono">${escapeHtml(u.slackId ?? '—')}</td>
-        <td>${escapeHtml(u.displayName ?? '')}</td>
-        <td><span class="role-pill ${u.role}">${u.role}</span></td>
-        <td><span class="status-pill ${u.isActive ? 'active' : 'inactive'}">${u.isActive ? '● active' : '○ inactive'}</span></td>
-        <td>${fmtDate(u.createdAt)}</td>
-        <td>
+        <td class="mono" data-label="Username">${escapeHtml(u.username ?? '—')}</td>
+        <td class="mono" data-label="Slack ID">${escapeHtml(u.slackId ?? '—')}</td>
+        <td data-label="Display name">${escapeHtml(u.displayName ?? '')}</td>
+        <td data-label="Role"><span class="role-pill ${u.role}">${u.role}</span></td>
+        <td data-label="Status"><span class="status-pill ${u.isActive ? 'active' : 'inactive'}">${u.isActive ? '● active' : '○ inactive'}</span></td>
+        <td data-label="Created">${fmtDate(u.createdAt)}</td>
+        <td data-label="Actions">
           <div class="row-actions">
             ${u.role === 'admin'
               ? `<form method="POST" action="/admin/users/${String(u.id)}/role"><input type="hidden" name="role" value="user"><button type="submit">Demote</button></form>`
               : `<form method="POST" action="/admin/users/${String(u.id)}/role"><input type="hidden" name="role" value="admin"><button type="submit">Promote</button></form>`}
             <form method="POST" action="/admin/users/${String(u.id)}/toggle-active">
-              <button type="submit" class="${u.isActive ? 'danger' : ''}">${u.isActive ? 'Deactivate' : 'Activate'}</button>
+              <button type="submit" class="${u.isActive ? 'danger' : 'activate-btn'}">${u.isActive ? 'Deactivate' : 'Activate'}</button>
             </form>
             <button type="button" class="reset-pw-btn" data-id="${String(u.id)}" data-username="${escapeHtml(u.username ?? u.slackId ?? '')}">Reset password</button>
           </div>
@@ -286,11 +324,11 @@ function renderInvitesSection(invites: InviteCode[], baseUrl?: string): string {
           : '';
         return `
           <tr>
-            <td class="mono">${escapeHtml(i.code.slice(0, 8))}…</td>
-            <td><span class="role-pill ${i.role}">${i.role}</span></td>
-            <td class="mono">${escapeHtml(i.slackUserId ?? '—')}</td>
-            <td>${fmtExpiry(i.expiresAt)}</td>
-            <td>
+            <td class="mono" data-label="Code">${escapeHtml(i.code.slice(0, 8))}…</td>
+            <td data-label="Role"><span class="role-pill ${i.role}">${i.role}</span></td>
+            <td class="mono" data-label="Pre-link">${escapeHtml(i.slackUserId ?? '—')}</td>
+            <td data-label="Expires">${fmtExpiry(i.expiresAt)}</td>
+            <td data-label="Actions">
               <div class="row-actions">
                 ${url ? `<button type="button" class="copy-btn" data-url="${escapeHtml(url)}">Copy URL</button>` : ''}
                 <form method="POST" action="/admin/invites/${escapeHtml(i.code)}/delete">
