@@ -74,7 +74,7 @@ Conversations with branch points show fork indicators:
 
 - Bell icon in nav bar with unread badge
 - Dropdown with recent notifications
-- Full page at `/notifications`
+- Full page at `/notifications` with date-bucketed sections (Today / Yesterday / This Week / Older) and level filter pills (All / Unread / Errors / Warnings)
 - Plugins can push notifications via `ctx.notify()`
 
 ![Notification center](images/notifications-dracula-desktop.png)
@@ -157,18 +157,19 @@ This starts a standalone server with seed data (no Slack connection needed), lau
 
 ### What Gets Captured
 
-Each page is captured in its default state plus variant states (empty, error, degraded, etc.):
+Each page is captured in its default state plus variant states (empty, error, degraded, etc.) and interactive states (modals open, dropdowns expanded):
 
-| Page | Default | Variants |
-|------|---------|----------|
-| Dashboard | Health cards, stats, widgets | `empty` (welcome screen), `degraded` (critical health) |
-| Sessions | Conversation list with tags | `empty`, `search-no-results`, `favorites`, `archived` |
-| Conversation | Messages and tool calls | `branched` (fork indicators) |
-| Notifications | Read/unread notifications | `empty` |
-| Login | Auth form | `error` (invalid token) |
-| 404 | Not found page | — |
+| Page | Default | Data variants | Interactive states |
+|------|---------|---------------|--------------------|
+| Dashboard | Health cards, stats, widgets | `empty`, `degraded` | `notification-bell-open`, `command-palette` (Ctrl+K), `mobile-hamburger-open` (mobile only) |
+| Sessions | Conversation list with tags | `empty`, `search-no-results`, `search-results`, `search-results-many`, `favorites`, `archived`, `tagged` | `kb-overlay` (`?`) |
+| Conversation | Messages and tool calls | `branched`, `long-with-code`, `truncated`, `tool-error` | `copy-toast` |
+| Notifications | Read/unread + filter pills | `empty`, `all-unread`, `many` | — |
+| Login / Register | Auth forms | `error`, `prefilled` | — |
+| Admin users | Users + invites tables | `empty`, `with-flash`, `deactivated` | `admin-users-reset-pw-open` |
+| Error pages | — | — | `401`, `403`, `404`, `500` |
 
-Each state is captured in **Dracula** (dark) and **light** themes, at **desktop** (1280x720) and **mobile** (375x812) viewports — **60 screenshots** total.
+Each state is captured in **Dracula** (dark) and **light** themes, at **desktop** (1280×720), **tablet** (768×1024), and **mobile** (375×812) viewports — about **318 screenshots** across 54 page/variant combinations (some interactive states are viewport-restricted).
 
 ### Output
 
@@ -180,3 +181,5 @@ Screenshots are saved to `screenshots/` (gitignored). Naming convention:
 # e.g., dashboard-dracula-desktop.png
 #        dashboard-degraded-dracula-desktop.png
 ```
+
+A `screenshots/manifest.json` lists every captured PNG with its `{ page, variant, theme, viewport, url, file, hasSetup }`, useful for downstream tooling (visual analysis, perceptual diffing, regression harnesses) so callers don't have to parse filenames.

@@ -126,18 +126,21 @@ This is especially useful for:
 
 ### Pages and Variants
 
-Each page has a default state plus variant states that exercise edge cases:
+Each page has a default state plus variants that exercise edge cases (data states) and setup hooks that exercise interactive states (modals, dropdowns, toasts):
 
-| Page | Variants | Purpose |
-|------|----------|---------|
-| Dashboard | `empty`, `degraded` | Welcome screen, critical health alerts |
-| Sessions | `empty`, `search-no-results`, `favorites`, `archived` | Empty states, filtered views |
-| Conversation | `branched` | Fork indicators |
-| Notifications | `empty` | No notifications |
-| Login | `error` | Invalid token |
-| 404 | -- | Not found page |
+| Page | Data variants | Interactive setup hooks |
+|------|---------------|--------------------------|
+| Dashboard | `empty`, `degraded` | `notification-bell-open`, `command-palette`, `mobile-hamburger-open` (mobile only) |
+| Sessions | `empty`, `search-no-results`, `search-results`, `search-results-many`, `favorites`, `archived`, `tagged` | `kb-overlay` (`?` keypress) |
+| Conversation | `branched`, `long-with-code`, `truncated`, `tool-error` | `copy-toast` |
+| Notifications | `empty`, `all-unread`, `many` | -- |
+| Login / Register | `error`, `prefilled` (register) | -- |
+| Admin users | `empty`, `with-flash`, `deactivated` | `admin-users-reset-pw-open` |
+| Error pages | -- | `401`, `403`, `404`, `500` |
 
-Variants are triggered via query params (e.g., `?variant=empty`). The screenshot server renders different fixture data based on the variant.
+Data variants are triggered via query params (e.g., `?variant=empty`); the screenshot server renders different fixture data based on the variant. Interactive states use `setup` hooks on `PageDef` that run after navigation but before the screenshot — clicking a button, pressing a key, etc. A setup hook can restrict itself to specific viewports via the `viewports` field on `PageDef` (e.g. `mobile-hamburger-open` only runs at `mobile`).
+
+If a setup hook fails (timing, layout drift), the harness logs a `[skip]` line and continues with the rest of the run rather than aborting — so a flaky hook still leaves a usable manifest.
 
 ### Themes and Viewports
 
@@ -146,8 +149,10 @@ Every page/variant combination is captured in:
 | Theme | Viewport | Resolution |
 |-------|----------|------------|
 | `dracula` | `desktop` | 1280x720 |
+| `dracula` | `tablet` | 768x1024 |
 | `dracula` | `mobile` | 375x812 |
 | `light` | `desktop` | 1280x720 |
+| `light` | `tablet` | 768x1024 |
 | `light` | `mobile` | 375x812 |
 
 Theme is set via `localStorage('ssm-theme')` on each browser context, matching how the real UI works.
@@ -158,12 +163,15 @@ Screenshots are saved to `screenshots/` (gitignored):
 
 ```
 screenshots/
-  dashboard-dracula-desktop.png           # default state
-  dashboard-degraded-light-mobile.png     # variant state
-  hue-dashboard-dracula-desktop.png       # plugin page
+  manifest.json                            # index of every PNG with metadata
+  dashboard-dracula-desktop.png            # default state
+  dashboard-degraded-light-mobile.png      # variant state
+  hue-dashboard-dracula-desktop.png        # plugin page
 ```
 
 Naming: `{page}-{variant?}-{theme}-{viewport}.png`
+
+A current run produces ~318 PNGs (54 page combinations × themes × viewports, with some interactive states viewport-restricted). The harness writes `screenshots/manifest.json` listing every entry as `{ page, variant, theme, viewport, url, file, hasSetup }` so downstream tooling (visual analysis, perceptual diffing, regression checks) can walk the captured set without parsing filenames.
 
 ### Adding Plugin Screenshots
 
@@ -225,6 +233,8 @@ For complex plugins, extract fixtures into a separate file and import from `scre
 | Screenshots look wrong | Check that `screenshotSetup` creates realistic seed data |
 | Plugin pages missing | Verify plugin is in `plugins.example/` (not `plugins.local/`) and exports `screenshotPages` |
 | Theme not applied | The server sets `localStorage('ssm-theme')` -- check your template reads from it |
+| Setup hook timed out (`[skip] page theme/viewport: setup failed`) | Check the selector in the hook still matches the rendered DOM. The hook's wait timeout is 2s — bump it for slow assertions. Mobile-only elements (e.g. the hamburger menu) need `viewports: ['mobile']` on the `PageDef` |
+| `copy-toast` hook always times out | The browser context grants `clipboard-read`/`clipboard-write`; if you change the context creation, preserve those permissions or `navigator.clipboard.writeText` won't resolve and the toast never fires |
 
 ## AgentBox Integration
 
