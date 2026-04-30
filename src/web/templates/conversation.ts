@@ -163,7 +163,7 @@ function renderToolCalls(toolCalls: ToolCallLog[]): string {
         : '';
 
       return `
-        <details class="tool-call">
+        <details class="tool-call${tc.success ? '' : ' failed'}"${tc.success ? '' : ' open'}>
           <summary class="tool-call-header">
             <span class="tool-call-name">${escapeHtml(tc.toolName)}</span>
             <span class="tool-call-meta">${statusIcon}${durationBadge}<span class="tool-call-time">${time}</span></span>

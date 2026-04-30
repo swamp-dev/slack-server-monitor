@@ -703,6 +703,17 @@ export function getBaseStyles(): string {
     border-color: var(--surface-hover);
   }
 
+  /* Failed tool calls get a red left-border accent + tinted summary bar
+     so they stand out from successful calls in the list. The renderer
+     also opens these by default so the error output is visible without
+     a click. */
+  .tool-call.failed {
+    border-left: 4px solid var(--red);
+  }
+  .tool-call.failed > .tool-call-header {
+    background: rgba(255, 85, 85, 0.10);
+  }
+
   .tool-call-header {
     padding: 10px 14px;
     background: rgba(255, 255, 255, 0.03);

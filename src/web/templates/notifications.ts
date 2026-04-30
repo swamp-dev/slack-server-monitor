@@ -40,6 +40,37 @@ function formatRelativeTime(timestamp: number): string {
   return `${String(days)}d ago`;
 }
 
+type NotifBucket = 'today' | 'yesterday' | 'this-week' | 'older';
+
+/**
+ * Bucket a notification's createdAt into a date-section group used for
+ * the temporal headers on the notifications page. Same model as the
+ * session-list page so the UI feels consistent.
+ */
+function dateBucket(timestamp: number): NotifBucket {
+  // Use Date.setDate for day arithmetic so DST transitions don't cause a
+  // 24-hour offset to mis-bucket entries around the spring/fall boundary.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  if (timestamp >= startOfToday.getTime()) return 'today';
+
+  const startOfYesterday = new Date(startOfToday);
+  startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+  if (timestamp >= startOfYesterday.getTime()) return 'yesterday';
+
+  const startOfWeek = new Date(startOfToday);
+  startOfWeek.setDate(startOfWeek.getDate() - 7);
+  if (timestamp >= startOfWeek.getTime()) return 'this-week';
+  return 'older';
+}
+
+const BUCKET_LABEL: Record<NotifBucket, string> = {
+  'today': 'Today',
+  'yesterday': 'Yesterday',
+  'this-week': 'This Week',
+  'older': 'Older',
+};
+
 /**
  * Render a compact dropdown for the nav bell.
  * Shows last N notifications with mark-read and view-all actions.
@@ -132,6 +163,38 @@ const notificationPageStyles = `
     background: var(--accent);
     color: var(--bg);
   }
+  .notif-filters {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .notif-filter-pill {
+    padding: 4px 12px;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .notif-filter-pill:hover { color: var(--text); border-color: var(--accent); }
+  .notif-filter-pill.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .notif-section-header {
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    font-weight: 600;
+    margin: 16px 0 8px;
+  }
+  .notif-section-header:first-child { margin-top: 0; }
+  /* When a filter hides all entries in a section, the section header
+     should also disappear so we don't end up with floating "Today"
+     labels above empty space. */
+  .notif-section.hidden { display: none; }
+  .notif-entry[data-hidden] { display: none; }
   .notif-list {
     display: flex;
     flex-direction: column;
@@ -275,7 +338,7 @@ export function renderNotificationPage(
     ? `<button class="btn" id="page-mark-all" type="button">Mark all read</button>`
     : '';
 
-  const items = notifications.map((n) => {
+  function renderEntry(n: Notification): string {
     const levelClass = `notif-${n.level}`;
     const readClass = n.readAt ? 'notif-read' : '';
     const time = formatRelativeTime(n.createdAt);
@@ -292,7 +355,7 @@ export function renderNotificationPage(
       : n.level === 'warn' ? icon('alert-triangle', 16)
       : icon('info-circle', 16);
 
-    return `<div class="notif-entry ${levelClass} ${readClass}" data-id="${String(n.id)}">
+    return `<div class="notif-entry ${levelClass} ${readClass}" data-id="${String(n.id)}" data-level="${n.level}" data-read="${n.readAt ? 'true' : 'false'}">
       <div class="notif-indicator">${levelIcon}</div>
       <div class="notif-content">
         <div class="notif-entry-title">${titleContent}</div>
@@ -304,7 +367,36 @@ export function renderNotificationPage(
       </div>
       ${markReadBtn}
     </div>`;
-  }).join('\n');
+  }
+
+  // Bucket by day so the page reads top-to-bottom in temporal order
+  // (matches the conversation-list pattern). Bucket order is fixed; an
+  // empty bucket renders nothing.
+  const buckets: Record<NotifBucket, Notification[]> = {
+    'today': [], 'yesterday': [], 'this-week': [], 'older': [],
+  };
+  for (const n of notifications) {
+    buckets[dateBucket(n.createdAt)].push(n);
+  }
+  const sectionOrder: NotifBucket[] = ['today', 'yesterday', 'this-week', 'older'];
+  const sections = sectionOrder
+    .filter((b) => buckets[b].length > 0)
+    .map((b) => `
+      <section class="notif-section" data-bucket="${b}">
+        <h2 class="notif-section-header">${BUCKET_LABEL[b]}</h2>
+        ${buckets[b].map(renderEntry).join('\n')}
+      </section>
+    `)
+    .join('\n');
+
+  const filters = `
+    <div class="notif-filters" role="tablist" aria-label="Filter notifications by level">
+      <button type="button" class="notif-filter-pill active" data-filter="all" role="tab" aria-selected="true">All</button>
+      <button type="button" class="notif-filter-pill" data-filter="unread" role="tab" aria-selected="false">Unread</button>
+      <button type="button" class="notif-filter-pill" data-filter="error" role="tab" aria-selected="false">Errors</button>
+      <button type="button" class="notif-filter-pill" data-filter="warn" role="tab" aria-selected="false">Warnings</button>
+    </div>
+  `;
 
   const bodyHtml = `
   <main class="container">
@@ -312,14 +404,48 @@ export function renderNotificationPage(
       <h1>Notifications</h1>
       ${markAllBtn}
     </div>
+    ${filters}
     <div class="notif-list">
-      ${items}
+      ${sections}
     </div>
   </main>`;
 
   const scripts = `
   <script>
   (function() {
+    // Level/unread filter pills. Filter state is local UI only — a future
+    // change can pin it via query string if deep-linking matters.
+    var pills = document.querySelectorAll('.notif-filter-pill');
+    function applyFilter(name) {
+      var entries = document.querySelectorAll('.notif-entry');
+      entries.forEach(function(e) {
+        var matches = (
+          name === 'all' ||
+          (name === 'unread' && e.getAttribute('data-read') === 'false') ||
+          (name === 'error' && e.getAttribute('data-level') === 'error') ||
+          (name === 'warn' && e.getAttribute('data-level') === 'warn')
+        );
+        // data-hidden so the filter doesn't conflict with inline styles
+        // set elsewhere (e.g. swipe-to-dismiss touches style.transform).
+        if (matches) e.removeAttribute('data-hidden');
+        else e.setAttribute('data-hidden', '');
+      });
+      // Hide section headers whose entries are all filtered out so the
+      // page doesn't show floating "Today" labels above empty space.
+      document.querySelectorAll('.notif-section').forEach(function(sec) {
+        var visible = sec.querySelectorAll('.notif-entry:not([data-hidden])');
+        sec.classList.toggle('hidden', visible.length === 0);
+      });
+    }
+    pills.forEach(function(p) {
+      p.addEventListener('click', function() {
+        pills.forEach(function(o) { o.classList.remove('active'); o.setAttribute('aria-selected', 'false'); });
+        p.classList.add('active');
+        p.setAttribute('aria-selected', 'true');
+        applyFilter(p.getAttribute('data-filter') || 'all');
+      });
+    });
+
     // Mark single notification as read
     document.querySelectorAll('[data-mark-read]').forEach(function(btn) {
       btn.addEventListener('click', function() {
