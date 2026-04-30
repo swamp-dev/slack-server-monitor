@@ -289,3 +289,170 @@ export const branchedConversationMeta = {
     { threadTs: '1000.001b2', channelId: 'C001', createdAt: now - 5 * 60_000, branchPointIndex: 3 },
   ],
 };
+
+// --- Sessions: search results (matched against the term "docker") ---
+
+export const seedSearchResults: SessionSummary[] = [
+  {
+    id: 20, threadTs: '20000.020', channelId: 'C001', userId: 'admin',
+    messageCount: 9, toolCallCount: 4, createdAt: now - 4 * hour, updatedAt: now - 3 * hour,
+    archivedAt: null, isActive: false, isFavorited: false,
+    tags: ['docker'],
+    firstMessage: 'Why is the docker daemon spending so much CPU on the dind container?',
+  },
+  {
+    id: 21, threadTs: '21000.021', channelId: 'C001', userId: 'admin',
+    messageCount: 4, toolCallCount: 2, createdAt: now - 8 * hour, updatedAt: now - 7 * hour,
+    archivedAt: null, isActive: false, isFavorited: true,
+    tags: ['docker', 'monitoring'],
+    firstMessage: 'List docker containers using more than 500 MB of memory',
+  },
+  {
+    id: 22, threadTs: '22000.022', channelId: 'C001', userId: 'admin',
+    messageCount: 6, toolCallCount: 3, createdAt: now - day, updatedAt: now - day + 2 * hour,
+    archivedAt: null, isActive: false, isFavorited: false,
+    tags: ['docker', 'nginx'],
+    firstMessage: 'Compare the docker network configuration between staging and prod',
+  },
+  {
+    id: 23, threadTs: '23000.023', channelId: 'C001', userId: 'admin',
+    messageCount: 11, toolCallCount: 5, createdAt: now - 3 * day, updatedAt: now - 3 * day + hour,
+    archivedAt: null, isActive: false, isFavorited: false,
+    tags: ['docker', 'backup'],
+    firstMessage: 'Restore the postgres docker volume from yesterday\'s borg snapshot',
+  },
+];
+
+// --- Notifications: all unread, mixed levels ---
+
+export const seedNotificationsAllUnread: Notification[] = [
+  { id: 100, source: 'ssl', level: 'error', title: 'Certificate expiring', body: 'SSL certificate for media.example.com expires in 7 days. Renew immediately.', link: null, createdAt: now - 30 * 60_000, readAt: null },
+  { id: 101, source: 'health', level: 'warn', title: 'Memory at 91%', body: 'System memory has been above 90% for the last 12 minutes — investigate jellyfin transcoding sessions.', link: null, createdAt: now - 45 * 60_000, readAt: null },
+  { id: 102, source: 'backup', level: 'error', title: 'Backup failed', body: 'Borg backup to offsite repo failed: lock file held by stale process. Manual intervention required.', link: null, createdAt: now - 2 * hour, readAt: null },
+  { id: 103, source: 'system', level: 'info', title: 'Reboot pending', body: 'Kernel update applied. A reboot is required to load 6.1.0-45.', link: null, createdAt: now - 4 * hour, readAt: null },
+  { id: 104, source: 'hue', level: 'warn', title: 'Hue bridge unreachable', body: 'Could not reach Hue bridge at 192.168.1.42 for 5 consecutive polls.', link: '/p/hue/', createdAt: now - 6 * hour, readAt: null },
+];
+
+// --- Notifications: many entries (overflow / scroll test) ---
+
+export const seedNotificationsMany: Notification[] = (() => {
+  const out: Notification[] = [];
+  const sources = ['system', 'health', 'backup', 'ssl', 'hue', 'docker'];
+  const levels: Array<'info' | 'warn' | 'error'> = ['info', 'info', 'info', 'warn', 'warn', 'error'];
+  for (let i = 0; i < 18; i++) {
+    const level = levels[i % levels.length]!;
+    const source = sources[i % sources.length]!;
+    out.push({
+      id: 200 + i,
+      source,
+      level,
+      title: `${source.charAt(0).toUpperCase() + source.slice(1)} event #${i + 1}`,
+      body: `Event ${i + 1} from ${source} subsystem. Details: routine status update for ${source} containing event-specific information that wraps to multiple lines on narrow viewports.`,
+      link: null,
+      createdAt: now - (i + 1) * 30 * 60_000,
+      readAt: i < 4 ? null : now - (i * 25 * 60_000),
+    });
+  }
+  return out;
+})();
+
+// --- Conversation: long thread with code blocks, tables, and lists ---
+
+export const seedLongConversation: ConversationMessage[] = [
+  {
+    role: 'user',
+    content: 'Walk me through how to deploy a new version of the API service safely.',
+    timestamp: now - 60 * 60_000,
+  },
+  {
+    role: 'assistant',
+    content: `Here's the safe deploy sequence I'd recommend:\n\n1. **Run the test suite locally** to catch regressions before they reach prod\n2. **Open a PR** so CI runs the same checks in a clean environment\n3. **Tag a release** once CI is green\n4. **Deploy to staging** and exercise the new endpoints manually\n5. **Promote to production** with a blue-green flip\n6. **Monitor logs and metrics** for 15 minutes after the flip\n\nWant me to show you the deploy script?`,
+    timestamp: now - 59 * 60_000,
+  },
+  {
+    role: 'user',
+    content: 'Yes, show me the deploy script.',
+    timestamp: now - 58 * 60_000,
+  },
+  {
+    role: 'assistant',
+    content: `Here's the current deploy script:\n\n\`\`\`bash\n#!/usr/bin/env bash\nset -euo pipefail\n\nVERSION="\${1:?usage: deploy.sh <version>}"\nENV="\${2:-staging}"\n\necho "Deploying $VERSION to $ENV"\ndocker pull "registry.local/api:$VERSION"\ndocker tag "registry.local/api:$VERSION" "api:current"\ndocker compose up -d api\n\necho "Waiting for health check..."\nfor i in {1..30}; do\n  if curl -sf http://localhost:8080/health; then\n    echo "Healthy"\n    exit 0\n  fi\n  sleep 2\ndone\necho "Health check failed" >&2\nexit 1\n\`\`\`\n\nIt does a tag-and-flip with a 60-second health check window before declaring failure.`,
+    timestamp: now - 57 * 60_000,
+  },
+  {
+    role: 'user',
+    content: 'What does the health endpoint actually check?',
+    timestamp: now - 55 * 60_000,
+  },
+  {
+    role: 'assistant',
+    content: `The health endpoint reports four sub-checks:\n\n| Check | What it verifies | Failure mode |\n|-------|------------------|--------------|\n| **db** | Postgres connection + 1 round-trip | Returns 503 if connection pool is exhausted |\n| **cache** | Redis PING | Returns 503 if Redis is down |\n| **disk** | /data writable + < 95% full | Returns 503 if disk is read-only |\n| **deps** | Reachability of two upstream APIs | Returns 200 with degraded=true (still serves traffic) |\n\nThe deploy script's curl uses \`-f\` (fail on non-2xx), so any 503 stops the rollout.`,
+    timestamp: now - 54 * 60_000,
+  },
+  {
+    role: 'user',
+    content: 'How do I roll back if monitoring shows errors after the flip?',
+    timestamp: now - 50 * 60_000,
+  },
+  {
+    role: 'assistant',
+    content: `Roll back by re-tagging the previous version:\n\n\`\`\`bash\ndocker tag "registry.local/api:$PREV_VERSION" "api:current"\ndocker compose up -d api\n\`\`\`\n\nThe blue-green flip is instant (it's just a container restart), so rollback completes in ~10 seconds. After rolling back:\n\n- **Capture the failing logs** with \`docker logs api --since 5m > rollback-$(date +%s).log\`\n- **Tag the bad commit** in git so you don't redeploy it accidentally\n- **Open a tracking issue** with the log output attached`,
+    timestamp: now - 49 * 60_000,
+  },
+  {
+    role: 'user',
+    content: 'Got it. Anything else I should know?',
+    timestamp: now - 47 * 60_000,
+  },
+  {
+    role: 'assistant',
+    content: `A few gotchas worth knowing:\n\n- **Database migrations** — they run on container start. If a migration takes more than 30s, the health check window expires and the deploy fails. For long migrations, run them out-of-band first.\n- **Cache warm-up** — the new container starts with an empty Redis cache reference, so first-request latency spikes. Pre-warm with \`curl http://localhost:8080/warm\` before declaring success.\n- **Log volume** — the new container writes to /var/log which is mounted from the host. Make sure /var/log isn't full before deploying or the container will crash on first log line.\n\nThat's the lot. The script handles the common cases; the rest is operational hygiene.`,
+    timestamp: now - 46 * 60_000,
+  },
+  {
+    role: 'user',
+    content: 'Thanks, this is helpful.',
+    timestamp: now - 30 * 60_000,
+  },
+  {
+    role: 'assistant',
+    content: 'Glad it helped! Let me know if anything goes sideways during the rollout.',
+    timestamp: now - 29 * 60_000,
+  },
+];
+
+// --- Conversation: context truncated (long history pruned) ---
+
+export const seedTruncatedConvMeta = {
+  ...seedConversationMeta,
+  contextStatus: {
+    // percentUsed is stored as a fraction (0.0-1.0); the renderer multiplies
+    // by 100 for display. See conversation.ts:18 (Math.round(percentUsed * 100)).
+    percentUsed: 0.87,
+    wasTruncated: true,
+    removedCount: 6,
+  },
+};
+
+// --- Conversation: tool error mixed with successes ---
+
+export const seedConversationToolError: ToolCallLog[] = [
+  {
+    id: 10, conversationId: 1, toolName: 'docker_ps',
+    input: { format: 'table', all: false },
+    outputPreview: 'CONTAINER ID  IMAGE         STATUS\nabc123        jellyfin      Up 12 days',
+    timestamp: now - 9 * 60_000, durationMs: 1200, success: true,
+  },
+  {
+    id: 11, conversationId: 1, toolName: 'container_logs',
+    input: { container: 'jellyfin-staging', tail: 200 },
+    outputPreview: 'Error response from daemon: No such container: jellyfin-staging\n  at /usr/lib/node_modules/dockerode/lib/util.js:42:11\n  at processTicksAndRejections (node:internal/process/task_queues:96:5)',
+    timestamp: now - 8 * 60_000, durationMs: 230, success: false,
+  },
+  {
+    id: 12, conversationId: 1, toolName: 'disk_usage',
+    input: { path: '/data' },
+    outputPreview: 'Filesystem      Size  Used Avail Use% Mounted on\n/dev/sdb1       1.0T  720G  280G  72% /data',
+    timestamp: now - 7 * 60_000, durationMs: 510, success: true,
+  },
+];

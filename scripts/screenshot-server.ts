@@ -52,6 +52,12 @@ import {
   degradedHealth,
   archivedSessions,
   branchedConversationMeta,
+  seedSearchResults,
+  seedNotificationsAllUnread,
+  seedNotificationsMany,
+  seedLongConversation,
+  seedTruncatedConvMeta,
+  seedConversationToolError,
 } from './screenshot-fixtures.js';
 
 const PORT = parseInt(process.env.SCREENSHOT_PORT ?? '', 10) || 18970;
@@ -201,7 +207,8 @@ export async function startScreenshotServer(): Promise<number> {
       res.type('html').send(html);
     });
 
-    // Session list — variants: empty, search-no-results, favorites, archived
+    // Session list — variants: empty, search-no-results, search-results, search-results-many,
+    //                          favorites, archived, tagged
     app.get('/c', (req, res) => {
       const variant = req.query.variant as string | undefined;
       const emptyPagination = { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 };
@@ -216,6 +223,28 @@ export async function startScreenshotServer(): Promise<number> {
           allTags: seedAllTags,
           currentUserId: 'admin',
           searchQuery: 'kubernetes cluster migration',
+        });
+      } else if (variant === 'search-results') {
+        html = renderSessionList(seedSearchResults, { page: 1, pageSize: 20, totalItems: seedSearchResults.length, totalPages: 1 }, {
+          allTags: seedAllTags,
+          currentUserId: 'admin',
+          searchQuery: 'docker',
+        });
+      } else if (variant === 'search-results-many') {
+        // Reuse the search results plus the broader session list to simulate
+        // a popular query that hits across many sessions.
+        const many = [...seedSearchResults, ...seedSessions];
+        html = renderSessionList(many, { page: 1, pageSize: 20, totalItems: many.length, totalPages: 1 }, {
+          allTags: seedAllTags,
+          currentUserId: 'admin',
+          searchQuery: 'docker',
+        });
+      } else if (variant === 'tagged') {
+        const tagged = seedSessions.filter((s) => s.tags?.includes('docker'));
+        html = renderSessionList(tagged, { page: 1, pageSize: 20, totalItems: tagged.length, totalPages: 1 }, {
+          allTags: seedAllTags,
+          currentUserId: 'admin',
+          activeTag: 'docker',
         });
       } else if (variant === 'favorites') {
         html = renderSessionList(seedFavorites, { page: 1, pageSize: 20, totalItems: seedFavorites.length, totalPages: 1 }, {
@@ -238,21 +267,76 @@ export async function startScreenshotServer(): Promise<number> {
       res.type('html').send(html);
     });
 
-    // Conversation detail — variants: branched
+    // Conversation detail — variants: branched, long-with-code, truncated, tool-error
     app.get('/c/:threadTs/:channelId', (req, res) => {
       const variant = req.query.variant as string | undefined;
-      const meta = variant === 'branched' ? branchedConversationMeta : seedConversationMeta;
-      const html = renderConversation(seedMessages, seedToolCalls, meta);
+      let messages = seedMessages;
+      let toolCalls = seedToolCalls;
+      let meta = seedConversationMeta;
+
+      if (variant === 'branched') {
+        meta = branchedConversationMeta;
+      } else if (variant === 'long-with-code') {
+        messages = seedLongConversation;
+        toolCalls = [];
+      } else if (variant === 'truncated') {
+        meta = seedTruncatedConvMeta;
+      } else if (variant === 'tool-error') {
+        toolCalls = seedConversationToolError;
+      }
+
+      const html = renderConversation(messages, toolCalls, meta);
       res.type('html').send(html);
     });
 
-    // Notifications — variants: empty
+    // Notifications — variants: empty, all-unread, many
     app.get('/notifications', (req, res) => {
       const variant = req.query.variant as string | undefined;
-      const html = variant === 'empty'
-        ? renderNotificationPage([], 0)
-        : renderNotificationPage(seedNotifications, 2);
+      let html: string;
+      if (variant === 'empty') {
+        html = renderNotificationPage([], 0);
+      } else if (variant === 'all-unread') {
+        html = renderNotificationPage(seedNotificationsAllUnread, seedNotificationsAllUnread.length);
+      } else if (variant === 'many') {
+        const unreadCount = seedNotificationsMany.filter((n) => !n.readAt).length;
+        html = renderNotificationPage(seedNotificationsMany, unreadCount);
+      } else {
+        html = renderNotificationPage(seedNotifications, 2);
+      }
       res.type('html').send(html);
+    });
+
+    // 500 Internal Server Error — placeholder, no dedicated render500() in production today.
+    // Mirrors the 404/401/403 visual treatment so the screenshot shows what an
+    // intentional error page would look like; if Phase B finds this gap, it
+    // becomes a follow-up issue.
+    app.get('/500', (_req, res) => {
+      const body = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Server Error</title>
+  <script>
+    // Pick up the same theme the rest of the app uses, so the light-theme
+    // screenshot doesn't render in dracula colors.
+    (function() {
+      var t = localStorage.getItem('ssm-theme') || 'dracula';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="container">
+    <div class="empty" style="margin-top: 100px;">
+      <h1 style="font-size: 3rem; margin: 20px 0 12px;">500</h1>
+      <p>Something went wrong on our end. The error has been logged.</p>
+      <p style="margin-top: 20px;"><a href="/" class="export-btn">Back to dashboard</a></p>
+    </div>
+  </main>
+</body>
+</html>`;
+      res.status(500).type('html').send(body);
     });
 
     // Admin users page — variants: empty, with-flash, deactivated, reset-pw-open
