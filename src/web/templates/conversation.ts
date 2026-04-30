@@ -577,10 +577,18 @@ const conversationDetailStyles = `
     .conv-header { padding: 6px 12px; }
     .conv-title {
       font-size: 0.95rem;
-      white-space: nowrap;
+      /* Allow the title to wrap to up to 2 lines instead of single-line
+         ellipsis. The title is the user's first question, so cutting it
+         to ~30 characters hides the most useful at-a-glance context. */
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      /* Standard line-clamp is forward-compat only — no engine ships it
+         bare as of 2026, but it costs nothing to declare. The -webkit-
+         box combo above handles every real browser. */
+      line-clamp: 2;
       overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 60vw;
+      max-width: 100%;
     }
     .conv-details-toggle {
       display: inline-flex;

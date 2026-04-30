@@ -294,6 +294,14 @@ const dashboardStyles = `
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 12px;
   }
+  /* Tablet: explicitly force 2x2 instead of auto-fill landing on 3+1.
+     Below 1024px the four cards used to break to a 3-column row plus a
+     single Disk card on its own line, wasting horizontal space. */
+  @media (min-width: 641px) and (max-width: 1024px) {
+    .health-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
   .health-card {
     background: var(--surface);
     border-radius: 10px;
