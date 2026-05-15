@@ -1,0 +1,71 @@
+{
+  "name": "slack-server-monitor",
+  "version": "1.0.0",
+  "description": "Read-only Slack bot for home server monitoring and diagnostics using Socket Mode",
+  "main": "dist/app.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/app.js",
+    "dev": "tsx watch src/app.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:smoke": "vitest run tests/smoke/",
+    "test:e2e": "playwright test",
+    "test:mutation": "stryker run",
+    "deploy:check": "bash scripts/deploy-check.sh",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
+    "typecheck": "tsc --noEmit",
+    "ci": "npm run lint && npm run typecheck && npm run build && npm run test:coverage && npm run test:smoke && npm run test:e2e && npm audit --audit-level=high",
+    "ci:fast": "npm run lint && npm run typecheck && npm run build && npm run test:coverage && npm run test:smoke",
+    "setup": "tsx src/setup/wizard.ts",
+    "screenshots": "tsx scripts/take-screenshots.ts",
+    "manage-users": "tsx src/cli/manage-users.ts",
+    "agentbox:build": "bash scripts/build-agentbox.sh"
+  },
+  "keywords": [
+    "slack",
+    "monitoring",
+    "server",
+    "diagnostics",
+    "socket-mode"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.72.1",
+    "@slack/bolt": "^4.1.0",
+    "better-sqlite3": "^12.6.2",
+    "express": "^5.2.1",
+    "jiti": "^2.6.1",
+    "marked": "^17.0.2",
+    "winston": "^3.17.0",
+    "zod": "^3.23.0"
+  },
+  "overrides": {
+    "minimatch": ">=10.2.1"
+  },
+  "devDependencies": {
+    "@clack/prompts": "^1.1.0",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.59.1",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.56.0",
+    "@typescript-eslint/parser": "^8.56.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^10.0.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.56.0",
+    "vitest": "^4.0.18"
+  }
+}

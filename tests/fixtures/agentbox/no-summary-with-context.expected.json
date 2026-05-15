@@ -1,0 +1,40 @@
+{
+  "name": "perf(query): index conversation lookups by thread_ts",
+  "description": "## Context\n\nThe conversation store does a full table scan to find conversations by `thread_ts`. With ~50K rows in the demo dataset, this is ~80ms per lookup and shows up in the slow-query log. An index on `thread_ts` plus a covering index for the thread+channel lookup would drop it to <2ms.\n\n## Acceptance Criteria\n\n- [ ] Migration adds `idx_conversations_thread_ts` index\n- [ ] Combined `(thread_ts, channel_id)` covering index for the dual-key lookup\n- [ ] EXPLAIN QUERY PLAN shows index usage in tests\n\n## Files\n\n- `src/services/conversation-store.ts` — schema (modify)\n- `tests/services/conversation-store.test.ts` — index assertions (modify)\n\n## Dependencies\n\nPart of #150.",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "Migration adds `idx_conversations_thread_ts` index",
+      "description": "Migration adds `idx_conversations_thread_ts` index\n\nRelevant files:\n- `src/services/conversation-store.ts` — schema (modify)\n- `tests/services/conversation-store.test.ts` — index assertions (modify)",
+      "status": "pending",
+      "priority": 1
+    },
+    {
+      "id": "task-2",
+      "title": "Combined `(thread_ts, channel_id)` covering index for the dual-key lookup",
+      "description": "Combined `(thread_ts, channel_id)` covering index for the dual-key lookup\n\nRelevant files:\n- `src/services/conversation-store.ts` — schema (modify)\n- `tests/services/conversation-store.test.ts` — index assertions (modify)",
+      "status": "pending",
+      "priority": 2,
+      "depends_on": [
+        "task-1"
+      ]
+    },
+    {
+      "id": "task-3",
+      "title": "EXPLAIN QUERY PLAN shows index usage in tests",
+      "description": "EXPLAIN QUERY PLAN shows index usage in tests\n\nRelevant files:\n- `src/services/conversation-store.ts` — schema (modify)\n- `tests/services/conversation-store.test.ts` — index assertions (modify)",
+      "status": "pending",
+      "priority": 3,
+      "depends_on": [
+        "task-2"
+      ]
+    }
+  ],
+  "metadata": {
+    "total_tasks": 3,
+    "completed": 0,
+    "in_progress": 0,
+    "pending": 3,
+    "blocked": 0
+  }
+}

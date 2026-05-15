@@ -1,0 +1,168 @@
+import type { App } from '@slack/bolt';
+import type { KnownBlock } from '@slack/types';
+import { getPm2ProcessList, isPm2Available, type Pm2Process } from '../executors/pm2.js';
+import { formatBytes, formatUptime } from '../formatters/blocks.js';
+import {
+  header,
+  section,
+  divider,
+  context,
+  error,
+  statsBar,
+  helpTip,
+  link,
+  formatTable,
+} from '../formatters/blocks.js';
+import { logger } from '../utils/logger.js';
+
+/** Plain Unicode status indicators for use inside code blocks (Slack shortcodes don't render there) */
+function getProcessStatusIndicator(status: Pm2Process['status']): string {
+  switch (status) {
+    case 'online':
+      return '●';
+    case 'stopped':
+    case 'stopping':
+      return '○';
+    case 'errored':
+      return '✗';
+    case 'launching':
+    case 'one-launch-status':
+      return '◐';
+    default:
+      return '?';
+  }
+}
+
+/**
+ * Format uptime from timestamp
+ */
+function formatProcessUptime(uptimeMs: number): string {
+  if (!uptimeMs || uptimeMs <= 0) return 'N/A';
+
+  const now = Date.now();
+  const uptimeSeconds = Math.floor((now - uptimeMs) / 1000);
+
+  if (uptimeSeconds < 0) return 'N/A';
+
+  return formatUptime(uptimeSeconds);
+}
+
+/**
+ * Register the /pm2 command
+ *
+ * Usage:
+ *   /pm2 - Show all PM2 processes
+ */
+export function registerPm2Command(app: App): void {
+  app.command('/pm2', async ({ ack, respond }) => {
+    await ack();
+
+    try {
+      // Check if PM2 is available
+      const available = await isPm2Available();
+      if (!available) {
+        await respond({
+          blocks: [
+            header('PM2 Status'),
+            section(':information_source: PM2 is not installed or not running on this server.'),
+          ],
+          response_type: 'ephemeral',
+        });
+        return;
+      }
+
+      const processes = await getPm2ProcessList();
+
+      if (processes.length === 0) {
+        await respond({
+          blocks: [
+            header('PM2 Status'),
+            section(':information_source: No PM2 processes are running.'),
+          ],
+          response_type: 'ephemeral',
+        });
+        return;
+      }
+
+      // Group by status
+      const online = processes.filter((p) => p.status === 'online');
+      const stopped = processes.filter((p) => p.status === 'stopped');
+      const errored = processes.filter((p) => p.status === 'errored');
+      const other = processes.filter(
+        (p) => !['online', 'stopped', 'errored'].includes(p.status)
+      );
+
+      // Build summary stats bar
+      const stats = statsBar([
+        { count: online.length, label: 'online', status: 'ok' },
+        { count: stopped.length, label: 'stopped', status: 'warn' },
+        { count: errored.length, label: 'errored', status: 'error' },
+      ]);
+
+      const blocks: KnownBlock[] = [
+        header('PM2 Status'),
+        context(stats),
+        divider(),
+      ];
+
+      // Build process table
+      const sortedProcesses = [...online, ...errored, ...other, ...stopped];
+      const tableHeaders = ['', 'Name', 'Status', 'Uptime', 'Memory', 'CPU', 'Restarts'];
+      const tableRows = sortedProcesses.map((proc) => {
+        const indicator = getProcessStatusIndicator(proc.status);
+        const uptimeStr = proc.status === 'online' ? formatProcessUptime(proc.uptime) : 'N/A';
+        const memStr = proc.memory > 0 ? formatBytes(proc.memory) : 'N/A';
+        const cpuStr = proc.cpu > 0 ? `${proc.cpu.toFixed(1)}%` : 'N/A';
+        const modeInfo = proc.mode === 'cluster' && proc.instances > 1
+          ? ` (${String(proc.instances)}x)`
+          : '';
+
+        return [
+          indicator,
+          `${proc.name}${modeInfo}`,
+          proc.status,
+          uptimeStr,
+          memStr,
+          cpuStr,
+          proc.restarts > 0 ? String(proc.restarts) : '-',
+        ];
+      });
+
+      const table = formatTable(tableHeaders, tableRows);
+      if (table.length > 2900) {
+        // Slack section text limit is 3000 chars — truncate with warning
+        const truncated = table.slice(0, 2850) + '\n```\n_Table truncated — too many processes_';
+        blocks.push(section(truncated));
+      } else {
+        blocks.push(section(table));
+      }
+
+      // Warning for processes with high restart counts
+      const highRestarts = processes.filter((p) => p.restarts >= 10);
+      if (highRestarts.length > 0) {
+        blocks.push(divider());
+        blocks.push(
+          context(
+            `:warning: ${String(highRestarts.length)} process(es) have 10+ restarts: ` +
+            highRestarts.map((p) => p.name).join(', ')
+          )
+        );
+      }
+
+      // Add helpful tips and documentation link
+      blocks.push(divider());
+      blocks.push(
+        helpTip([
+          `Use \`pm2 logs <name>\` on the server for detailed logs`,
+          `${link('https://pm2.keymetrics.io/docs/usage/quick-start/', 'PM2 Docs')} for process management`,
+        ])
+      );
+
+      await respond({ blocks, response_type: 'ephemeral' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+      logger.error('PM2 command failed', { error: message });
+      await respond({ blocks: [error(message)], response_type: 'ephemeral' });
+    }
+  });
+}

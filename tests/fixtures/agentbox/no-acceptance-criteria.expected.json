@@ -1,0 +1,20 @@
+{
+  "name": "fix: login page not rendering on mobile Safari",
+  "description": "The login page fails to render on mobile Safari due to a CSS grid issue. The form fields are invisible but still focusable. This only happens on iOS 17+.\n\nProbably related to the `dvh` unit usage in the shell template.",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "fix: login page not rendering on mobile Safari",
+      "description": "The login page fails to render on mobile Safari due to a CSS grid issue. The form fields are invisible but still focusable. This only happens on iOS 17+.\n\nProbably related to the `dvh` unit usage in the shell template.",
+      "status": "pending",
+      "priority": 1
+    }
+  ],
+  "metadata": {
+    "total_tasks": 1,
+    "completed": 0,
+    "in_progress": 0,
+    "pending": 1,
+    "blocked": 0
+  }
+}

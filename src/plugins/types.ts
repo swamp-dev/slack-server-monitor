@@ -1,0 +1,410 @@
+import type { App } from '@slack/bolt';
+import type { ToolDefinition } from '../services/tools/types.js';
+import type { PluginApp } from './plugin-app.js';
+import type { PluginDatabase } from '../services/plugin-database.js';
+import type { PluginRouter } from '../web/plugin-router.js';
+
+/**
+ * Image input for multimodal Claude requests from plugins
+ */
+export interface PluginImageInput {
+  /** Base64-encoded image data */
+  data: string;
+  /** Image MIME type */
+  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+}
+
+/**
+ * Options for plugin Claude API calls
+ */
+export interface PluginClaudeOptions {
+  /** Include built-in server monitoring tools (default: false) */
+  includeBuiltinTools?: boolean;
+  /** Additional context to append to the system prompt */
+  systemPromptAddition?: string;
+  /** Maximum tokens for response (uses plugin default if not set) */
+  maxTokens?: number;
+  /** Images to include in the request (base64 encoded) */
+  images?: PluginImageInput[];
+  /** Path to a local image file for CLI provider to read */
+  localImagePath?: string;
+}
+
+/**
+ * Result from a plugin Claude API call
+ */
+export interface PluginClaudeResult {
+  /** Claude's text response */
+  response: string;
+  /** Tool calls made during the request */
+  toolCalls: { name: string; input: Record<string, unknown> }[];
+  /** Token usage */
+  usage: { inputTokens: number; outputTokens: number };
+}
+
+/**
+ * Claude API interface for plugins
+ *
+ * Provides access to Claude AI for plugins that need AI capabilities.
+ * Rate limited by user quota.
+ */
+export interface PluginClaude {
+  /**
+   * Ask Claude a question with optional tool access
+   *
+   * @param question - The question to ask Claude
+   * @param userId - Slack user ID (for rate limiting)
+   * @param options - Optional configuration
+   * @returns Claude's response and metadata
+   * @throws Error if rate limited or Claude is disabled
+   */
+  ask(
+    question: string,
+    userId: string,
+    options?: PluginClaudeOptions
+  ): Promise<PluginClaudeResult>;
+
+  /** Whether Claude is enabled in the current configuration */
+  readonly enabled: boolean;
+
+  /** Whether the current provider supports image inputs */
+  readonly supportsImages: boolean;
+}
+
+/**
+ * Context provided to plugins during lifecycle hooks
+ *
+ * Contains resources the plugin can use, including a scoped database accessor.
+ * The database accessor is pre-configured to only allow access to tables
+ * prefixed with "plugin_{name}_".
+ */
+/**
+ * Options for plugin notifications
+ */
+export interface PluginNotifyOptions {
+  /** Notification severity (default: 'info') */
+  level?: 'info' | 'warn' | 'error';
+  /** Additional body text */
+  body?: string;
+  /** Link URL (relative or absolute) */
+  link?: string;
+}
+
+/**
+ * Scoped SSE channel for real-time push to web clients.
+ * Events are broadcast to clients connected to /p/{pluginName}/stream.
+ */
+export interface PluginSSE {
+  /** Broadcast an event to all clients viewing this plugin's pages */
+  broadcast(event: string, data: unknown): void;
+  /** Get the number of connected SSE clients */
+  clientCount(): number;
+}
+
+export interface PluginContext {
+  /** Scoped database accessor for persistent storage */
+  db: PluginDatabase;
+  /** Plugin's unique name */
+  name: string;
+  /** Plugin's version string */
+  version: string;
+  /** Claude API (undefined if Claude is not enabled) */
+  claude?: PluginClaude;
+  /**
+   * Send a notification to the notification center.
+   * Source is automatically set to the plugin name.
+   */
+  notify: (title: string, opts?: PluginNotifyOptions) => void;
+  /** SSE channel for real-time push to web clients. Calls are no-ops when web server is disabled. */
+  sse: PluginSSE;
+}
+
+/**
+ * Structured help entry for plugin commands
+ *
+ * Plugins declare these so `/help` can render them consistently.
+ */
+export interface PluginHelpEntry {
+  /** Full command syntax, e.g. "/health med <name> <med> <dosage> <freq>" */
+  command: string;
+  /** Brief description, e.g. "Add medication" */
+  description: string;
+  /** Optional group label, e.g. "Health - Medications" (defaults to plugin name) */
+  group?: string;
+}
+
+/**
+ * Dashboard widget descriptor returned by plugins
+ *
+ * Plugins can contribute summary cards to the main dashboard
+ * via the `getWidgets()` method.
+ */
+export interface DashboardWidget {
+  /** Widget title displayed in the card header */
+  title: string;
+  /** Optional icon name (from the icon set in templates/icons.ts) */
+  icon?: string;
+  /**
+   * HTML content rendered inside the widget card.
+   *
+   * WARNING: Rendered verbatim without sanitization. The plugin author
+   * is responsible for escaping any user-derived values.
+   */
+  html: string;
+  /** Optional link URL — makes the widget title clickable */
+  link?: string;
+  /** Sort priority (lower values appear first, default: 100) */
+  priority?: number;
+  /** Card size in the grid layout */
+  size?: 'small' | 'medium' | 'large';
+}
+
+/**
+ * Plugin interface for extending the Slack Server Monitor
+ *
+ * SECURITY WARNING: Plugins run with full process privileges.
+ * Only install plugins from trusted sources. Plugins can:
+ * - Access all environment variables
+ * - Execute arbitrary code
+ * - Make network requests
+ *
+ * The PluginApp wrapper provides defense-in-depth, not true sandboxing.
+ *
+ * Plugins can:
+ * - Register custom slash commands
+ * - Provide Claude AI tools (namespaced as pluginname:toolname)
+ * - Run async initialization/cleanup (with timeouts)
+ */
+export interface Plugin {
+  /** Unique identifier for the plugin */
+  name: string;
+
+  /** Semver version string */
+  version: string;
+
+  /** Optional description for help text */
+  description?: string;
+
+  /**
+   * Structured help entries for this plugin's commands
+   * Used by /help to display rich, grouped command documentation.
+   * Plugins without helpEntries get a generic fallback line.
+   */
+  helpEntries?: PluginHelpEntry[];
+
+  /**
+   * Register slash commands with the Bolt app
+   * Called during app startup after built-in commands
+   *
+   * Receives PluginApp (constrained wrapper) instead of raw App
+   * for validation and logging.
+   *
+   * @deprecated Use PluginApp signature for better type safety
+   */
+  registerCommands?: (app: App | PluginApp) => void | Promise<void>;
+
+  /**
+   * Claude AI tool definitions
+   * Tools are namespaced as "pluginname:toolname" to prevent collision
+   * with built-in tools.
+   */
+  tools?: ToolDefinition[];
+
+  /**
+   * Async initialization hook
+   * Called before registerCommands
+   *
+   * Receives PluginContext with:
+   * - db: Scoped database accessor for persistent storage
+   * - name: Plugin's unique name
+   * - version: Plugin's version string
+   *
+   * TIMEOUT: Must complete within 10 seconds or plugin loading fails.
+   */
+  init?: (ctx: PluginContext) => Promise<void>;
+
+  /**
+   * Return dashboard widgets for the home page
+   *
+   * Called on each dashboard render. Return an array of widget descriptors.
+   * Errors are caught per-plugin and do not break the dashboard.
+   */
+  getWidgets?: () => DashboardWidget[];
+
+  /**
+   * Register web routes for the plugin.
+   * Routes are mounted under /p/{pluginName}/.
+   * Called after init() during plugin loading.
+   */
+  registerWebRoutes?: (router: PluginRouter) => void;
+
+  /**
+   * Nav bar entry for this plugin's web pages.
+   * Only shown if the plugin has registered web routes.
+   */
+  webNavEntry?: { label: string; icon?: string };
+
+  /**
+   * Web pages for command palette navigation.
+   * Each page gets a palette entry: "PluginName > PageName".
+   * Falls back to screenshotPages if not specified.
+   */
+  webPages?: PluginWebPage[];
+
+  /**
+   * Whether this plugin's web routes are publicly accessible without authentication.
+   * Default: false (auth required). Public plugins appear in nav for all users.
+   */
+  public?: boolean;
+
+  /**
+   * Cleanup hook called on app shutdown
+   *
+   * Receives the same PluginContext as init().
+   *
+   * TIMEOUT: Must complete within 5 seconds.
+   */
+  destroy?: (ctx: PluginContext) => Promise<void>;
+
+  /**
+   * Pages to include in automated screenshot capture.
+   * Each page will be captured in all theme/viewport combinations.
+   * Only used when the plugin also provides `screenshotSetup`.
+   */
+  screenshotPages?: PluginScreenshotPage[];
+
+  /**
+   * Initialize mock data for screenshots.
+   * Called by the screenshot server before routes are registered.
+   * Use this to seed the response cache, database, or any other
+   * state needed to render pages without external dependencies.
+   */
+  screenshotSetup?: (ctx: PluginContext) => Promise<void>;
+}
+
+/**
+ * A page to capture in the screenshot pipeline
+ */
+export interface PluginScreenshotPage {
+  /** Page name used in filename (e.g., "dashboard", "scenes") */
+  name: string;
+  /** Route path relative to plugin root (e.g., "/", "/scenes") */
+  path: string;
+  /** Capture full page height instead of viewport only (default: false) */
+  fullPage?: boolean;
+}
+
+/**
+ * A web page for command palette navigation
+ */
+export interface PluginWebPage {
+  /** Display name for the palette (e.g., "Scenes") */
+  name: string;
+  /** Route path relative to plugin root (e.g., "/scenes") */
+  path: string;
+}
+
+/**
+ * Internal: ToolDefinition with plugin ownership info
+ * Used for namespacing plugin tools
+ */
+export interface PluginToolDefinition extends ToolDefinition {
+  /** Internal: Name of the plugin that owns this tool */
+  _pluginName?: string;
+}
+
+// Re-export PluginApp for plugin authors
+export type { PluginApp } from './plugin-app.js';
+
+/**
+ * Type guard to validate plugin structure at runtime
+ */
+export function isValidPlugin(obj: unknown): obj is Plugin {
+  if (typeof obj !== 'object' || obj === null) {
+    return false;
+  }
+
+  const plugin = obj as Record<string, unknown>;
+
+  // Required fields — name must be URL-safe (lowercase, alphanumeric, hyphens, underscores)
+  if (typeof plugin.name !== 'string' || !/^[a-z][a-z0-9_-]{0,49}$/.test(plugin.name)) {
+    return false;
+  }
+
+  if (typeof plugin.version !== 'string' || plugin.version.trim() === '') {
+    return false;
+  }
+
+  // Optional fields with type validation
+  if (plugin.description !== undefined && typeof plugin.description !== 'string') {
+    return false;
+  }
+
+  if (plugin.helpEntries !== undefined) {
+    if (!Array.isArray(plugin.helpEntries)) {
+      return false;
+    }
+    for (const entry of plugin.helpEntries) {
+      if (typeof entry !== 'object' || entry === null) return false;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.command !== 'string' || typeof e.description !== 'string') return false;
+      if (e.group !== undefined && typeof e.group !== 'string') return false;
+    }
+  }
+
+  if (plugin.registerCommands !== undefined && typeof plugin.registerCommands !== 'function') {
+    return false;
+  }
+
+  if (plugin.tools !== undefined && !Array.isArray(plugin.tools)) {
+    return false;
+  }
+
+  if (plugin.init !== undefined && typeof plugin.init !== 'function') {
+    return false;
+  }
+
+  if (plugin.destroy !== undefined && typeof plugin.destroy !== 'function') {
+    return false;
+  }
+
+  if (plugin.getWidgets !== undefined && typeof plugin.getWidgets !== 'function') {
+    return false;
+  }
+
+  if (plugin.registerWebRoutes !== undefined && typeof plugin.registerWebRoutes !== 'function') {
+    return false;
+  }
+
+  if (plugin.screenshotSetup !== undefined && typeof plugin.screenshotSetup !== 'function') {
+    return false;
+  }
+
+  if (plugin.screenshotPages !== undefined) {
+    if (!Array.isArray(plugin.screenshotPages)) {
+      return false;
+    }
+    for (const page of plugin.screenshotPages) {
+      if (typeof page !== 'object' || page === null) return false;
+      const p = page as Record<string, unknown>;
+      if (typeof p.name !== 'string' || typeof p.path !== 'string' || !p.path.startsWith('/')) return false;
+    }
+  }
+
+  if (plugin.public !== undefined && typeof plugin.public !== 'boolean') {
+    return false;
+  }
+
+  if (plugin.webPages !== undefined) {
+    if (!Array.isArray(plugin.webPages)) {
+      return false;
+    }
+    for (const page of plugin.webPages) {
+      if (typeof page !== 'object' || page === null) return false;
+      const p = page as Record<string, unknown>;
+      if (typeof p.name !== 'string' || p.name === '' || typeof p.path !== 'string' || !p.path.startsWith('/')) return false;
+    }
+  }
+
+  return true;
+}

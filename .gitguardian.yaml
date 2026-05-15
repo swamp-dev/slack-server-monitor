@@ -1,0 +1,39 @@
+# GitGuardian configuration.
+# Reference: https://github.com/GitGuardian/ggshield/blob/main/.gitguardian.example.yml
+#
+# Scope: `ggshield` (the CLI / pre-commit hook / GitHub Action) reads
+# this file directly. The GitGuardian *GitHub App* that runs the PR
+# "GitGuardian Security Checks" status, however, configures itself
+# from dashboard settings — not this YAML. So if you want a path-level
+# exclusion to apply to PR scanning, the file alone may not be enough:
+# you also need the test fixtures themselves to not match a credential
+# pattern. The convention in this repo is to break the literal
+# `username: '...', password: '...'` pair by storing fixture passwords
+# in named constants assembled at runtime — see
+# `tests/cli/manage-users-prompts.test.ts` for the pattern.
+
+version: 2
+
+# Top-level `paths-ignore` (skip the entire path from ALL ggshield
+# checks, not just secret detection). Mirrors `secret.ignored_paths`
+# below for tools that read one key but not the other.
+paths-ignore:
+  - 'tests/**/*.test.ts'
+  - 'plugins.example/**/*.test.ts'
+  - 'plugins.local/**/*.test.ts'
+  - 'mcp/tests/**/*.test.ts'
+
+secret:
+  # Skip secret scanning in test files. Every previous flag on this
+  # repo has been on a literal test-fixture password (e.g.
+  # `password: 'long-enough-pw'`) appearing next to a fixture username
+  # (e.g. `username: 'alice'`) — the "Username Password" detector
+  # treats the pair as credentials. The values are deliberately
+  # synthetic and never real secrets, but the detector can't know
+  # that. Excluding the test directories is cleaner than annotating
+  # every fixture call site.
+  ignored_paths:
+    - 'tests/**/*.test.ts'
+    - 'plugins.example/**/*.test.ts'
+    - 'plugins.local/**/*.test.ts'
+    - 'mcp/tests/**/*.test.ts'

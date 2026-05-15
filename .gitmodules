@@ -1,0 +1,3 @@
+[submodule "vendor/agentbox"]
+	path = vendor/agentbox
+	url = https://github.com/swamp-dev/agentbox.git

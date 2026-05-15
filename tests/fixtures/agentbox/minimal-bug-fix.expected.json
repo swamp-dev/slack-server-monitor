@@ -1,0 +1,30 @@
+{
+  "name": "fix(shell): handle spaces in docker container names",
+  "description": "Docker container names with spaces cause shell command failures in the container status tool.",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "Container names with spaces are properly escaped in shell commands",
+      "description": "Container names with spaces are properly escaped in shell commands\n\nRelevant files:\n- `src/utils/shell.ts` \u2014 shell execution (modify)\n- `tests/utils/shell.test.ts` \u2014 tests (modify)",
+      "status": "pending",
+      "priority": 1
+    },
+    {
+      "id": "task-2",
+      "title": "Add test case for container names with special characters",
+      "description": "Add test case for container names with special characters\n\nRelevant files:\n- `src/utils/shell.ts` \u2014 shell execution (modify)\n- `tests/utils/shell.test.ts` \u2014 tests (modify)",
+      "status": "pending",
+      "priority": 2,
+      "depends_on": [
+        "task-1"
+      ]
+    }
+  ],
+  "metadata": {
+    "total_tasks": 2,
+    "completed": 0,
+    "in_progress": 0,
+    "pending": 2,
+    "blocked": 0
+  }
+}

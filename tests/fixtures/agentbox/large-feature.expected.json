@@ -1,0 +1,130 @@
+{
+  "name": "feat(plugins): add webhook notification system",
+  "description": "Add a webhook system so plugins can send notifications to external services.",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "Define WebhookConfig interface with url, secret, events, enabled fields",
+      "description": "Define WebhookConfig interface with url, secret, events, enabled fields\n\nRelevant files:\n- `src/services/webhook.ts` \u2014 webhook service (new)\n- `src/web/templates/webhooks.ts` \u2014 webhook UI (new)\n- `tests/services/webhook.test.ts` \u2014 tests (new)",
+      "status": "pending",
+      "priority": 1
+    },
+    {
+      "id": "task-2",
+      "title": "Create webhook_configs database table",
+      "description": "Create webhook_configs database table\n\nRelevant files:\n- `src/services/webhook.ts` \u2014 webhook service (new)\n- `src/web/templates/webhooks.ts` \u2014 webhook UI (new)\n- `tests/services/webhook.test.ts` \u2014 tests (new)",
+      "status": "pending",
+      "priority": 2,
+      "depends_on": [
+        "task-1"
+      ]
+    },
+    {
+      "id": "task-3",
+      "title": "Add webhook registration API endpoint",
+      "description": "Add webhook registration API endpoint\n\nRelevant files:\n- `src/services/webhook.ts` \u2014 webhook service (new)\n- `src/web/templates/webhooks.ts` \u2014 webhook UI (new)\n- `tests/services/webhook.test.ts` \u2014 tests (new)",
+      "status": "pending",
+      "priority": 3,
+      "depends_on": [
+        "task-2"
+      ]
+    },
+    {
+      "id": "task-4",
+      "title": "Add webhook deletion API endpoint",
+      "description": "Add webhook deletion API endpoint\n\nRelevant files:\n- `src/services/webhook.ts` \u2014 webhook service (new)\n- `src/web/templates/webhooks.ts` \u2014 webhook UI (new)\n- `tests/services/webhook.test.ts` \u2014 tests (new)",
+      "status": "pending",
+      "priority": 4,
+      "depends_on": [
+        "task-3"
+      ]
+    },
+    {
+      "id": "task-5",
+      "title": "Implement webhook delivery service with retry logic",
+      "description": "Implement webhook delivery service with retry logic\n\nRelevant files:\n- `src/services/webhook.ts` \u2014 webhook service (new)\n- `src/web/templates/webhooks.ts` \u2014 webhook UI (new)\n- `tests/services/webhook.test.ts` \u2014 tests (new)",
+      "status": "pending",
+      "priority": 5,
+      "depends_on": [
+        "task-4"
+      ]
+    },
+    {
+      "id": "task-6",
+      "title": "Add HMAC signature to webhook payloads",
+      "description": "Add HMAC signature to webhook payloads\n\nRelevant files:\n- `src/services/webhook.ts` \u2014 webhook service (new)\n- `src/web/templates/webhooks.ts` \u2014 webhook UI (new)\n- `tests/services/webhook.test.ts` \u2014 tests (new)",
+      "status": "pending",
+      "priority": 6,
+      "depends_on": [
+        "task-5"
+      ]
+    },
+    {
+      "id": "task-7",
+      "title": "Create delivery log table for debugging",
+      "description": "Create delivery log table for debugging\n\nRelevant files:\n- `src/services/webhook.ts` \u2014 webhook service (new)\n- `src/web/templates/webhooks.ts` \u2014 webhook UI (new)\n- `tests/services/webhook.test.ts` \u2014 tests (new)",
+      "status": "pending",
+      "priority": 7,
+      "depends_on": [
+        "task-6"
+      ]
+    },
+    {
+      "id": "task-8",
+      "title": "Add webhook test/ping endpoint",
+      "description": "Add webhook test/ping endpoint\n\nRelevant files:\n- `src/services/webhook.ts` \u2014 webhook service (new)\n- `src/web/templates/webhooks.ts` \u2014 webhook UI (new)\n- `tests/services/webhook.test.ts` \u2014 tests (new)",
+      "status": "pending",
+      "priority": 8,
+      "depends_on": [
+        "task-7"
+      ]
+    },
+    {
+      "id": "task-9",
+      "title": "Implement exponential backoff for failed deliveries",
+      "description": "Implement exponential backoff for failed deliveries\n\nRelevant files:\n- `src/services/webhook.ts` \u2014 webhook service (new)\n- `src/web/templates/webhooks.ts` \u2014 webhook UI (new)\n- `tests/services/webhook.test.ts` \u2014 tests (new)",
+      "status": "pending",
+      "priority": 9,
+      "depends_on": [
+        "task-8"
+      ]
+    },
+    {
+      "id": "task-10",
+      "title": "Add webhook management UI page",
+      "description": "Add webhook management UI page\n\nRelevant files:\n- `src/services/webhook.ts` \u2014 webhook service (new)\n- `src/web/templates/webhooks.ts` \u2014 webhook UI (new)\n- `tests/services/webhook.test.ts` \u2014 tests (new)",
+      "status": "pending",
+      "priority": 10,
+      "depends_on": [
+        "task-9"
+      ]
+    },
+    {
+      "id": "task-11",
+      "title": "Write integration tests for delivery service",
+      "description": "Write integration tests for delivery service\n\nRelevant files:\n- `src/services/webhook.ts` \u2014 webhook service (new)\n- `src/web/templates/webhooks.ts` \u2014 webhook UI (new)\n- `tests/services/webhook.test.ts` \u2014 tests (new)",
+      "status": "pending",
+      "priority": 11,
+      "depends_on": [
+        "task-10"
+      ]
+    },
+    {
+      "id": "task-12",
+      "title": "Add webhook metrics to stats command",
+      "description": "Add webhook metrics to stats command\n\nRelevant files:\n- `src/services/webhook.ts` \u2014 webhook service (new)\n- `src/web/templates/webhooks.ts` \u2014 webhook UI (new)\n- `tests/services/webhook.test.ts` \u2014 tests (new)",
+      "status": "pending",
+      "priority": 12,
+      "depends_on": [
+        "task-11"
+      ]
+    }
+  ],
+  "metadata": {
+    "total_tasks": 12,
+    "completed": 0,
+    "in_progress": 0,
+    "pending": 12,
+    "blocked": 0
+  }
+}

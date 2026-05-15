@@ -1,0 +1,14 @@
+/**
+ * Web module for hosting long Claude responses
+ */
+
+export { startWebServer, stopWebServer, getConversationUrl } from './server.js';
+export {
+  renderConversation,
+  renderSessionList,
+  render404,
+  render401,
+  renderLogin,
+  renderError,
+} from './templates/index.js';
+export { resolveToken, parseCookies, createLinkToken, type TokenIdentity } from './auth.js';
