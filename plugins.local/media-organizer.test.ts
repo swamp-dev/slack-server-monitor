@@ -131,4 +131,44 @@ describe('media-organizer plugin schema', () => {
       expect(indexNames).toContain(`${db.prefix}events_event_type`);
     });
   });
+
+  describe('NOT NULL constraints', () => {
+    beforeEach(() => {
+      createSchema(db);
+    });
+
+    it('rejects NULL runs.id', () => {
+      expect(() =>
+        db
+          .prepare(`INSERT INTO ${db.prefix}runs (id) VALUES (?)`)
+          .run([null])
+      ).toThrow();
+    });
+
+    it('rejects NULL events.run_id', () => {
+      expect(() =>
+        db
+          .prepare(
+            `INSERT INTO ${db.prefix}events (run_id, ts) VALUES (?, ?)`
+          )
+          .run([null, 1000])
+      ).toThrow();
+    });
+
+    it('rejects NULL inboxes.name', () => {
+      expect(() =>
+        db
+          .prepare(`INSERT INTO ${db.prefix}inboxes (name, user) VALUES (?, ?)`)
+          .run([null, 'alice'])
+      ).toThrow();
+    });
+
+    it('rejects NULL cursor.key', () => {
+      expect(() =>
+        db
+          .prepare(`INSERT INTO ${db.prefix}cursor (key, value) VALUES (?, ?)`)
+          .run([null, 'v'])
+      ).toThrow();
+    });
+  });
 });

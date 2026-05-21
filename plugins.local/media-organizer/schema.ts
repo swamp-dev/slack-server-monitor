@@ -63,7 +63,7 @@ export function createSchema(db: PluginDatabase): void {
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${db.prefix}cursor (
-      key TEXT PRIMARY KEY,
+      key TEXT PRIMARY KEY NOT NULL,
       value TEXT NOT NULL
     )
   `);
