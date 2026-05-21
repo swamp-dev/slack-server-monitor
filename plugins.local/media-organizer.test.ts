@@ -125,10 +125,10 @@ describe('media-organizer plugin schema', () => {
         .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?`)
         .all([`${db.prefix}events`]) as Array<{ name: string }>;
       const indexNames = indexes.map((i) => i.name);
-      expect(indexNames.some((n) => n.includes('ts'))).toBe(true);
-      expect(indexNames.some((n) => n.includes('run_id'))).toBe(true);
-      expect(indexNames.some((n) => n.includes('inbox_name'))).toBe(true);
-      expect(indexNames.some((n) => n.includes('event_type'))).toBe(true);
+      expect(indexNames).toContain(`${db.prefix}events_ts`);
+      expect(indexNames).toContain(`${db.prefix}events_run_id`);
+      expect(indexNames).toContain(`${db.prefix}events_inbox_name`);
+      expect(indexNames).toContain(`${db.prefix}events_event_type`);
     });
   });
 });

@@ -25,4 +25,6 @@ const mediaOrganizerPlugin: Plugin = {
 
 export default mediaOrganizerPlugin;
 
-export { db };
+export function getDb(): PluginContext['db'] | null {
+  return db;
+}

@@ -3,7 +3,7 @@ import type { PluginDatabase } from '../../src/services/plugin-database.js';
 export function createSchema(db: PluginDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${db.prefix}runs (
-      id TEXT PRIMARY KEY,
+      id TEXT PRIMARY KEY NOT NULL,
       started_at INT,
       completed_at INT,
       dry_run INT,
@@ -21,7 +21,7 @@ export function createSchema(db: PluginDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${db.prefix}events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id TEXT,
+      run_id TEXT NOT NULL,
       event_type TEXT,
       inbox_name TEXT,
       user TEXT,
@@ -51,7 +51,7 @@ export function createSchema(db: PluginDatabase): void {
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${db.prefix}inboxes (
-      name TEXT PRIMARY KEY,
+      name TEXT PRIMARY KEY NOT NULL,
       user TEXT NOT NULL,
       last_file_organized_at INT,
       files_last_24h INT DEFAULT 0,
