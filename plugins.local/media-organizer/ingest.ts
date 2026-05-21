@@ -39,10 +39,12 @@ export function processNewEvents(
   const stat = fs.statSync(eventsPath);
   let cursor = getCursor(db);
 
-  // Copytruncate: file shrank below cursor position — start over
+  // Copytruncate: file shrank below cursor — re-read from byte 0.
+  // Don't persist the reset here; the transaction writes the final position
+  // atomically, so on crash the old cursor is still in DB and copytruncate
+  // is re-detected on restart.
   if (stat.size < cursor) {
     cursor = 0;
-    setCursor(db, 0);
   }
 
   if (stat.size === cursor) {
