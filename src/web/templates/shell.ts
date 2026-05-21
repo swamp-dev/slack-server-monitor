@@ -204,7 +204,7 @@ export function wrapInShell(opts: ShellOptions): string {
     // a problem). Conversation detail also lives under /c/ but has
     // additional path segments, so we use an explicit list rather than
     // a /c prefix match.
-    var p = location.pathname.replace(/\/$/, '') || '/';
+    var p = location.pathname.replace(/[/]$/, '') || '/';
     var listViews = ['/', '/c', '/c/search', '/c/favorites', '/c/archived', '/notifications'];
     var pathAllowed = listViews.indexOf(p) !== -1 || p.indexOf('/c/tag/') === 0;
     if (!pathAllowed) return;
