@@ -432,12 +432,21 @@ describe('recomputeInboxHealth', () => {
     expect(row.health).toBe('idle');
   });
 
-  it('sets health to stalled for file organized 15 days ago', () => {
-    insertInbox('inbox3', now - 15 * 24 * 3600, 0);
-    recomputeInboxHealth(db, ['inbox3']);
+  it('sets health to idle at exactly 14 days ago (boundary — still idle)', () => {
+    insertInbox('inbox3a', now - 14 * 24 * 3600, 0);
+    recomputeInboxHealth(db, ['inbox3a']);
     const row = db
       .prepare(`SELECT health FROM ${db.prefix}inboxes WHERE name = ?`)
-      .get(['inbox3']) as { health: string };
+      .get(['inbox3a']) as { health: string };
+    expect(row.health).toBe('idle');
+  });
+
+  it('sets health to stalled at exactly 15 days ago (threshold)', () => {
+    insertInbox('inbox3b', now - 15 * 24 * 3600, 0);
+    recomputeInboxHealth(db, ['inbox3b']);
+    const row = db
+      .prepare(`SELECT health FROM ${db.prefix}inboxes WHERE name = ?`)
+      .get(['inbox3b']) as { health: string };
     expect(row.health).toBe('stalled');
   });
 

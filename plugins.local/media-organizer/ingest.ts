@@ -52,8 +52,11 @@ export function processNewEvents(
   const bytesToRead = stat.size - cursor;
   const buffer = Buffer.alloc(bytesToRead);
   const fd = fs.openSync(eventsPath, 'r');
-  fs.readSync(fd, buffer, 0, bytesToRead, cursor);
-  fs.closeSync(fd);
+  try {
+    fs.readSync(fd, buffer, 0, bytesToRead, cursor);
+  } finally {
+    fs.closeSync(fd);
+  }
 
   const lines = buffer.toString('utf8').split('\n').filter((l) => l.trim() !== '');
 
@@ -144,9 +147,8 @@ export function processNewEvents(
         }
       }
     }
+    setCursor(db, stat.size);
   });
-
-  setCursor(db, stat.size);
 
   if (affectedInboxes.size > 0) {
     recomputeInboxHealth(db, [...affectedInboxes]);

@@ -14,7 +14,7 @@ function computeHealth(row: InboxRow, now: number): string {
   if (row.last_file_organized_at == null) return 'unknown';
   const age = now - row.last_file_organized_at;
   if (age < 48 * HOUR) return 'healthy';
-  if (age < 14 * DAY) return 'idle';
+  if (age < 15 * DAY) return 'idle';
   return 'stalled';
 }
 
