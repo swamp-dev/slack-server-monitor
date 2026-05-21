@@ -1,6 +1,11 @@
 import type { Plugin, PluginContext } from '../src/plugins/index.js';
 import { createSchema } from './media-organizer/schema.js';
+import { startIngestor } from './media-organizer/ingest.js';
 
+const DEFAULT_EVENTS_PATH =
+  process.env['MEDIA_ORGANIZER_EVENTS_LOG'] ?? '/var/lib/media-organizer/events.jsonl';
+
+let stopIngestor: (() => void) | null = null;
 let db: PluginContext['db'] | null = null;
 
 const mediaOrganizerPlugin: Plugin = {
@@ -11,9 +16,12 @@ const mediaOrganizerPlugin: Plugin = {
   async init(ctx: PluginContext): Promise<void> {
     db = ctx.db;
     createSchema(ctx.db);
+    stopIngestor = startIngestor(ctx, DEFAULT_EVENTS_PATH);
   },
 
   async destroy(_ctx: PluginContext): Promise<void> {
+    stopIngestor?.();
+    stopIngestor = null;
     db = null;
   },
 
