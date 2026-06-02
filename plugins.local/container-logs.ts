@@ -13,6 +13,7 @@
 import type { Plugin } from '../src/plugins/index.js';
 import type { ToolDefinition, ToolConfig } from '../src/services/tools/types.js';
 import { executeCommand } from '../src/utils/shell.js';
+import { getContainerStatus } from '../src/executors/docker.js';
 import { sanitizeServiceName } from '../src/utils/sanitize.js';
 import { scrubSensitiveData, processLogsForSlack, countPotentialSecrets } from '../src/formatters/scrub.js';
 import { logger } from '../src/utils/logger.js';
@@ -117,8 +118,11 @@ async function fetchContainerLogs(containerName: string, lines: number): Promise
     containerName,
   ]);
 
-  if (result.exitCode !== 0 && !result.stdout && !result.stderr) {
-    throw new Error(`Failed to get logs for ${containerName}`);
+  if (result.exitCode !== 0) {
+    const msg = (result.stderr || result.stdout).trim();
+    throw new Error(
+      msg.toLowerCase().includes('no such') ? `Container not found: ${containerName}` : `docker logs failed: ${msg}`
+    );
   }
 
   // docker writes container stderr to process stderr — combine both
@@ -126,19 +130,8 @@ async function fetchContainerLogs(containerName: string, lines: number): Promise
 }
 
 async function listRunningContainers(): Promise<string[]> {
-  const result = await executeCommand('docker', [
-    'ps',
-    '--format',
-    '{{.Names}}',
-  ]);
-
-  if (result.exitCode !== 0) return [];
-
-  return result.stdout
-    .trim()
-    .split('\n')
-    .map((n) => n.trim())
-    .filter(Boolean);
+  const containers = await getContainerStatus();
+  return containers.filter((c) => c.state === 'running').map((c) => c.name);
 }
 
 // =============================================================================
@@ -278,8 +271,9 @@ const containerLogsPlugin: Plugin = {
           const tailUrl = baseUrl
             ? `${baseUrl}/p/container-logs/tail?container=${encodeURIComponent(serviceName)}`
             : '(set WEB_BASE_URL in .env to enable direct links)';
+          const safeDisplay = serviceName.replace(/[*_`~]/g, '\\$&');
           await respond({
-            text: `Live tail for *${serviceName}*:\n${tailUrl}`,
+            text: `Live tail for *${safeDisplay}*:\n${tailUrl}`,
             response_type: 'ephemeral',
           });
           return;
@@ -321,7 +315,8 @@ const containerLogsPlugin: Plugin = {
         // Default: fetch logs for the named container
         // sub is the container name; parts[1] is the optional line count
         const containerName = sub;
-        const lineCount = Math.min(parseInt(parts[1] ?? String(DEFAULT_LINES), 10) || DEFAULT_LINES, MAX_LINES);
+        const rawN = parseInt(parts[1] ?? String(DEFAULT_LINES), 10);
+        const lineCount = Math.min(Math.max(1, isNaN(rawN) ? DEFAULT_LINES : rawN), MAX_LINES);
 
         let sanitized: string;
         try { sanitized = sanitizeServiceName(containerName); } catch {
