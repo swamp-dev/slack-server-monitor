@@ -15,7 +15,9 @@
 
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Plugin } from '../src/plugins/index.js';
+import type { Plugin, DashboardWidget } from '../src/plugins/index.js';
+import type { PluginRouter } from '../src/plugins/index.js';
+import { renderPluginPage, pluginTable, escapeHtml } from '../src/plugins/index.js';
 import type { ToolDefinition, ToolConfig } from '../src/services/tools/types.js';
 import { executeCommand } from '../src/utils/shell.js';
 import { logger } from '../src/utils/logger.js';
@@ -337,6 +339,131 @@ function fmtDate(d: Date): string {
 }
 
 // =============================================================================
+// Widget cache (getWidgets is synchronous — cache updated in init + on page load)
+// =============================================================================
+
+let cachedPendingCount = 0;
+let cacheUpdatedAt = 0;
+let refreshInFlight = false;
+const WIDGET_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function refreshWidgetCache(): Promise<void> {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
+  try {
+    const pending = await getPendingUpdates();
+    cachedPendingCount = pending.length;
+    cacheUpdatedAt = Date.now();
+  } catch {
+    // keep stale value
+  } finally {
+    refreshInFlight = false;
+  }
+}
+
+// =============================================================================
+// Web dashboard
+// =============================================================================
+
+const DASHBOARD_CSS = `
+  .du-summary { display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1.5rem; }
+  .du-stat { padding:.35rem .75rem; border-radius:6px; font-size:.875rem; background:var(--card-bg); border:1px solid var(--border); }
+  .du-stat.warn { border-color:#e6a817; color:#e6a817; font-weight:600; }
+  .du-stat.ok { border-color:#3fb950; color:#3fb950; font-weight:600; }
+  .du-stat.muted { color:var(--text-muted); }
+  .du-section { font-size:.7rem; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--text-muted); margin:1.75rem 0 .75rem; }
+  .du-pending-card { background:var(--card-bg); border:1px solid var(--border); border-left:3px solid #e6a817; border-radius:6px; padding:.75rem 1rem; margin-bottom:.5rem; display:grid; grid-template-columns:1fr auto; gap:.2rem .75rem; }
+  .du-service { font-weight:600; font-size:.95rem; }
+  .du-digest { font-family:var(--font-mono,monospace); font-size:.78rem; color:var(--text-muted); }
+  .du-date { font-size:.78rem; color:var(--text-muted); white-space:nowrap; }
+  .du-empty { color:var(--text-muted); font-style:italic; padding:.5rem 0; }
+  .du-refresh { font-size:.75rem; color:var(--text-muted); text-align:right; margin-top:2rem; }
+`;
+
+async function buildDashboardHtml(): Promise<string> {
+  const [versions, pending, history] = await Promise.all([
+    getContainerVersions(),
+    getPendingUpdates(),
+    getUpdateHistory(20),
+  ]);
+
+  // Keep widget cache fresh while someone is viewing the page (sole writer is refreshWidgetCache)
+  void refreshWidgetCache();
+
+  const running = versions.filter((v) => v.state === 'running');
+
+  const summaryBar = `<div class="du-summary">
+    <span class="du-stat ${pending.length > 0 ? 'warn' : 'ok'}">
+      ${pending.length > 0 ? `⚠️ ${String(pending.length)} pending update${pending.length === 1 ? '' : 's'}` : '✅ All up to date'}
+    </span>
+    <span class="du-stat muted">${String(running.length)} / ${String(versions.length)} containers running</span>
+  </div>`;
+
+  const pendingSection = pending.length === 0 ? '' : `
+    <div class="du-section">Pending Updates</div>
+    ${pending.map((p) => `<div class="du-pending-card">
+      <span class="du-service">${escapeHtml(p.service)}</span>
+      <span class="du-date">${escapeHtml(fmtDate(p.detectedAt))}</span>
+      <span class="du-digest">${escapeHtml(p.newDigest.slice(0, 32))}…</span>
+    </div>`).join('\n')}`;
+
+  const statusBadge = (status: UpdateRecord['status']): string => {
+    const map: Record<UpdateRecord['status'], string> = {
+      updated: 'background:rgba(63,185,80,.15);color:#3fb950',
+      failed: 'background:rgba(248,81,73,.15);color:#f85149',
+      'no-change': 'background:rgba(128,128,128,.1);color:var(--text-muted)',
+      skipped: 'background:rgba(128,128,128,.1);color:var(--text-muted)',
+      unknown: 'background:rgba(128,128,128,.1);color:var(--text-muted)',
+    };
+    return `<span style="display:inline-block;padding:.1rem .35rem;border-radius:3px;font-size:.75rem;font-weight:600;${map[status]}">${escapeHtml(status)}</span>`;
+  };
+
+  const historyHtml = history.length === 0
+    ? '<p class="du-empty">No update history found in /var/log/docker-update/</p>'
+    : `<table class="plugin-table"><thead><tr><th>Service</th><th>Status</th><th>Date</th></tr></thead><tbody>
+        ${history.map((r) => `<tr><td>${escapeHtml(r.service)}</td><td>${statusBadge(r.status)}</td><td style="white-space:nowrap;font-size:.85rem;color:var(--text-muted)">${escapeHtml(fmtDate(r.timestamp))}</td></tr>`).join('\n')}
+      </tbody></table>`;
+
+  const versionsHtml = versions.length === 0
+    ? '<p class="du-empty">No containers found.</p>'
+    : pluginTable(
+        ['Container', 'Tag', 'State'],
+        versions.map((v) => [v.name, v.tag, v.state]),
+      );
+
+  return `
+    ${summaryBar}
+    ${pendingSection}
+    <div class="du-section">Update History <span style="font-weight:400;text-transform:none;letter-spacing:0">(last 20)</span></div>
+    ${historyHtml}
+    <div class="du-section">Container Versions</div>
+    ${versionsHtml}
+    <p class="du-refresh">Auto-refreshes every 60 s</p>
+  `;
+}
+
+function registerDockerUpdatesWebRoutes(router: PluginRouter): void {
+  router.get('/', async (_req, res, ctx) => {
+    try {
+      const body = await buildDashboardHtml();
+      const html = renderPluginPage({
+        title: 'Docker Updates',
+        pluginName: 'docker-updates',
+        body,
+        styles: DASHBOARD_CSS,
+        scripts: `<script>setTimeout(()=>location.reload(),60000);</script>`,
+        unreadCount: 0,
+      });
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(html);
+    } catch (err) {
+      logger.error('docker-updates web route error', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).send('Error loading dashboard');
+    }
+  });
+}
+
+// =============================================================================
 // Claude AI tools
 // =============================================================================
 
@@ -440,7 +567,7 @@ const tools: ToolDefinition[] = [
 
 const dockerUpdatesPlugin: Plugin = {
   name: 'docker-updates',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Container update status — versions, pending updates, history',
 
   helpEntries: [
@@ -527,6 +654,35 @@ const dockerUpdatesPlugin: Plugin = {
   },
 
   tools,
+
+  webNavEntry: { label: 'Docker Updates', icon: 'refresh' },
+
+  webPages: [
+    { name: 'Dashboard', path: '/' },
+  ],
+
+  registerWebRoutes: registerDockerUpdatesWebRoutes,
+
+  getWidgets(): DashboardWidget[] {
+    if (Date.now() - cacheUpdatedAt > WIDGET_CACHE_TTL_MS) {
+      void refreshWidgetCache();
+    }
+    const hasPending = cachedPendingCount > 0;
+    return [{
+      title: 'Docker Updates',
+      icon: 'refresh',
+      html: hasPending
+        ? `<span style="color:#e6a817;font-weight:600">⚠️ ${escapeHtml(String(cachedPendingCount))} update${cachedPendingCount === 1 ? '' : 's'} available</span>`
+        : `<span style="color:#3fb950">✅ All up to date</span>`,
+      link: '/p/docker-updates/',
+      priority: 60,
+      size: 'small',
+    }];
+  },
+
+  async init() {
+    void refreshWidgetCache();
+  },
 };
 
 export default dockerUpdatesPlugin;
