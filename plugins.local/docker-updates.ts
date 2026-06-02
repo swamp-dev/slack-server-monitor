@@ -18,7 +18,6 @@ import { join } from 'node:path';
 import type { Plugin } from '../src/plugins/index.js';
 import type { ToolDefinition, ToolConfig } from '../src/services/tools/types.js';
 import { executeCommand } from '../src/utils/shell.js';
-import { sanitizeServiceName } from '../src/utils/sanitize.js';
 import { logger } from '../src/utils/logger.js';
 
 // =============================================================================
@@ -404,12 +403,13 @@ const tools: ToolDefinition[] = [
       try {
         const rawService = String(input.service ?? '').trim();
         if (!rawService) return 'Error: service name is required';
-        let service: string;
-        try {
-          service = sanitizeServiceName(rawService);
-        } catch (err) {
-          return `Error: ${err instanceof Error ? err.message : 'Invalid service name'}`;
+        // Block flag-injection (names starting with -) and enforce a length cap.
+        // Docker container names allow alphanumeric, _, -, . — broader than
+        // sanitizeServiceName which rejects dots needed for Swarm task names.
+        if (rawService.startsWith('-') || rawService.length > 255) {
+          return 'Error: Invalid container name';
         }
+        const service = rawService;
 
         const result = await executeCommand('docker', [
           'inspect',
