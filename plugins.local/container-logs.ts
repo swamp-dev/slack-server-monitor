@@ -259,7 +259,7 @@ const tools: ToolDefinition[] = [
         const containerName = typeof input.container_name === 'string' ? input.container_name : '';
         if (!containerName) return 'Error: container_name is required';
         const service = sanitizeServiceName(containerName);
-        const lines = Math.min(Math.floor(typeof input.lines === 'number' ? input.lines : 50), MAX_LINES);
+        const lines = Math.min(Math.max(1, Math.floor(typeof input.lines === 'number' ? input.lines : 50)), MAX_LINES);
         const raw = await getContainerLogs(service, lines);
         return scrubSensitiveData(raw) || '(no output)';
       } catch (err) {
@@ -288,7 +288,7 @@ const tools: ToolDefinition[] = [
         if (!containerName) return 'Error: container_name is required';
         if (!pattern) return 'Error: pattern is required';
         const service = sanitizeServiceName(containerName);
-        const lines = Math.min(Math.floor(typeof input.lines === 'number' ? input.lines : DEFAULT_SEARCH_LINES), MAX_LINES);
+        const lines = Math.min(Math.max(1, Math.floor(typeof input.lines === 'number' ? input.lines : DEFAULT_SEARCH_LINES)), MAX_LINES);
         const raw = await getContainerLogs(service, lines);
         const scrubbed = scrubSensitiveData(raw);
         const parsed = scrubbed.split('\n').map(parseLogLine);
@@ -481,9 +481,11 @@ const containerLogsPlugin: Plugin = {
       });
 
       child.on('close', () => {
-        stdoutWriter.flush();
-        stderrWriter.flush();
-        if (!res.writableEnded) res.end();
+        if (!res.writableEnded) {
+          stdoutWriter.flush();
+          stderrWriter.flush();
+          res.end();
+        }
       });
 
       req.on('close', () => {
