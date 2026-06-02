@@ -147,7 +147,11 @@ const CLIENT_FILTER_JS = `
 
 async function buildDashboardHtml(req: { query: Record<string, string> }): Promise<string> {
   const containers = await listRunningContainers();
-  const selectedContainer = req.query['container'] ?? '';
+  const rawContainer = req.query['container'] ?? '';
+  // Block flag-injection; dots allowed for Swarm task names (myapp.1)
+  const selectedContainer = (!rawContainer || rawContainer.startsWith('-') || rawContainer.length > 255)
+    ? ''
+    : rawContainer;
   const lineCount = Math.min(Math.max(1, parseInt(req.query['lines'] ?? '100', 10) || 100), 500);
 
   const containerOptions = containers
@@ -216,10 +220,13 @@ let tailContainer = '';
 let tailLastTs = '';
 
 function startTailPolling(container: string, ctx: PluginContext): void {
+  // Always stop and restart — ensures container switch takes effect immediately
+  if (tailPollTimer) {
+    clearInterval(tailPollTimer);
+    tailPollTimer = null;
+  }
   tailContainer = container;
   tailLastTs = '';
-
-  if (tailPollTimer) return;
 
   tailPollTimer = setInterval(async () => {
     if (ctx.sse.clientCount() === 0) {
@@ -277,7 +284,8 @@ function registerContainerLogsWebRoutes(router: PluginRouter): void {
   });
 
   router.get('/tail', (req, res, ctx) => {
-    const container = (req.query as Record<string, string>)['container'] ?? '';
+    const rawContainer = (req.query as Record<string, string>)['container'] ?? '';
+    const container = (!rawContainer || rawContainer.startsWith('-') || rawContainer.length > 255) ? '' : rawContainer;
     if (!container) { res.redirect('/p/container-logs/'); return; }
 
     startTailPolling(container, ctx);
