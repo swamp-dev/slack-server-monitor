@@ -45,6 +45,7 @@ export function parseLogLine(line: string): ParsedLogLine {
 }
 
 const MAX_LINES = 500;
+const DEFAULT_SEARCH_LINES = 200;
 
 export function parseContainerLogsCommand(text: string): ContainerLogsCommand {
   const parts = text.trim().split(/\s+/);
@@ -61,12 +62,12 @@ export function parseContainerLogsCommand(text: string): ContainerLogsCommand {
   }
 
   if (first === 'search') {
-    const service = parts[1];
-    if (!service) throw new Error('Service name is required. Usage: /container-logs search <service> <term>');
-    sanitizeServiceName(service);
+    const rawService = parts[1];
+    if (!rawService) throw new Error('Service name is required. Usage: /container-logs search <service> <term>');
+    const service = sanitizeServiceName(rawService);
     const term = parts.slice(2).join(' ').trim();
     if (!term) throw new Error('Search term is required. Usage: /container-logs search <service> <term>');
-    return { subcommand: 'search', service: sanitizeServiceName(service), term };
+    return { subcommand: 'search', service, term };
   }
 
   // Default: logs subcommand
@@ -116,8 +117,8 @@ function buildDashboardHtml(containerNames: string[], webBase: string): string {
     </select>
     <select id="cl-lines" aria-label="Line count">
       <option value="100">Last 100</option>
+      <option value="200">Last 200</option>
       <option value="500" selected>Last 500</option>
-      <option value="1000">Last 1000</option>
     </select>
     <button id="cl-load">Load</button>
     <label><input type="checkbox" id="cl-tail"> Live tail</label>
@@ -258,7 +259,7 @@ const tools: ToolDefinition[] = [
         const containerName = typeof input.container_name === 'string' ? input.container_name : '';
         if (!containerName) return 'Error: container_name is required';
         const service = sanitizeServiceName(containerName);
-        const lines = Math.min(typeof input.lines === 'number' ? input.lines : 50, MAX_LINES);
+        const lines = Math.min(Math.floor(typeof input.lines === 'number' ? input.lines : 50), MAX_LINES);
         const raw = await getContainerLogs(service, lines);
         return scrubSensitiveData(raw) || '(no output)';
       } catch (err) {
@@ -287,7 +288,7 @@ const tools: ToolDefinition[] = [
         if (!containerName) return 'Error: container_name is required';
         if (!pattern) return 'Error: pattern is required';
         const service = sanitizeServiceName(containerName);
-        const lines = Math.min(typeof input.lines === 'number' ? input.lines : 200, MAX_LINES);
+        const lines = Math.min(Math.floor(typeof input.lines === 'number' ? input.lines : DEFAULT_SEARCH_LINES), MAX_LINES);
         const raw = await getContainerLogs(service, lines);
         const scrubbed = scrubSensitiveData(raw);
         const parsed = scrubbed.split('\n').map(parseLogLine);
@@ -337,7 +338,7 @@ const containerLogsPlugin: Plugin = {
         }
 
         if (cmd.subcommand === 'search') {
-          const lines = 200;
+          const lines = DEFAULT_SEARCH_LINES;
           const raw = await getContainerLogs(cmd.service, lines);
           const scrubbed = scrubSensitiveData(raw);
           const parsed = scrubbed.split('\n').map(parseLogLine);
@@ -390,7 +391,7 @@ const containerLogsPlugin: Plugin = {
     router.get('/', async (req, res) => {
       try {
         const containers = await getContainerStatus();
-        const names = containers.map((c) => c.name).sort();
+        const names = containers.filter((c) => c.state === 'running').map((c) => c.name).sort();
         const body = buildDashboardHtml(names, webBase);
         res.send(renderPluginPage({
           title: 'Container Logs',
@@ -411,7 +412,7 @@ const containerLogsPlugin: Plugin = {
         const rawLines = typeof req.query['lines'] === 'string' ? parseInt(req.query['lines'], 10) : 500;
         if (!container) { res.status(400).json({ error: 'container is required' }); return; }
         const service = sanitizeServiceName(container);
-        const lines = Math.min(isNaN(rawLines) ? 500 : rawLines, 1000);
+        const lines = Math.min(isNaN(rawLines) || rawLines < 1 ? MAX_LINES : rawLines, MAX_LINES);
         const raw = await getContainerLogs(service, lines);
         const scrubbed = scrubSensitiveData(raw);
         const parsed = scrubbed.split('\n').filter(Boolean).map(parseLogLine);
@@ -441,25 +442,38 @@ const containerLogsPlugin: Plugin = {
       res.flushHeaders();
 
       const child = spawn(DOCKER_BIN, ['logs', '--follow', '--tail', '20', '--timestamps', service]);
-      let buffer = '';
 
-      const handleChunk = (chunk: Buffer) => {
-        buffer += chunk.toString('utf8');
-        const lineBreak = buffer.lastIndexOf('\n');
-        if (lineBreak === -1) return;
-        const complete = buffer.slice(0, lineBreak);
-        buffer = buffer.slice(lineBreak + 1);
-        for (const raw of complete.split('\n')) {
-          if (!raw) continue;
-          const scrubbed = scrubSensitiveData(raw);
-          const parsed = parseLogLine(scrubbed);
-          const payload = JSON.stringify(parsed);
-          res.write(`event: line\ndata: ${payload}\n\n`);
-        }
+      const makeSseWriter = () => {
+        let buf = '';
+        return {
+          onData(chunk: Buffer) {
+            buf += chunk.toString('utf8');
+            const lineBreak = buf.lastIndexOf('\n');
+            if (lineBreak === -1) return;
+            const complete = buf.slice(0, lineBreak);
+            buf = buf.slice(lineBreak + 1);
+            for (const raw of complete.split('\n')) {
+              if (!raw) continue;
+              const scrubbed = scrubSensitiveData(raw);
+              const payload = JSON.stringify(parseLogLine(scrubbed));
+              res.write(`event: line\ndata: ${payload}\n\n`);
+            }
+          },
+          flush() {
+            if (!buf) return;
+            const scrubbed = scrubSensitiveData(buf);
+            const payload = JSON.stringify(parseLogLine(scrubbed));
+            res.write(`event: line\ndata: ${payload}\n\n`);
+            buf = '';
+          },
+        };
       };
 
-      child.stdout.on('data', handleChunk);
-      child.stderr.on('data', handleChunk);
+      const stdoutWriter = makeSseWriter();
+      const stderrWriter = makeSseWriter();
+
+      child.stdout.on('data', (c: Buffer) => stdoutWriter.onData(c));
+      child.stderr.on('data', (c: Buffer) => stderrWriter.onData(c));
 
       child.on('error', (err) => {
         logger.error('container-logs tail spawn error', { service, error: err.message });
@@ -467,6 +481,8 @@ const containerLogsPlugin: Plugin = {
       });
 
       child.on('close', () => {
+        stdoutWriter.flush();
+        stderrWriter.flush();
         if (!res.writableEnded) res.end();
       });
 
