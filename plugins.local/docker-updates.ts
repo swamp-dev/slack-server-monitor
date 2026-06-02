@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import type { Plugin } from '../src/plugins/index.js';
 import type { ToolDefinition, ToolConfig } from '../src/services/tools/types.js';
 import { executeCommand } from '../src/utils/shell.js';
+import { sanitizeServiceName } from '../src/utils/sanitize.js';
 import { logger } from '../src/utils/logger.js';
 
 // =============================================================================
@@ -100,7 +101,7 @@ export function parseUpdateHistoryJson(content: string): UpdateRecord[] {
     if (typeof service !== 'string' || !service) continue;
 
     const rawTs = obj.ts ?? obj.timestamp ?? obj.date;
-    const timestamp = typeof rawTs === 'string' ? new Date(rawTs) : new Date();
+    const timestamp = (typeof rawTs === 'string' || typeof rawTs === 'number') ? new Date(rawTs) : new Date();
 
     const rawStatus = String(obj.status ?? 'unknown').toLowerCase();
     const status = normalizeStatus(rawStatus);
@@ -115,7 +116,7 @@ export function parseUpdateHistoryJson(content: string): UpdateRecord[] {
 }
 
 function normalizeStatus(raw: string): UpdateRecord['status'] {
-  if (raw.includes('no') && raw.includes('change')) return 'no-change';
+  if (raw.includes('no-change') || raw.includes('no change')) return 'no-change';
   if (raw.includes('skip')) return 'skipped';
   if (raw.includes('fail') || raw.includes('error')) return 'failed';
   if (raw.includes('updat')) return 'updated';
@@ -257,7 +258,8 @@ async function getContainerVersions(): Promise<ContainerVersion[]> {
     const parts = line.split('\t');
     if (parts.length < 3) continue;
     const [name, image, state] = parts;
-    const inspectResult = await executeCommand('docker', ['inspect', '--format', '{{.Image}}', name ?? '']);
+    if (!name) continue;
+    const inspectResult = await executeCommand('docker', ['inspect', '--format', '{{.Image}}', name]);
     const digest = inspectResult.exitCode === 0 ? inspectResult.stdout.trim() : '';
     versions.push({
       name: (name ?? '').replace(/^\//, ''),
@@ -400,8 +402,14 @@ const tools: ToolDefinition[] = [
     },
     execute: async (input: Record<string, unknown>, _config: ToolConfig) => {
       try {
-        const service = String(input.service ?? '').trim();
-        if (!service) return 'Error: service name is required';
+        const rawService = String(input.service ?? '').trim();
+        if (!rawService) return 'Error: service name is required';
+        let service: string;
+        try {
+          service = sanitizeServiceName(rawService);
+        } catch (err) {
+          return `Error: ${err instanceof Error ? err.message : 'Invalid service name'}`;
+        }
 
         const result = await executeCommand('docker', [
           'inspect',

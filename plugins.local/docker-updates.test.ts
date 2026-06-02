@@ -100,6 +100,14 @@ describe('parseUpdateHistoryJson', () => {
     const line = JSON.stringify({ ts: '2024-01-15T10:00:00Z', status: 'updated', from: 'a', to: 'b' });
     expect(parseUpdateHistoryJson(line)).toEqual([]);
   });
+
+  it('handles numeric epoch timestamps (milliseconds)', () => {
+    // 1705316400000 ms = 2024-01-15T09:00:00Z
+    const line = JSON.stringify({ ts: 1705316400000, service: 'nginx', status: 'updated', from: 'a', to: 'b' });
+    const result = parseUpdateHistoryJson(line);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.timestamp.getFullYear()).toBe(2024);
+  });
 });
 
 // =============================================================================
@@ -131,6 +139,12 @@ describe('parseUpdateHistoryText', () => {
     expect(result).toHaveLength(2);
     expect(result[0]!.status).toBe('no-change');
     expect(result[1]!.status).toBe('skipped');
+  });
+
+  it('does not misclassify "unknown-change" as no-change', () => {
+    const line = '2024-01-15T10:00:00Z nginx: unknown-change';
+    const result = parseUpdateHistoryText(line);
+    expect(result[0]!.status).not.toBe('no-change');
   });
 
   it('parses lines with "failed" or "error" keywords', () => {
