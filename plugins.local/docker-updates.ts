@@ -344,15 +344,20 @@ function fmtDate(d: Date): string {
 
 let cachedPendingCount = 0;
 let cacheUpdatedAt = 0;
+let refreshInFlight = false;
 const WIDGET_CACHE_TTL_MS = 5 * 60 * 1000;
 
 async function refreshWidgetCache(): Promise<void> {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
   try {
     const pending = await getPendingUpdates();
     cachedPendingCount = pending.length;
     cacheUpdatedAt = Date.now();
   } catch {
     // keep stale value
+  } finally {
+    refreshInFlight = false;
   }
 }
 
@@ -382,9 +387,8 @@ async function buildDashboardHtml(): Promise<string> {
     getUpdateHistory(20),
   ]);
 
-  // Keep widget cache fresh while someone is viewing the page
-  cachedPendingCount = pending.length;
-  cacheUpdatedAt = Date.now();
+  // Keep widget cache fresh while someone is viewing the page (sole writer is refreshWidgetCache)
+  void refreshWidgetCache();
 
   const running = versions.filter((v) => v.state === 'running');
 
