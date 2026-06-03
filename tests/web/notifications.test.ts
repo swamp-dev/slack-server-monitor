@@ -318,4 +318,48 @@ describe('notification templates', () => {
       expect(html).toContain('notif-pref-push');
     });
   });
+
+  describe('time bucket section headers', () => {
+    const ONE_DAY_MS = 24 * 3600 * 1000;
+
+    function makeNotif(id: number, createdAt: number): Notification {
+      return { id, source: 'system', level: 'info', title: `Notif ${String(id)}`, body: null, link: null, createdAt, readAt: null };
+    }
+
+    it('renders Yesterday section for notifications 25 hours old', () => {
+      const notif = makeNotif(10, Date.now() - 25 * ONE_DAY_MS / 24);
+      const html = renderNotificationPage([notif], 1);
+      expect(html).toContain('data-bucket="yesterday"');
+      expect(html).toContain('Yesterday');
+    });
+
+    it('renders This Week section for notifications 4 days old', () => {
+      const notif = makeNotif(11, Date.now() - 4 * ONE_DAY_MS);
+      const html = renderNotificationPage([notif], 1);
+      expect(html).toContain('data-bucket="this-week"');
+      expect(html).toContain('This Week');
+    });
+
+    it('renders Older section for notifications 10 days old', () => {
+      const notif = makeNotif(12, Date.now() - 10 * ONE_DAY_MS);
+      const html = renderNotificationPage([notif], 1);
+      expect(html).toContain('data-bucket="older"');
+      expect(html).toContain('Older');
+    });
+
+    it('renders multiple bucket sections when notifications span days', () => {
+      const today = makeNotif(20, Date.now() - 5 * 60 * 1000);
+      const yesterday = makeNotif(21, Date.now() - 25 * ONE_DAY_MS / 24);
+      const html = renderNotificationPage([today, yesterday], 2);
+      expect(html).toContain('data-bucket="today"');
+      expect(html).toContain('data-bucket="yesterday"');
+    });
+
+    it('omits empty bucket sections', () => {
+      const notif = makeNotif(30, Date.now() - 4 * ONE_DAY_MS);
+      const html = renderNotificationPage([notif], 1);
+      expect(html).not.toContain('data-bucket="today"');
+      expect(html).not.toContain('data-bucket="older"');
+    });
+  });
 });
