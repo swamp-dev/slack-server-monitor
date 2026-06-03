@@ -334,6 +334,49 @@ function registerContainerLogsWebRoutes(router: PluginRouter): void {
 const DEFAULT_LINES = 50;
 const MAX_LINES = 500;
 
+// =============================================================================
+// Command parser (exported for tests)
+// =============================================================================
+
+export type ContainerLogsCommand =
+  | { subcommand: 'help' }
+  | { subcommand: 'logs'; service: string; lines: number }
+  | { subcommand: 'tail'; service: string }
+  | { subcommand: 'search'; service: string; term: string };
+
+/**
+ * Parse the text of a /container-logs Slack command into a typed command object.
+ * Validates and sanitizes the service name on every code path.
+ * Throws with a user-readable message on invalid input.
+ */
+export function parseContainerLogsCommand(text: string): ContainerLogsCommand {
+  const parts = text.trim().split(/\s+/).filter(Boolean);
+  const sub = parts[0]?.toLowerCase() ?? '';
+
+  if (!sub || sub === 'help') return { subcommand: 'help' };
+
+  if (sub === 'tail') {
+    const rawService = parts[1];
+    if (!rawService) throw new Error('Service name is required. Usage: /container-logs tail <service>');
+    return { subcommand: 'tail', service: sanitizeServiceName(rawService) };
+  }
+
+  if (sub === 'search') {
+    const rawService = parts[1];
+    if (!rawService) throw new Error('Service name is required. Usage: /container-logs search <service> <term>');
+    const service = sanitizeServiceName(rawService);
+    const term = parts.slice(2).join(' ').trim();
+    if (!term) throw new Error('Search term is required. Usage: /container-logs search <service> <term>');
+    return { subcommand: 'search', service, term };
+  }
+
+  // Default: fetch logs — sub is the container name
+  const service = sanitizeServiceName(sub);
+  const rawN = parseInt(parts[1] ?? '', 10);
+  const lines = (isNaN(rawN) || rawN <= 0) ? DEFAULT_LINES : Math.min(rawN, MAX_LINES);
+  return { subcommand: 'logs', service, lines };
+}
+
 async function fetchContainerLogs(containerName: string, lines: number): Promise<string> {
   const result = await executeCommand('docker', [
     'logs',
@@ -468,11 +511,16 @@ const containerLogsPlugin: Plugin = {
     app.command('/container-logs', async ({ command, ack, respond }) => {
       await ack();
 
-      const parts = (command.text ?? '').trim().split(/\s+/);
-      const sub = parts[0]?.toLowerCase() ?? '';
+      let cmd: ContainerLogsCommand;
+      try {
+        cmd = parseContainerLogsCommand(command.text ?? '');
+      } catch (err) {
+        await respond({ text: err instanceof Error ? err.message : 'Invalid command', response_type: 'ephemeral' });
+        return;
+      }
 
       try {
-        if (!sub || sub === 'help') {
+        if (cmd.subcommand === 'help') {
           await respond({
             text: [
               '*Container Logs*',
@@ -486,17 +534,12 @@ const containerLogsPlugin: Plugin = {
           return;
         }
 
-        if (sub === 'tail') {
-          const serviceName = parts[1] ?? '';
-          if (!serviceName) {
-            await respond({ text: 'Usage: `/container-logs tail <service>`', response_type: 'ephemeral' });
-            return;
-          }
+        if (cmd.subcommand === 'tail') {
           const baseUrl = process.env['WEB_BASE_URL'] ?? '';
           const tailUrl = baseUrl
-            ? `${baseUrl}/p/container-logs/tail?container=${encodeURIComponent(serviceName)}`
+            ? `${baseUrl}/p/container-logs/tail?container=${encodeURIComponent(cmd.service)}`
             : '(set WEB_BASE_URL in .env to enable direct links)';
-          const safeDisplay = serviceName.replace(/[*_`~]/g, '\\$&');
+          const safeDisplay = cmd.service.replace(/[*_`~]/g, '\\$&');
           await respond({
             text: `Live tail for *${safeDisplay}*:\n${tailUrl}`,
             response_type: 'ephemeral',
@@ -504,50 +547,28 @@ const containerLogsPlugin: Plugin = {
           return;
         }
 
-        if (sub === 'search') {
-          const serviceName = parts[1] ?? '';
-          const term = parts.slice(2).join(' ');
-          if (!serviceName || !term) {
-            await respond({ text: 'Usage: `/container-logs search <service> <term>`', response_type: 'ephemeral' });
-            return;
-          }
-
-          let sanitized: string;
-          try { sanitized = sanitizeServiceName(serviceName); } catch {
-            await respond({ text: 'Error: invalid container name', response_type: 'ephemeral' });
-            return;
-          }
-
-          const raw = await fetchContainerLogs(sanitized, MAX_LINES);
+        if (cmd.subcommand === 'search') {
+          const raw = await fetchContainerLogs(cmd.service, MAX_LINES);
           const scrubbed = scrubSensitiveData(raw);
           const all = parseLogLines(scrubbed);
-          const results = searchLogLines(all, term);
+          const results = searchLogLines(all, cmd.term);
 
           if (results.length === 0) {
-            await respond({ text: `No matches for \`${term}\` in *${sanitized}* logs.`, response_type: 'ephemeral' });
+            await respond({ text: `No matches for \`${cmd.term}\` in *${cmd.service}* logs.`, response_type: 'ephemeral' });
             return;
           }
 
           const text = results.map((l) => l.message).join('\n');
           const truncated = text.length > 2800 ? text.slice(0, 2800) + '\n…(truncated)' : text;
           await respond({
-            text: `*${sanitized}* — matches for \`${term}\`:\n\`\`\`${truncated}\`\`\``,
+            text: `*${cmd.service}* — matches for \`${cmd.term}\`:\n\`\`\`${truncated}\`\`\``,
             response_type: 'ephemeral',
           });
           return;
         }
 
-        // Default: fetch logs for the named container
-        // sub is the container name; parts[1] is the optional line count
-        const containerName = sub;
-        const rawN = parseInt(parts[1] ?? String(DEFAULT_LINES), 10);
-        const lineCount = Math.min(Math.max(1, isNaN(rawN) ? DEFAULT_LINES : rawN), MAX_LINES);
-
-        let sanitized: string;
-        try { sanitized = sanitizeServiceName(containerName); } catch {
-          await respond({ text: 'Error: invalid container name', response_type: 'ephemeral' });
-          return;
-        }
+        // cmd.subcommand === 'logs'
+        const { service: sanitized, lines: lineCount } = cmd;
 
         const raw = await fetchContainerLogs(sanitized, lineCount);
         const processed = processLogsForSlack(raw);
