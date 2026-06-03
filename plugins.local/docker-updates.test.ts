@@ -253,3 +253,15 @@ describe('parsePendingUpdates', () => {
     expect(result[0]!.service).toBe('nginx');
   });
 });
+
+// =============================================================================
+// Plugin name regression guard
+// =============================================================================
+
+import dockerUpdatesPlugin from './docker-updates.js';
+
+describe('dockerUpdatesPlugin.name', () => {
+  it('uses underscore not hyphen (database prefix validator requires /^[a-z][a-z0-9_]*$/)', () => {
+    expect(dockerUpdatesPlugin.name).toBe('docker_updates');
+  });
+});
