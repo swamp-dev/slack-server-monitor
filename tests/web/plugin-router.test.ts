@@ -194,7 +194,7 @@ describe('plugin router', () => {
   });
 
   describe('SSE stream endpoint', () => {
-    type RouterLayer = { route?: { path: string; methods: Record<string, boolean>; stack: { handle: (req: Request, res: Response, next: () => void) => void }[] } };
+    interface RouterLayer { route?: { path: string; methods: Record<string, boolean>; stack: { handle: (req: Request, res: Response, next: () => void) => void }[] } }
 
     function findRoute(path: string) {
       const layers = (getPluginExpressRouter() as unknown as { stack: RouterLayer[] }).stack;
@@ -218,6 +218,7 @@ describe('plugin router', () => {
       expect(layer).toBeDefined();
 
       const mockRes = makeRes();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       layer!.route!.stack[0]!.handle({} as Request, mockRes, vi.fn());
 
       expect(mockRes.status).toHaveBeenCalledWith(503);
@@ -231,6 +232,7 @@ describe('plugin router', () => {
 
       const mockRes = makeRes();
       const layer = findRoute('/sse-test2/stream');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       layer!.route!.stack[0]!.handle({} as Request, mockRes, vi.fn());
 
       expect(mockManager.addClient).toHaveBeenCalledWith('plugin:sse-test2', mockRes);
@@ -243,6 +245,7 @@ describe('plugin router', () => {
 
       const mockRes = makeRes(false);
       const layer = findRoute('/sse-test3/stream');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       layer!.route!.stack[0]!.handle({} as Request, mockRes, vi.fn());
 
       expect(mockRes.status).toHaveBeenCalledWith(500);
@@ -256,6 +259,7 @@ describe('plugin router', () => {
 
       const mockRes = makeRes(true);
       const layer = findRoute('/sse-test4/stream');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       layer!.route!.stack[0]!.handle({} as Request, mockRes, vi.fn());
 
       expect(mockRes.status).not.toHaveBeenCalled();
@@ -272,7 +276,7 @@ describe('plugin router', () => {
   });
 
   describe('async handler error paths', () => {
-    type RouterLayer = { route?: { path: string; methods: Record<string, boolean>; stack: { handle: (req: Request, res: Response, next: () => void) => void }[] } };
+    interface RouterLayer { route?: { path: string; methods: Record<string, boolean>; stack: { handle: (req: Request, res: Response, next: () => void) => void }[] } }
 
     function findRoute(path: string) {
       const layers = (getPluginExpressRouter() as unknown as { stack: RouterLayer[] }).stack;
@@ -290,6 +294,7 @@ describe('plugin router', () => {
       } as unknown as Response;
 
       const layer = findRoute('/async-err/fail');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       layer!.route!.stack[0]!.handle({} as Request, mockRes, vi.fn());
 
       // Let the Promise rejection propagate through the catch handler
@@ -310,6 +315,7 @@ describe('plugin router', () => {
       } as unknown as Response;
 
       const layer = findRoute('/async-err2/fail2');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       layer!.route!.stack[0]!.handle({} as Request, mockRes, vi.fn());
 
       await new Promise((resolve) => setTimeout(resolve, 0));

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../../src/web/plugin-router.js', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('../../src/web/plugin-router.js')>();
   return { ...actual, getPluginNavEntries: vi.fn().mockReturnValue([]) };
 });
@@ -2955,8 +2956,7 @@ describe('web templates', () => {
 
     it('shows em-dash placeholder when slackUserId is null', () => {
       const html = renderAdminUsers({ users: [], invites: [baseInvite] });
-      // slackUserId is null → renders '—'
-      const inviteSection = html.slice(html.indexOf('No active invites.') === -1 ? 0 : 0);
+      // slackUserId is null → pre-link cell renders '—'
       expect(html).toContain('—');
     });
 
