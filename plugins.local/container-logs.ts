@@ -6,7 +6,7 @@
  * /logs command; web dashboard and SSE live tail added in PR 2b.
  *
  * Commands: /container-logs <service> [n] | tail <service> | search <service> <term> | help
- * Web: /p/container-logs/ (PR 2b)
+ * Web: /p/container_logs/ (PR 2b)
  * Tools: container_logs:get_logs | search_logs | list_containers
  */
 
@@ -159,13 +159,13 @@ async function buildDashboardHtml(req: { query: Record<string, string> }): Promi
     .join('');
   const noneOption = containers.length === 0 ? '<option value="">No running containers</option>' : '<option value="">— pick a container —</option>';
 
-  const toolbar = `<form method="get" action="/p/container-logs/" class="cl-toolbar">
+  const toolbar = `<form method="get" action="/p/container_logs/" class="cl-toolbar">
     <select name="container" class="cl-select">${noneOption}${containerOptions}</select>
     <select name="lines" class="cl-select">
       ${[50, 100, 500].map((n) => `<option value="${String(n)}"${n === lineCount ? ' selected' : ''}>${String(n)} lines</option>`).join('')}
     </select>
     <button type="submit" class="cl-btn">Load logs</button>
-    ${selectedContainer ? `<a href="/p/container-logs/tail?container=${encodeURIComponent(selectedContainer)}" class="cl-btn secondary">Live tail ›</a>` : ''}
+    ${selectedContainer ? `<a href="/p/container_logs/tail?container=${encodeURIComponent(selectedContainer)}" class="cl-btn secondary">Live tail ›</a>` : ''}
     <input id="cl-filter" placeholder="Filter lines…" class="cl-input" style="flex:1;min-width:140px">
     <label style="display:flex;gap:.3rem;align-items:center;font-size:.85rem"><input type="checkbox" id="cl-ts-toggle" checked> timestamps</label>
   </form>`;
@@ -206,7 +206,7 @@ function buildTailHtml(container: string): string {
     <span class="cl-dot" id="cl-dot"></span>
     <h2>Live tail: <code>${safeContainer}</code></h2>
     <button class="cl-btn secondary" id="cl-stop" onclick="toggleTail()">Pause</button>
-    <a href="/p/container-logs/?container=${encodeURIComponent(container)}" class="cl-btn secondary">← Logs</a>
+    <a href="/p/container_logs/?container=${encodeURIComponent(container)}" class="cl-btn secondary">← Logs</a>
     <input id="cl-filter" placeholder="Filter lines…" class="cl-input" style="flex:1;min-width:140px">
     <label style="display:flex;gap:.3rem;align-items:center;font-size:.85rem"><input type="checkbox" id="cl-ts-toggle" checked> timestamps</label>
   </div>
@@ -276,7 +276,7 @@ function registerContainerLogsWebRoutes(router: PluginRouter): void {
       const query = req.query as Record<string, string>;
       const body = await buildDashboardHtml({ query });
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.send(renderPluginPage({ title: 'Container Logs', pluginName: 'container-logs', body, styles: WEB_CSS, scripts: `<script>${CLIENT_FILTER_JS}</script>`, unreadCount: 0 }));
+      res.send(renderPluginPage({ title: 'Container Logs', pluginName: 'container_logs', body, styles: WEB_CSS, scripts: `<script>${CLIENT_FILTER_JS}</script>`, unreadCount: 0 }));
     } catch (err) {
       logger.error('container-logs dashboard error', { error: err instanceof Error ? err.message : String(err) });
       res.status(500).send('Error loading dashboard');
@@ -286,12 +286,12 @@ function registerContainerLogsWebRoutes(router: PluginRouter): void {
   router.get('/tail', (req, res, ctx) => {
     const rawContainer = (req.query as Record<string, string>)['container'] ?? '';
     const container = (!rawContainer || rawContainer.startsWith('-') || rawContainer.length > 255) ? '' : rawContainer;
-    if (!container) { res.redirect('/p/container-logs/'); return; }
+    if (!container) { res.redirect('/p/container_logs/'); return; }
 
     startTailPolling(container, ctx);
 
     const tailJs = `<script>
-      const es = new EventSource('/p/container-logs/stream');
+      const es = new EventSource('/p/container_logs/stream');
       const log = document.getElementById('cl-log');
       const status = document.getElementById('cl-status');
       const dot = document.getElementById('cl-dot');
@@ -323,7 +323,7 @@ function registerContainerLogsWebRoutes(router: PluginRouter): void {
     </script>`;
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(renderPluginPage({ title: `Tail: ${container}`, pluginName: 'container-logs', body: buildTailHtml(container), styles: WEB_CSS, scripts: tailJs, unreadCount: 0 }));
+    res.send(renderPluginPage({ title: `Tail: ${container}`, pluginName: 'container_logs', body: buildTailHtml(container), styles: WEB_CSS, scripts: tailJs, unreadCount: 0 }));
   });
 }
 
@@ -537,7 +537,7 @@ const containerLogsPlugin: Plugin = {
         if (cmd.subcommand === 'tail') {
           const baseUrl = process.env['WEB_BASE_URL'] ?? '';
           const tailUrl = baseUrl
-            ? `${baseUrl}/p/container-logs/tail?container=${encodeURIComponent(cmd.service)}`
+            ? `${baseUrl}/p/container_logs/tail?container=${encodeURIComponent(cmd.service)}`
             : '(set WEB_BASE_URL in .env to enable direct links)';
           const safeDisplay = cmd.service.replace(/[*_`~]/g, '\\$&');
           await respond({
@@ -606,7 +606,7 @@ const containerLogsPlugin: Plugin = {
       title: 'Container Logs',
       icon: 'file-text',
       html: '<span style="color:var(--text-muted);font-size:.85rem">View and search container logs</span>',
-      link: '/p/container-logs/',
+      link: '/p/container_logs/',
       priority: 80,
       size: 'small',
     }];

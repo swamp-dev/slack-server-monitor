@@ -277,3 +277,15 @@ describe('parseContainerLogsCommand', () => {
     });
   });
 });
+
+// =============================================================================
+// Plugin name regression guard
+// =============================================================================
+
+import containerLogsPlugin from './container-logs.js';
+
+describe('containerLogsPlugin.name', () => {
+  it('uses underscore not hyphen (database prefix validator requires /^[a-z][a-z0-9_]*$/)', () => {
+    expect(containerLogsPlugin.name).toBe('container_logs');
+  });
+});
