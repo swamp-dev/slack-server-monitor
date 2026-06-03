@@ -566,7 +566,7 @@ const tools: ToolDefinition[] = [
 // =============================================================================
 
 const dockerUpdatesPlugin: Plugin = {
-  name: 'docker-updates',
+  name: 'docker_updates',
   version: '1.1.0',
   description: 'Container update status — versions, pending updates, history',
 
