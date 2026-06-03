@@ -496,7 +496,7 @@ const tools: ToolDefinition[] = [
 // =============================================================================
 
 const containerLogsPlugin: Plugin = {
-  name: 'container-logs',
+  name: 'container_logs',
   version: '1.0.0',
   description: 'Web log viewer for Docker containers with live tail and search',
 
