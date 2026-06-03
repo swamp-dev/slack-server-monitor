@@ -527,6 +527,41 @@ describe('searchContainerLogsTool', () => {
       );
       expect(result).toContain('Error: search_pattern is required');
     });
+
+    it('returns no-matches message when stdout and stderr are empty', async () => {
+      (executeCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
+        stdout: '', stderr: '', exitCode: 0,
+      });
+      const result = await searchContainerLogsTool.execute(
+        { container_name: 'nginx', search_pattern: 'ERROR' },
+        defaultConfig
+      );
+      expect(result).toContain('No logs found');
+    });
+
+    it('performs case-sensitive search when case_insensitive is false', async () => {
+      (executeCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
+        stdout: 'Error: uppercase\nerror: lowercase',
+        stderr: '', exitCode: 0,
+      });
+      const result = await searchContainerLogsTool.execute(
+        { container_name: 'nginx', search_pattern: 'Error', case_insensitive: false },
+        defaultConfig
+      );
+      expect(result).toContain('Found 1 matches');
+      expect(result).toContain('Error: uppercase');
+      expect(result).not.toContain('error: lowercase');
+    });
+
+    it('returns error string when executeCommand throws', async () => {
+      (executeCommand as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('docker daemon not running'));
+      const result = await searchContainerLogsTool.execute(
+        { container_name: 'nginx', search_pattern: 'ERROR' },
+        defaultConfig
+      );
+      expect(result).toContain('Error searching logs:');
+      expect(result).toContain('docker daemon not running');
+    });
 });
 
 describe('dockerImagesTool', () => {
@@ -563,5 +598,21 @@ describe('dockerImagesTool', () => {
 
     const result = await dockerImagesTool.execute({}, defaultConfig);
     expect(result).toContain('No Docker images found');
+  });
+
+  it('returns error string when exitCode is non-zero', async () => {
+    (executeCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
+      stdout: '', stderr: 'permission denied', exitCode: 1,
+    });
+    const result = await dockerImagesTool.execute({}, defaultConfig);
+    expect(result).toContain('Error listing images:');
+    expect(result).toContain('permission denied');
+  });
+
+  it('returns error string when executeCommand throws', async () => {
+    (executeCommand as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('socket timeout'));
+    const result = await dockerImagesTool.execute({}, defaultConfig);
+    expect(result).toContain('Error listing Docker images:');
+    expect(result).toContain('socket timeout');
   });
 });

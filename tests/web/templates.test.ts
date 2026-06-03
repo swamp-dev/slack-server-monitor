@@ -1,4 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../../src/web/plugin-router.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/web/plugin-router.js')>();
+  return { ...actual, getPluginNavEntries: vi.fn().mockReturnValue([]) };
+});
+
+import { getPluginNavEntries } from '../../src/web/plugin-router.js';
+
 import {
   renderConversation,
   renderMarkdownExport,
@@ -1772,6 +1780,49 @@ describe('web templates', () => {
         expect(html).toContain('href="/c"');
         expect(html).toContain('Conversations');
       });
+
+      it('shows Login link and omits logout form when isAuthenticated is false', () => {
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>', isAuthenticated: false });
+        expect(html).toContain('href="/login"');
+        expect(html).not.toContain('action="/logout"');
+      });
+
+      it('omits Conversations link when isAuthenticated is false', () => {
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>', isAuthenticated: false });
+        // The nav Conversations link should be absent
+        expect(html).not.toContain('href="/c"');
+      });
+
+      it('omits bottom nav conversation and notifications items when isAuthenticated is false', () => {
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>', isAuthenticated: false });
+        // Conversations and Notifications bottom-nav links are conditional; Dashboard is always present
+        expect(html).not.toContain('aria-label="Conversations"');
+        expect(html).not.toContain('aria-label="Notifications"');
+      });
+
+      it('shows Admin nav link when isAdmin is true', () => {
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>', isAdmin: true });
+        expect(html).toContain('href="/admin/users"');
+        expect(html).toContain('Admin');
+      });
+
+      it('renders plugin nav entry when plugins have web routes registered', () => {
+        vi.mocked(getPluginNavEntries).mockReturnValueOnce([
+          { pluginName: 'hue', label: 'Hue', icon: 'lightbulb', pages: [], public: false },
+        ]);
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+        expect(html).toContain('href="/p/hue/"');
+        expect(html).toContain('Hue');
+      });
+
+      it('includes plugin subpages in command palette when pages are defined', () => {
+        vi.mocked(getPluginNavEntries).mockReturnValueOnce([
+          { pluginName: 'hue', label: 'Hue', icon: 'lightbulb', pages: [{ name: 'Scenes', path: '/scenes' }], public: false },
+        ]);
+        const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+        expect(html).toContain('/p/hue/scenes');
+        expect(html).toContain('Hue');
+      });
     });
 
     describe('login page', () => {
@@ -2818,6 +2869,108 @@ describe('web templates', () => {
       const dialogTagMatch = /<dialog\s+id="reset-pw-dialog"[^>]*style="([^"]*)"/i.exec(html);
       expect(dialogTagMatch).not.toBeNull();
       expect(dialogTagMatch?.[1]).toContain('margin:auto');
+    });
+  });
+
+  describe('renderAdminUsers — template unit tests', () => {
+    const baseUser = {
+      id: 1, slackId: 'U01ABC', username: null, displayName: 'Alice',
+      role: 'user' as const, isActive: true, createdAt: 1700000000000, updatedAt: 1700000000000,
+    };
+    const baseInvite = {
+      code: 'deadbeefdeadbeefdeadbeefdeadbeef',
+      createdBy: 1, role: 'user' as const, slackUserId: null,
+      createdAt: 1700000000000, expiresAt: 1700000000000 + 72 * 3600 * 1000,
+      usedAt: null, usedBy: null,
+    };
+
+    // --- User table rows ---
+
+    it('renders empty-state row when users array is empty', () => {
+      const html = renderAdminUsers({ users: [], invites: [] });
+      expect(html).toContain('No users yet.');
+    });
+
+    it('renders active user row with slackId, displayName and active status', () => {
+      const html = renderAdminUsers({ users: [baseUser], invites: [] });
+      expect(html).toContain('U01ABC');
+      expect(html).toContain('Alice');
+      expect(html).toContain('● active');
+    });
+
+    it('applies deactivated class and shows inactive status for inactive user', () => {
+      const html = renderAdminUsers({ users: [{ ...baseUser, isActive: false }], invites: [] });
+      expect(html).toContain('class="deactivated"');
+      expect(html).toContain('○ inactive');
+      expect(html).toContain('activate-btn');
+    });
+
+    it('shows Demote button for admin-role user', () => {
+      const html = renderAdminUsers({ users: [{ ...baseUser, role: 'admin' }], invites: [] });
+      expect(html).toContain('Demote');
+      expect(html).toContain('value="user"');
+    });
+
+    it('shows Promote button for non-admin user', () => {
+      const html = renderAdminUsers({ users: [baseUser], invites: [] });
+      expect(html).toContain('Promote');
+      expect(html).toContain('value="admin"');
+    });
+
+    it('shows Deactivate with danger class for active user action button', () => {
+      const html = renderAdminUsers({ users: [baseUser], invites: [] });
+      expect(html).toContain('class="danger"');
+      expect(html).toContain('Deactivate');
+    });
+
+    it('escapes HTML-special characters in displayName', () => {
+      const html = renderAdminUsers({ users: [{ ...baseUser, displayName: 'Bob <b>bold</b>' }], invites: [] });
+      // The raw tag must not appear as a live element in the user row
+      expect(html).toContain('Bob &lt;b&gt;bold&lt;/b&gt;');
+    });
+
+    // --- Invite table rows ---
+
+    it('renders empty-state row when invites array is empty', () => {
+      const html = renderAdminUsers({ users: [], invites: [] });
+      expect(html).toContain('No active invites.');
+    });
+
+    it('renders Copy URL button when baseUrl is provided', () => {
+      const html = renderAdminUsers({ users: [], invites: [baseInvite], baseUrl: 'http://localhost:8080' });
+      expect(html).toContain('copy-btn');
+      expect(html).toContain('/register?invite=');
+    });
+
+    it('omits Copy URL button when baseUrl is absent', () => {
+      const html = renderAdminUsers({ users: [], invites: [baseInvite] });
+      // copy-btn appears in CSS/JS; check that no data-url attribute is rendered (the actual button)
+      expect(html).not.toContain('data-url=');
+    });
+
+    it('shows pre-linked Slack user ID when slackUserId is set', () => {
+      const html = renderAdminUsers({ users: [], invites: [{ ...baseInvite, slackUserId: 'U09XYZ' }] });
+      expect(html).toContain('U09XYZ');
+    });
+
+    it('shows em-dash placeholder when slackUserId is null', () => {
+      const html = renderAdminUsers({ users: [], invites: [baseInvite] });
+      // slackUserId is null → renders '—'
+      const inviteSection = html.slice(html.indexOf('No active invites.') === -1 ? 0 : 0);
+      expect(html).toContain('—');
+    });
+
+    // --- Flash / error messages ---
+
+    it('renders flash success banner when flash message is provided', () => {
+      const html = renderAdminUsers({ users: [], invites: [], flash: 'User created' });
+      expect(html).toContain('User created');
+      expect(html).toContain('flash');
+    });
+
+    it('renders error banner when error is provided', () => {
+      const html = renderAdminUsers({ users: [], invites: [], error: 'Something went wrong' });
+      expect(html).toContain('Something went wrong');
     });
   });
 });

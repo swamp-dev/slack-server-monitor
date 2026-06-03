@@ -4,7 +4,12 @@ vi.mock('../../src/utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock('../../src/web/sse.js', () => ({
+  getSharedSSEManager: vi.fn(),
+}));
+
 import { createPluginRouter, getPluginExpressRouter, getPluginNavEntries, clearPluginRoutes, isPluginPublic } from '../../src/web/plugin-router.js';
+import { getSharedSSEManager } from '../../src/web/sse.js';
 import type { PluginContext } from '../../src/plugins/types.js';
 import type { Request, Response } from 'express';
 
@@ -185,6 +190,131 @@ describe('plugin router', () => {
 
       clearPluginRoutes();
       expect(getPluginNavEntries()).toEqual([]);
+    });
+  });
+
+  describe('SSE stream endpoint', () => {
+    type RouterLayer = { route?: { path: string; methods: Record<string, boolean>; stack: { handle: (req: Request, res: Response, next: () => void) => void }[] } };
+
+    function findRoute(path: string) {
+      const layers = (getPluginExpressRouter() as unknown as { stack: RouterLayer[] }).stack;
+      return layers.find((l) => l.route?.path === path);
+    }
+
+    function makeRes(headersSent = false) {
+      return {
+        headersSent,
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn().mockReturnThis(),
+        send: vi.fn().mockReturnThis(),
+      } as unknown as Response;
+    }
+
+    it('returns 503 when SSE manager is not available', () => {
+      vi.mocked(getSharedSSEManager).mockReturnValue(null);
+      createPluginRouter('sse-test', mockCtx);
+
+      const layer = findRoute('/sse-test/stream');
+      expect(layer).toBeDefined();
+
+      const mockRes = makeRes();
+      layer!.route!.stack[0]!.handle({} as Request, mockRes, vi.fn());
+
+      expect(mockRes.status).toHaveBeenCalledWith(503);
+      expect(mockRes.json).toHaveBeenCalledWith({ error: 'SSE not available' });
+    });
+
+    it('calls addClient with the correct plugin channel ID when SSE is available', () => {
+      const mockManager = { addClient: vi.fn() };
+      vi.mocked(getSharedSSEManager).mockReturnValue(mockManager as never);
+      createPluginRouter('sse-test2', mockCtx);
+
+      const mockRes = makeRes();
+      const layer = findRoute('/sse-test2/stream');
+      layer!.route!.stack[0]!.handle({} as Request, mockRes, vi.fn());
+
+      expect(mockManager.addClient).toHaveBeenCalledWith('plugin:sse-test2', mockRes);
+    });
+
+    it('sends 500 when addClient throws and headers are not yet sent', () => {
+      const mockManager = { addClient: vi.fn(() => { throw new Error('stream error'); }) };
+      vi.mocked(getSharedSSEManager).mockReturnValue(mockManager as never);
+      createPluginRouter('sse-test3', mockCtx);
+
+      const mockRes = makeRes(false);
+      const layer = findRoute('/sse-test3/stream');
+      layer!.route!.stack[0]!.handle({} as Request, mockRes, vi.fn());
+
+      expect(mockRes.status).toHaveBeenCalledWith(500);
+      expect(mockRes.send).toHaveBeenCalledWith('SSE error');
+    });
+
+    it('does not call res.status when addClient throws but headers already sent', () => {
+      const mockManager = { addClient: vi.fn(() => { throw new Error('stream error'); }) };
+      vi.mocked(getSharedSSEManager).mockReturnValue(mockManager as never);
+      createPluginRouter('sse-test4', mockCtx);
+
+      const mockRes = makeRes(true);
+      const layer = findRoute('/sse-test4/stream');
+      layer!.route!.stack[0]!.handle({} as Request, mockRes, vi.fn());
+
+      expect(mockRes.status).not.toHaveBeenCalled();
+    });
+
+    it('registers only one /stream route per plugin even when called twice', () => {
+      createPluginRouter('sse-dup', mockCtx);
+      createPluginRouter('sse-dup', mockCtx);
+
+      const layers = (getPluginExpressRouter() as unknown as { stack: RouterLayer[] }).stack;
+      const streamRoutes = layers.filter((l) => l.route?.path === '/sse-dup/stream');
+      expect(streamRoutes).toHaveLength(1);
+    });
+  });
+
+  describe('async handler error paths', () => {
+    type RouterLayer = { route?: { path: string; methods: Record<string, boolean>; stack: { handle: (req: Request, res: Response, next: () => void) => void }[] } };
+
+    function findRoute(path: string) {
+      const layers = (getPluginExpressRouter() as unknown as { stack: RouterLayer[] }).stack;
+      return layers.find((l) => l.route?.path === path);
+    }
+
+    it('sends 500 on async handler rejection when headers not sent', async () => {
+      const router = createPluginRouter('async-err', mockCtx);
+      router.get('/fail', async () => { throw new Error('async boom'); });
+
+      const mockRes = {
+        headersSent: false,
+        status: vi.fn().mockReturnThis(),
+        send: vi.fn().mockReturnThis(),
+      } as unknown as Response;
+
+      const layer = findRoute('/async-err/fail');
+      layer!.route!.stack[0]!.handle({} as Request, mockRes, vi.fn());
+
+      // Let the Promise rejection propagate through the catch handler
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(mockRes.status).toHaveBeenCalledWith(500);
+      expect(mockRes.send).toHaveBeenCalledWith('Internal plugin error');
+    });
+
+    it('does not call res.status on async rejection when headers already sent', async () => {
+      const router = createPluginRouter('async-err2', mockCtx);
+      router.get('/fail2', async () => { throw new Error('async boom'); });
+
+      const mockRes = {
+        headersSent: true,
+        status: vi.fn().mockReturnThis(),
+        send: vi.fn().mockReturnThis(),
+      } as unknown as Response;
+
+      const layer = findRoute('/async-err2/fail2');
+      layer!.route!.stack[0]!.handle({} as Request, mockRes, vi.fn());
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(mockRes.status).not.toHaveBeenCalled();
     });
   });
 });
