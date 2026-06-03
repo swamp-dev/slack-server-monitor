@@ -63,7 +63,7 @@ There is no longer a runtime fallback path: a user listed in `AUTHORIZED_USER_ID
 | `CLAUDE_PROVIDER` | cli | Provider: `cli` (legacy values `auto`/`sdk` accepted for compat) |
 | `CLAUDE_CLI_PATH` | claude | Path to Claude CLI executable |
 | `CLAUDE_CLI_MODEL` | opus | Model alias: `sonnet`, `opus`, `haiku` |
-| `CLAUDE_SDK_MODEL` | claude-sonnet-4-20250514 | Model ID when using SDK provider (`CLAUDE_PROVIDER=sdk`). Not needed for CLI. |
+| `CLAUDE_SDK_MODEL` | claude-sonnet-4-5 | Model ID when using SDK provider (`CLAUDE_PROVIDER=sdk`). Not needed for CLI. Set to the current model release. |
 | `CLAUDE_ALLOWED_DIRS` | - | Comma-separated paths Claude can read files from |
 | `CLAUDE_MAX_TOKENS` | 2048 | Max tokens per response |
 | `CLAUDE_MAX_TOOL_CALLS` | 100 | Max tool calls per turn (prevents loops) |

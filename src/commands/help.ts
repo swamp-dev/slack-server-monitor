@@ -62,7 +62,7 @@ export function registerHelpCommand(app: App): void {
       let claudeText =
         '*Claude AI*\n' +
         '`/ask <question> [--image <url>]` - AI-powered server diagnostics\n' +
-        '`/sessions [mine|stats]` - Claude session history';
+        '`/sessions [mine|stats|<thread_ts>]` - Claude session history';
 
       if (config.claude.contextOptions.length > 0) {
         claudeText += '\n`/context [set <alias>|clear]` - Switch context directory';
@@ -80,6 +80,19 @@ export function registerHelpCommand(app: App): void {
         '`/weblogin` - Get a login link for the web UI'
       ));
     }
+
+    // Administration section (always shown)
+    blocks.push(divider());
+    blocks.push(section(
+      '*Administration*\n' +
+      '`/user-admin list` - List all users\n' +
+      '`/user-admin whoami` - Show your user record\n' +
+      '`/user-admin add <SlackID> [admin]` - Add a user _(admin)_\n' +
+      '`/user-admin remove <SlackID>` - Deactivate a user _(admin)_\n' +
+      '`/user-admin promote <SlackID>` - Promote to admin _(admin)_\n' +
+      '`/user-admin demote <SlackID>` - Demote to user _(admin)_\n' +
+      '`/user-admin invite [admin] [ttl=72h]` - Create web registration link _(admin)_'
+    ));
 
     // Plugin section (dynamic from loaded plugins)
     const plugins = getPluginHelpData();

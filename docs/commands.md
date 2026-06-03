@@ -26,7 +26,8 @@ These require `CLAUDE_ENABLED=true` and the Claude CLI installed.
 
 | Command | Description |
 |---------|-------------|
-| `/ask <question>` | Ask Claude AI about your server |
+| `/ask <question> [--image <url>]` | Ask Claude AI about your server (attach an image with `--image`) |
+| `/ask continue <thread_ts> [question]` | Resume a session in a new thread |
 | `/context` | Show current context and available options |
 | `/context set <alias>` | Set context directory for this channel |
 | `/context clear` | Clear context (use default) |
@@ -55,6 +56,20 @@ These require `WEB_ENABLED=true`.
 | Command | Description |
 |---------|-------------|
 | `/weblogin` | Get a magic login link for the web UI |
+
+## Administration Commands
+
+| Command | Description |
+|---------|-------------|
+| `/user-admin list` | List all users |
+| `/user-admin whoami` | Show your user record |
+| `/user-admin add <SlackID> [admin]` | Add a user (admin only) |
+| `/user-admin remove <SlackID>` | Deactivate a user — soft delete (admin only) |
+| `/user-admin promote <SlackID>` | Promote to admin role (admin only) |
+| `/user-admin demote <SlackID>` | Demote to regular user (admin only) |
+| `/user-admin invite [admin] [ttl=72h]` | Create a web UI registration link (admin only) |
+
+`list` and `whoami` are available to any authenticated user. All mutation subcommands require admin role.
 
 ## Utility Commands
 
