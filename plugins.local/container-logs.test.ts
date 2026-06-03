@@ -10,6 +10,7 @@ import {
   parseLogLines,
   filterLogLines,
   searchLogLines,
+  parseContainerLogsCommand,
 } from './container-logs.js';
 
 // =============================================================================
@@ -167,5 +168,112 @@ describe('searchLogLines', () => {
 
   it('handles empty lines array', () => {
     expect(searchLogLines([], 'ERROR', 2)).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// parseContainerLogsCommand
+// =============================================================================
+
+describe('parseContainerLogsCommand', () => {
+  describe('help subcommand', () => {
+    it('returns help for empty input', () => {
+      expect(parseContainerLogsCommand('').subcommand).toBe('help');
+    });
+
+    it('returns help for "help"', () => {
+      expect(parseContainerLogsCommand('help').subcommand).toBe('help');
+    });
+
+    it('returns help for "  " (whitespace only)', () => {
+      expect(parseContainerLogsCommand('  ').subcommand).toBe('help');
+    });
+  });
+
+  describe('logs subcommand (default)', () => {
+    it('parses service name only — defaults to 50 lines', () => {
+      const r = parseContainerLogsCommand('nginx');
+      expect(r).toEqual({ subcommand: 'logs', service: 'nginx', lines: 50 });
+    });
+
+    it('parses service name with explicit line count', () => {
+      const r = parseContainerLogsCommand('nginx 100');
+      expect(r).toEqual({ subcommand: 'logs', service: 'nginx', lines: 100 });
+    });
+
+    it('clamps line count to 500 max', () => {
+      const r = parseContainerLogsCommand('nginx 9999');
+      expect(r).toEqual({ subcommand: 'logs', service: 'nginx', lines: 500 });
+    });
+
+    it('defaults to 50 when line count is 0', () => {
+      const r = parseContainerLogsCommand('nginx 0');
+      expect(r).toEqual({ subcommand: 'logs', service: 'nginx', lines: 50 });
+    });
+
+    it('defaults to 50 when line count is negative', () => {
+      const r = parseContainerLogsCommand('nginx -5');
+      expect(r).toEqual({ subcommand: 'logs', service: 'nginx', lines: 50 });
+    });
+
+    it('accepts hyphenated service names', () => {
+      const r = parseContainerLogsCommand('my-service');
+      expect(r).toEqual({ subcommand: 'logs', service: 'my-service', lines: 50 });
+    });
+
+    it('throws on invalid service name', () => {
+      expect(() => parseContainerLogsCommand('../../etc/passwd')).toThrow();
+    });
+
+    it('throws on service name with shell metacharacters', () => {
+      expect(() => parseContainerLogsCommand('nginx;rm -rf /')).toThrow();
+    });
+  });
+
+  describe('tail subcommand', () => {
+    it('parses tail with service name', () => {
+      const r = parseContainerLogsCommand('tail nginx');
+      expect(r).toEqual({ subcommand: 'tail', service: 'nginx' });
+    });
+
+    it('throws when service name is missing', () => {
+      expect(() => parseContainerLogsCommand('tail')).toThrow(/service name/i);
+    });
+
+    it('throws on path traversal in service name', () => {
+      expect(() => parseContainerLogsCommand('tail ../../etc/passwd')).toThrow();
+    });
+
+    it('throws on metacharacters in service name', () => {
+      expect(() => parseContainerLogsCommand('tail nginx|cat /etc/shadow')).toThrow();
+    });
+  });
+
+  describe('search subcommand', () => {
+    it('parses search with service and single-word term', () => {
+      const r = parseContainerLogsCommand('search nginx error');
+      expect(r).toEqual({ subcommand: 'search', service: 'nginx', term: 'error' });
+    });
+
+    it('preserves multi-word search terms', () => {
+      const r = parseContainerLogsCommand('search nginx connection refused');
+      expect(r).toEqual({ subcommand: 'search', service: 'nginx', term: 'connection refused' });
+    });
+
+    it('throws when service is missing', () => {
+      expect(() => parseContainerLogsCommand('search')).toThrow(/service name/i);
+    });
+
+    it('throws when term is missing', () => {
+      expect(() => parseContainerLogsCommand('search nginx')).toThrow(/search term/i);
+    });
+
+    it('throws when term is whitespace only', () => {
+      expect(() => parseContainerLogsCommand('search nginx   ')).toThrow(/search term/i);
+    });
+
+    it('throws on invalid service name', () => {
+      expect(() => parseContainerLogsCommand('search ../evil error')).toThrow();
+    });
   });
 });
