@@ -9,7 +9,7 @@
  * read-only by design (see src/utils/shell.ts allowlist and CLAUDE.md).
  *
  * Commands: /docker-updates status | pending | history [n] | help
- * Web: /p/docker-updates/ (added in PR 1b)
+ * Web: /p/docker_updates/ (added in PR 1b)
  * Tools: docker_updates:list_pending | get_history | get_service_version
  */
 
@@ -448,7 +448,7 @@ function registerDockerUpdatesWebRoutes(router: PluginRouter): void {
       const body = await buildDashboardHtml();
       const html = renderPluginPage({
         title: 'Docker Updates',
-        pluginName: 'docker-updates',
+        pluginName: 'docker_updates',
         body,
         styles: DASHBOARD_CSS,
         scripts: `<script>setTimeout(()=>location.reload(),60000);</script>`,
@@ -674,7 +674,7 @@ const dockerUpdatesPlugin: Plugin = {
       html: hasPending
         ? `<span style="color:#e6a817;font-weight:600">⚠️ ${escapeHtml(String(cachedPendingCount))} update${cachedPendingCount === 1 ? '' : 's'} available</span>`
         : `<span style="color:#3fb950">✅ All up to date</span>`,
-      link: '/p/docker-updates/',
+      link: '/p/docker_updates/',
       priority: 60,
       size: 'small',
     }];
