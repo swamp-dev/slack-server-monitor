@@ -201,5 +201,5 @@ async function main(): Promise<void> {
   }
 }
 
-/* c8 ignore next */
+/* v8 ignore next */
 if (!process.env.VITEST) void main();

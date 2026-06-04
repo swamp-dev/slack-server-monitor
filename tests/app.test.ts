@@ -205,25 +205,43 @@ describe('app lifecycle', () => {
     expect(callOrder.indexOf('getUserStore')).toBeLessThan(callOrder.indexOf('registerCommands'));
   });
 
-  it('closes all stores when shutdown is triggered', async () => {
+  it('closes conversation store and user store on shutdown', async () => {
+    // Verifies the two stores app.ts owns directly. Web-server-owned stores
+    // (session, notification, quicklinks) are covered by stopWebServer, which
+    // is asserted via the mock call count below.
     await shutdown('SIGTERM');
 
     expect(mocks.mockCloseConversationStore).toHaveBeenCalled();
     expect(mocks.mockCloseUserStore).toHaveBeenCalled();
+    expect(mocks.mockStopWebServer).toHaveBeenCalled();
   });
 
-  it('starts the app even when a plugin initialization error is handled internally', async () => {
-    // registerPlugins (called inside registerCommands) catches individual plugin errors
-    // and does NOT rethrow — matching the actual behavior in src/plugins/loader.ts.
-    // Verify that when registerCommands resolves (despite an internal plugin error),
-    // app.start() is still called and the app comes up.
+  it('starts the app when registerCommands resolves after catching a plugin error internally', async () => {
+    // registerPlugins catches individual plugin init errors and does NOT rethrow
+    // (see src/plugins/loader.ts). Simulate that path: registerCommands resolves
+    // while having logged a plugin failure, and verify app.start() is still called.
     mocks.mockRegisterCommands.mockImplementationOnce(async () => {
       mocks.mockLogger.error('Failed to initialize plugin', { name: 'bad-plugin', error: 'Init error' });
-      // resolves without throwing — error was caught inside registerPlugins
     });
 
     await main();
 
     expect(mocks.mockStart).toHaveBeenCalled();
+  });
+
+  it('exits with code 1 and does not call app.start() when startup throws', async () => {
+    // Covers the main() catch block: if any startup step throws (e.g. an
+    // unrecoverable plugin system failure), the error is logged and the
+    // process exits — it never reaches app.start().
+    mocks.mockRegisterCommands.mockRejectedValueOnce(new Error('unrecoverable plugin failure'));
+
+    await main();
+
+    expect(mocks.mockStart).not.toHaveBeenCalled();
+    expect(mocks.mockLogger.error).toHaveBeenCalledWith(
+      'Failed to start app',
+      expect.objectContaining({ error: 'unrecoverable plugin failure' }),
+    );
+    expect(mockProcessExit).toHaveBeenCalledWith(1);
   });
 });
