@@ -383,6 +383,7 @@ describe('plugin loader', () => {
 
       expect(getPluginDatabase).toHaveBeenCalledOnce();
       expect(removePluginDatabase).toHaveBeenCalledOnce();
+      expect(removePluginDatabase).toHaveBeenCalledWith('initfail');
     });
   });
 });
