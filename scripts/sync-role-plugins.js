@@ -6,11 +6,14 @@
  * Runs automatically as the "pretest" npm lifecycle hook.
  * Safe to run repeatedly — uses recursive copy with overwrite.
  *
+ * Copies every directory and .ts file from roles/slack_monitor/files/,
+ * so new plugins are picked up automatically without editing this script.
+ *
  * Source:  home-server-ansible/roles/slack_monitor/files/
  * Target:  home-server-ansible/slack-server-monitor/plugins.local/
  */
 
-import { cpSync, existsSync, mkdirSync } from 'fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -26,13 +29,13 @@ if (!existsSync(ROLE_FILES)) {
 
 mkdirSync(PLUGINS_LOCAL, { recursive: true });
 
-const entries = [
-  { src: join(ROLE_FILES, 'media-organizer'), dst: join(PLUGINS_LOCAL, 'media-organizer') },
-  { src: join(ROLE_FILES, 'media-organizer.ts'), dst: join(PLUGINS_LOCAL, 'media-organizer.ts') },
-];
-
-for (const { src, dst } of entries) {
-  if (existsSync(src)) {
+for (const entry of readdirSync(ROLE_FILES)) {
+  const src = join(ROLE_FILES, entry);
+  const dst = join(PLUGINS_LOCAL, entry);
+  const stat = statSync(src);
+  // Copy plugin directories and .ts entrypoints/tests; skip Dockerfile and build artifacts.
+  if (stat.isDirectory() || entry.endsWith('.ts')) {
+    if (!existsSync(src)) continue;
     cpSync(src, dst, { recursive: true, force: true });
   }
 }
