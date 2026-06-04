@@ -2,6 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CliProvider } from '../../../src/services/providers/cli-provider.js';
 import type { CliProviderConfig, UserConfig, ConversationMessage } from '../../../src/services/providers/types.js';
 
+// Mock logger to verify debug output on parse failures
+const mockLogger = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+vi.mock('../../../src/utils/logger.js', () => ({ logger: mockLogger }));
+
 // Mock child_process.spawn for callCli tests
 const mockStdin = { write: vi.fn(), end: vi.fn() };
 const mockStdout = { on: vi.fn() };
@@ -257,6 +266,19 @@ But I continue anyway.`;
       const result = parseResponse(response);
       expect(result.toolCallRequests).toHaveLength(0);
       expect(result.failedParseCount).toBe(1);
+    });
+
+    it('should emit a debug log with raw content and error when tool_call JSON fails to parse', () => {
+      mockLogger.debug.mockClear();
+      const malformedBlock = '{invalid json here}';
+      const response = `\`\`\`tool_call\n${malformedBlock}\n\`\`\``;
+
+      const result = parseResponse(response);
+
+      expect(result.failedParseCount).toBe(1);
+      expect(mockLogger.debug).toHaveBeenCalledOnce();
+      const [, debugArgs] = mockLogger.debug.mock.calls[0];
+      expect(JSON.stringify(debugArgs)).toContain(malformedBlock);
     });
 
     it('should report failedParseCount of 0 for valid tool calls', () => {
