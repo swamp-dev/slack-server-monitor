@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { loadContextFromDirectory, getContext, clearContextCache } from '../../src/services/context-loader.js';
+import { loadContextFromDirectory, getContext, clearContextCache, validateContextDirectories } from '../../src/services/context-loader.js';
 
 describe('context-loader', () => {
   let testDir: string;
@@ -167,6 +167,40 @@ describe('context-loader', () => {
       // Should reload from disk
       const result2 = await getContext(testDir);
       expect(result2?.claudeMd).toBe('Modified content');
+    });
+  });
+
+  describe('validateContextDirectories', () => {
+    it('returns empty array for a valid directory with .md files', async () => {
+      await fs.writeFile(path.join(testDir, 'CLAUDE.md'), '# Context');
+      const errors = await validateContextDirectories([{ alias: 'test', path: testDir }]);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('returns error for a nonexistent directory, including the alias and path', async () => {
+      const missingPath = path.join(testDir, 'does-not-exist');
+      const errors = await validateContextDirectories([{ alias: 'missing', path: missingPath }]);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('missing');
+      expect(errors[0]).toContain(missingPath);
+    });
+
+    it('returns error for a directory with no .md files, including the alias', async () => {
+      // testDir exists but has no CLAUDE.md and no .claude/context/ .md files
+      const errors = await validateContextDirectories([{ alias: 'empty', path: testDir }]);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('empty');
+    });
+
+    it('returns errors only for bad paths when mixed with valid ones', async () => {
+      await fs.writeFile(path.join(testDir, 'CLAUDE.md'), '# Valid');
+      const missingPath = path.join(testDir, 'nonexistent');
+      const errors = await validateContextDirectories([
+        { alias: 'good', path: testDir },
+        { alias: 'bad', path: missingPath },
+      ]);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain(missingPath);
     });
   });
 });

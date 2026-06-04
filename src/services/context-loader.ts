@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { logger } from '../utils/logger.js';
+import type { ContextOption } from '../config/schema.js';
 
 /**
  * Follow symlinks and return the real path
@@ -218,4 +219,44 @@ export function clearContextCache(): void {
  */
 export function clearContextCacheForAlias(alias: string): void {
   contextCache.delete(alias);
+}
+
+export type { ContextOption };
+
+/**
+ * Validate all configured context directories at startup.
+ *
+ * Returns an array of human-readable error strings — one per bad option.
+ * Callers should log each at `error` level; this function itself does not log.
+ * Validation is always non-fatal: a non-empty return array does not stop the bot.
+ */
+export async function validateContextDirectories(options: ContextOption[]): Promise<string[]> {
+  const errors: string[] = [];
+
+  for (const option of options) {
+    const resolved = path.resolve(option.path);
+    try {
+      await fs.access(resolved);
+    } catch {
+      errors.push(
+        `Context alias '${option.alias}': path '${option.path}' does not exist or is not accessible`,
+      );
+      continue;
+    }
+
+    try {
+      const context = await loadContextFromDirectory(option.path);
+      if (!context.claudeMd && context.contextFiles.size === 0) {
+        errors.push(
+          `Context alias '${option.alias}': directory '${option.path}' contains no recognized context files (.md, .txt, .yaml, .yml, .json)`,
+        );
+      }
+    } catch (error) {
+      errors.push(
+        `Context alias '${option.alias}': failed to load '${option.path}' — ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  return errors;
 }
