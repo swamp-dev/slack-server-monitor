@@ -127,6 +127,7 @@ function insertPendingRun(db: PluginDatabase, opts: ExecuteRunOpts, logPath: str
     .prepare(
       `INSERT INTO ${db.prefix}runs (issue_number, repo, status, output_path, created_at)
        VALUES (?, ?, ?, ?, ?)`,
+      [`${db.prefix}runs`],
     )
     .run(opts.issueNumber, opts.repo, 'pending', logPath, now);
   return Number(result.lastInsertRowid);
@@ -143,7 +144,7 @@ function setStatus(db: PluginDatabase, runId: number, status: string, fields: Re
     }
   }
   values.push(runId);
-  db.prepare(`UPDATE ${db.prefix}runs SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
+  db.prepare(`UPDATE ${db.prefix}runs SET ${setClauses.join(', ')} WHERE id = ?`, [`${db.prefix}runs`]).run(...values);
 }
 
 /**
@@ -356,7 +357,7 @@ export async function resumeRun(opts: ResumeRunOpts): Promise<ExecuteRunResult> 
   // expected to gate on this too, but defending here keeps the
   // executor self-consistent if someone else calls it directly.
   const row = opts.db
-    .prepare(`SELECT id, status, output_path FROM ${opts.db.prefix}runs WHERE id = ?`)
+    .prepare(`SELECT id, status, output_path FROM ${opts.db.prefix}runs WHERE id = ?`, [`${opts.db.prefix}runs`])
     .get(opts.runId) as { id: number; status: string; output_path: string | null } | undefined;
   if (!row) throw new Error(`Run ${String(opts.runId)} does not exist`);
   if (row.status !== 'paused') {

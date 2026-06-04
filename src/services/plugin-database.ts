@@ -4,18 +4,15 @@ import fs from 'fs';
 import { logger } from '../utils/logger.js';
 
 /**
- * Core tables that plugins cannot access
- */
-
-/**
- * Scoped database accessor for plugins
+ * Scoped database accessor for plugins.
  *
- * Provides defense-in-depth by validating SQL statements to ensure plugins
- * only access their namespaced tables (plugin_{name}_*).
+ * Defense-in-depth: prepare() validates explicitly declared table names against
+ * the plugin's prefix so accidental cross-contamination is caught at schema-
+ * definition time. exec() is intentionally unguarded — it is for DDL only
+ * (CREATE TABLE, CREATE INDEX) and is not reachable from untrusted user input.
  *
- * SECURITY NOTE: This is heuristic validation, not cryptographic protection.
- * Plugins already have full process privileges - this prevents accidental
- * cross-contamination, not malicious access.
+ * SECURITY NOTE: Plugins run in the same process with full privileges. This
+ * prevents accidental access to another plugin's tables, not deliberate abuse.
  */
 export class PluginDatabase {
   private db: Database.Database;
@@ -36,8 +33,9 @@ export class PluginDatabase {
   }
 
   /**
-   * Execute raw SQL for schema creation
-   * Only use for CREATE TABLE, CREATE INDEX, etc.
+   * Execute raw SQL for DDL (CREATE TABLE, CREATE INDEX, DROP TABLE, etc.).
+   * Table names are NOT validated — callers are responsible for using the
+   * plugin prefix. exec() is intentionally kept as a low-level DDL escape hatch.
    */
   exec(sql: string): void {
     this.db.exec(sql);
