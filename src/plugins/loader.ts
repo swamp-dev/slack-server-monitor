@@ -242,6 +242,7 @@ export async function registerPlugins(app: App, pluginsDir?: string): Promise<vo
       continue;
     }
 
+    let pluginDbAllocated = false;
     try {
       // SECURITY: Validate tools before any initialization
       if (plugin.tools && plugin.tools.length > 0) {
@@ -264,6 +265,7 @@ export async function registerPlugins(app: App, pluginsDir?: string): Promise<vo
 
       // Create plugin context with scoped database accessor
       const pluginDb = getPluginDatabase(plugin.name);
+      pluginDbAllocated = true;
 
       // Create PluginClaude if Claude is enabled
       const config = await getConfig();
@@ -402,8 +404,12 @@ export async function registerPlugins(app: App, pluginsDir?: string): Promise<vo
         toolCount: taggedTools.length,
       });
     } catch (error) {
-      // Clean up database accessor to prevent memory leak
-      removePluginDatabase(plugin.name);
+      // Only clean up the DB accessor if it was actually allocated; a failure
+      // before getPluginDatabase() (e.g. validatePluginTools throwing) means
+      // there is no entry to remove.
+      if (pluginDbAllocated) {
+        removePluginDatabase(plugin.name);
+      }
 
       logger.error('Failed to initialize plugin', {
         name: plugin.name,

@@ -227,3 +227,4 @@ export const ConfigSchema = z.object({
 
 export type Config = z.infer<typeof ConfigSchema>;
 export type WebConfig = z.infer<typeof WebConfigSchema>;
+export type ContextOption = z.infer<typeof ContextOptionSchema>;
