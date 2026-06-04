@@ -81,6 +81,10 @@ describe('CliProvider', () => {
   });
 
   describe('parseResponse', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
     function parseResponse(response: string) {
       const provider = new CliProvider(config);
       const parse = (provider as unknown as { parseResponse: (r: string) => { text: string; toolCallRequests: unknown[]; failedParseCount: number } }).parseResponse.bind(provider);
@@ -269,7 +273,6 @@ But I continue anyway.`;
     });
 
     it('should emit a debug log with raw content and error when tool_call JSON fails to parse', () => {
-      mockLogger.debug.mockClear();
       const malformedBlock = '{invalid json here}';
       const response = `\`\`\`tool_call\n${malformedBlock}\n\`\`\``;
 
@@ -277,8 +280,9 @@ But I continue anyway.`;
 
       expect(result.failedParseCount).toBe(1);
       expect(mockLogger.debug).toHaveBeenCalledOnce();
-      const [, debugArgs] = mockLogger.debug.mock.calls[0];
-      expect(JSON.stringify(debugArgs)).toContain(malformedBlock);
+      const [, debugArgs] = mockLogger.debug.mock.calls[0] as [string, Record<string, unknown>];
+      expect(debugArgs.rawContent).toContain(malformedBlock);
+      expect(typeof debugArgs.parseError).toBe('string');
     });
 
     it('should report failedParseCount of 0 for valid tool calls', () => {
