@@ -125,6 +125,8 @@ async function shutdown(signal: string): Promise<void> {
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 
+export { main, shutdown };
+
 // Start the app
 async function main(): Promise<void> {
   try {
@@ -199,4 +201,5 @@ async function main(): Promise<void> {
   }
 }
 
-void main();
+/* v8 ignore next */
+if (!process.env.VITEST) void main();
