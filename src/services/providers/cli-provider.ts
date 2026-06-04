@@ -418,6 +418,11 @@ ${JSON.stringify(tools, null, 2)}
         cleanedResponse = cleanedResponse.substring(0, blockStart) + cleanedResponse.substring(blockEnd);
         // Don't advance searchFrom — the splice shifted content backward
       } catch (e) {
+        logger.debug('Malformed tool_call JSON block — raw content for diagnosis', {
+          blockIndex: failedParseCount,
+          rawContent: jsonStr.length > 2000 ? `${jsonStr.substring(0, 2000)}… (truncated)` : jsonStr,
+          parseError: e instanceof Error ? e.message : String(e),
+        });
         failedParseCount++;
         logger.warn('Failed to parse tool call JSON from bracket-matched block', {
           error: e instanceof Error ? e.message : 'Unknown error',
