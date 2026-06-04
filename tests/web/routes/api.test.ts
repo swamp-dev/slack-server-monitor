@@ -53,7 +53,7 @@ vi.mock('../../../src/web/auth.js', () => ({
 const mockQuickLinksStore = {
   getLinks: vi.fn(() => []),
   addLink: vi.fn(),
-  deleteLink: vi.fn(),
+  removeLink: vi.fn(),
   reorderLinks: vi.fn(),
 };
 

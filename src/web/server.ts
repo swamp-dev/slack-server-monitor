@@ -573,8 +573,6 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   // Mount API + notifications routes
   app.use('/', createApiRouter(claudeConfig, webConfig, dbPath));
 
-  ;
-
   // ─── Plugin Web Routes ────────────────────────────────────────────────
   // Mount plugin routes with per-plugin auth: public plugins use optional auth,
   // private plugins require session auth (401 on failure)
