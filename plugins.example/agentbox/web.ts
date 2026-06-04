@@ -116,6 +116,7 @@ export function startSSEPolling(ctx: PluginContext): void {
         const completed = pluginDb
           .prepare(
             `SELECT id, issue_number, repo, status FROM ${pluginDb.prefix}runs WHERE id = ?`,
+            [`${pluginDb.prefix}runs`],
           )
           .get(lastActiveRunId) as
           | { id: number; issue_number: number; repo: string; status: string }
@@ -171,7 +172,7 @@ export function stopSSEPolling(): void {
 function broadcastNewJournalEntries(ctx: PluginContext, activeRunId: number): void {
   if (!pluginDb) return;
   const row = pluginDb
-    .prepare(`SELECT output_path FROM ${pluginDb.prefix}runs WHERE id = ?`)
+    .prepare(`SELECT output_path FROM ${pluginDb.prefix}runs WHERE id = ?`, [`${pluginDb.prefix}runs`])
     .get(activeRunId) as { output_path: string | null } | undefined;
   if (!row?.output_path) return;
   const workDir = path.dirname(row.output_path);
@@ -416,6 +417,7 @@ export function registerAgentboxWebRoutes(router: PluginRouter): void {
           const cancelledRow = pluginDb
             .prepare(
               `SELECT id, issue_number, repo, status FROM ${pluginDb.prefix}runs WHERE id = ?`,
+              [`${pluginDb.prefix}runs`],
             )
             .get(runId) as
             | { id: number; issue_number: number; repo: string; status: string }
@@ -508,7 +510,7 @@ export function registerAgentboxWebRoutes(router: PluginRouter): void {
     // resume. The user-visible 4xx errors must surface before we
     // return; once resumeRun is dispatched its errors land in logs.
     const row = pluginDb
-      .prepare(`SELECT id, status, output_path FROM ${pluginDb.prefix}runs WHERE id = ?`)
+      .prepare(`SELECT id, status, output_path FROM ${pluginDb.prefix}runs WHERE id = ?`, [`${pluginDb.prefix}runs`])
       .get(runId) as { id: number; status: string; output_path: string | null } | undefined;
     if (!row) {
       res.status(404).send(`Run #${String(runId)} does not exist.`);

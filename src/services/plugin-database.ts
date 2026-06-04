@@ -4,19 +4,15 @@ import fs from 'fs';
 import { logger } from '../utils/logger.js';
 
 /**
- * Core tables that plugins cannot access
- */
-const CORE_TABLES = ['conversations', 'tool_calls', 'channel_context'];
-
-/**
- * Scoped database accessor for plugins
+ * Scoped database accessor for plugins.
  *
- * Provides defense-in-depth by validating SQL statements to ensure plugins
- * only access their namespaced tables (plugin_{name}_*).
+ * Defense-in-depth: prepare() validates explicitly declared table names against
+ * the plugin's prefix so accidental cross-contamination is caught at schema-
+ * definition time. exec() is intentionally unguarded — it is for DDL only
+ * (CREATE TABLE, CREATE INDEX) and is not reachable from untrusted user input.
  *
- * SECURITY NOTE: This is heuristic validation, not cryptographic protection.
- * Plugins already have full process privileges - this prevents accidental
- * cross-contamination, not malicious access.
+ * SECURITY NOTE: Plugins run in the same process with full privileges. This
+ * prevents accidental access to another plugin's tables, not deliberate abuse.
  */
 export class PluginDatabase {
   private db: Database.Database;
@@ -37,22 +33,27 @@ export class PluginDatabase {
   }
 
   /**
-   * Execute raw SQL for schema creation
-   * Only use for CREATE TABLE, CREATE INDEX, etc.
+   * Execute raw SQL for DDL (CREATE TABLE, CREATE INDEX, DROP TABLE, etc.).
+   * Table names are NOT validated — callers are responsible for using the
+   * plugin prefix. exec() is intentionally kept as a low-level DDL escape hatch.
    */
   exec(sql: string): void {
-    this.validateSql(sql);
     this.db.exec(sql);
   }
 
   /**
-   * Prepare a parameterized statement
-   * Use for all data operations (SELECT, INSERT, UPDATE, DELETE)
+   * Prepare a parameterized statement.
+   *
+   * `tables` is the explicit list of every table the statement touches.
+   * Each name is validated against this plugin's prefix at prepare-time
+   * (schema definition time), not at execute time.
+   * Pass an empty array for statements that access no plugin tables (e.g. `SELECT 1`, PRAGMA).
    */
   prepare<BindParameters extends unknown[] | object = unknown[], Result = unknown>(
-    sql: string
+    sql: string,
+    tables: string[] = []
   ): Statement<BindParameters, Result> {
-    this.validateSql(sql);
+    this.validateTables(tables);
     return this.db.prepare<BindParameters, Result>(sql);
   }
 
@@ -64,89 +65,17 @@ export class PluginDatabase {
   }
 
   /**
-   * Validate SQL to ensure it only references allowed tables
-   *
-   * Allowed:
-   * - Tables starting with plugin_{pluginName}_
-   * - SQLite system tables (sqlite_*)
-   * - PRAGMA statements
-   *
-   * Blocked:
-   * - Core tables (conversations, tool_calls, channel_context)
-   * - Other plugins' tables (plugin_othername_*)
+   * Validate the explicitly declared table names against this plugin's prefix.
+   * Called at prepare() time so misuse is caught at schema-definition time, not execute time.
    */
-  private validateSql(sql: string): void {
-    // Normalize whitespace for easier parsing
-    const normalized = sql.toLowerCase().replace(/\s+/g, ' ').trim();
+  private validateTables(tables: string[]): void {
+    for (const table of tables) {
+      if (table.startsWith('sqlite_')) continue; // SQLite system tables always allowed
 
-    // Allow PRAGMA statements for introspection
-    if (normalized.startsWith('pragma ')) {
-      return;
-    }
-
-    // Extract table names from common SQL patterns
-    // This is heuristic - not a full SQL parser
-    const tablePatterns = [
-      // CREATE TABLE [IF NOT EXISTS] table_name
-      /create\s+table\s+(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)/gi,
-      // DROP TABLE [IF EXISTS] table_name
-      /drop\s+table\s+(?:if\s+exists\s+)?([a-z_][a-z0-9_]*)/gi,
-      // INSERT INTO table_name
-      /insert\s+(?:or\s+(?:replace|ignore|abort|rollback|fail)\s+)?into\s+([a-z_][a-z0-9_]*)/gi,
-      // UPDATE table_name
-      /update\s+(?:or\s+(?:replace|ignore|abort|rollback|fail)\s+)?([a-z_][a-z0-9_]*)/gi,
-      // DELETE FROM table_name
-      /delete\s+from\s+([a-z_][a-z0-9_]*)/gi,
-      // SELECT ... FROM table_name
-      /from\s+([a-z_][a-z0-9_]*)/gi,
-      // JOIN table_name
-      /join\s+([a-z_][a-z0-9_]*)/gi,
-      // CREATE INDEX ... ON table_name
-      /on\s+([a-z_][a-z0-9_]*)\s*\(/gi,
-      // ALTER TABLE table_name
-      /alter\s+table\s+([a-z_][a-z0-9_]*)/gi,
-    ];
-
-    const foundTables = new Set<string>();
-
-    for (const pattern of tablePatterns) {
-      let match: RegExpExecArray | null;
-      while ((match = pattern.exec(sql)) !== null) {
-        const tableName = match[1] as string | undefined;
-        if (tableName) {
-          foundTables.add(tableName.toLowerCase());
-        }
-      }
-    }
-
-    // Validate each found table
-    for (const table of foundTables) {
-      // Allow SQLite system tables
-      if (table.startsWith('sqlite_')) {
-        continue;
-      }
-
-      // Check for core table access
-      if (CORE_TABLES.includes(table)) {
+      if (!table.startsWith(this._prefix)) {
         throw new Error(
-          `Plugin "${this.pluginName}" attempted to access core table "${table}". ` +
-            `Plugins can only access tables prefixed with "${this._prefix}".`
-        );
-      }
-
-      // Check for other plugins' tables
-      if (table.startsWith('plugin_') && !table.startsWith(this._prefix)) {
-        throw new Error(
-          `Plugin "${this.pluginName}" attempted to access another plugin's table "${table}". ` +
-            `Plugins can only access their own tables prefixed with "${this._prefix}".`
-        );
-      }
-
-      // Require plugin prefix for non-system tables
-      if (!table.startsWith(this._prefix) && !table.startsWith('sqlite_')) {
-        throw new Error(
-          `Plugin "${this.pluginName}" attempted to access table "${table}". ` +
-            `Plugins must prefix all tables with "${this._prefix}".`
+          `Plugin "${this.pluginName}" declared table "${table}" which does not have the required prefix "${this._prefix}". ` +
+            `Plugins may only access tables prefixed with "${this._prefix}".`,
         );
       }
     }

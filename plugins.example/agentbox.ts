@@ -43,6 +43,7 @@ export function handleStatus(db: PluginDatabase): string {
     .prepare(
       `SELECT id, issue_number, repo, status, branch, pr_url, started_at, finished_at, error, created_at
        FROM ${db.prefix}runs ORDER BY created_at DESC LIMIT 5`,
+      [`${db.prefix}runs`],
     )
     .all() as Array<Record<string, unknown>>;
 
@@ -71,7 +72,7 @@ export function handleStatus(db: PluginDatabase): string {
  */
 export function migrateRunsTable(db: PluginDatabase): void {
   const columns = db
-    .prepare(`PRAGMA table_info(${db.prefix}runs)`)
+    .prepare(`PRAGMA table_info(${db.prefix}runs)`, [])
     .all() as Array<{ name: string }>;
   const existing = new Set(columns.map((c) => c.name));
 
@@ -106,13 +107,13 @@ export function migrateRunsTable(db: PluginDatabase): void {
 function migrateStatusCheckForPaused(db: PluginDatabase): void {
   const tableName = `${db.prefix}runs`;
   const row = db
-    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name = ?`)
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name = ?`, ['sqlite_master'])
     .get(tableName) as { sql?: string } | undefined;
   if (!row?.sql || row.sql.includes("'paused'")) return;
 
   // Capture the current column list (in original order) so the
   // INSERT...SELECT copies every value, including the ones T10 added.
-  const cols = (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>)
+  const cols = (db.prepare(`PRAGMA table_info(${tableName})`, []).all() as Array<{ name: string }>)
     .map((c) => c.name);
   const colList = cols.join(', ');
   const oldName = `${tableName}_pre244`;
@@ -212,6 +213,7 @@ export function handleRunsHistory(db: PluginDatabase): string {
     .prepare(
       `SELECT id, issue_number, repo, status, started_at, finished_at, pr_url, error
        FROM ${db.prefix}runs ORDER BY id DESC LIMIT 10`,
+      [`${db.prefix}runs`],
     )
     .all() as AgentboxRunRow[];
   if (rows.length === 0) return 'No AgentBox runs yet.';
@@ -550,7 +552,7 @@ function createTools(): ToolDefinition[] {
         const idCandidate = (input.run_id as number | undefined) ?? getActiveRunId();
         if (idCandidate === null || idCandidate === undefined) return 'No active run.';
         const row = pluginDb
-          .prepare(`SELECT id, issue_number, repo, status, started_at, finished_at, pr_url, error FROM ${pluginDb.prefix}runs WHERE id = ?`)
+          .prepare(`SELECT id, issue_number, repo, status, started_at, finished_at, pr_url, error FROM ${pluginDb.prefix}runs WHERE id = ?`, [`${pluginDb.prefix}runs`])
           .get(idCandidate);
         if (!row) return `Run ${String(idCandidate)} not found.`;
         return JSON.stringify(row);

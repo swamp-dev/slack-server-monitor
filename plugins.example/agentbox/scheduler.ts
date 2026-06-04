@@ -135,7 +135,7 @@ export function startScheduler(opts: { db: PluginDatabase; ctx: PluginContext; c
     const runId = getActiveRunId();
     if (runId === null) return;
     const row = state.db
-      .prepare(`SELECT id, issue_number, status, started_at FROM ${state.db.prefix}runs WHERE id = ?`)
+      .prepare(`SELECT id, issue_number, status, started_at FROM ${state.db.prefix}runs WHERE id = ?`, [`${state.db.prefix}runs`])
       .get(runId);
     if (row) state.ctx.sse.broadcast('agentbox:progress', row);
   }, STATUS_POLL_INTERVAL_MS);
@@ -347,6 +347,7 @@ export function pickEligibleIssue(issues: ReadyIssue[], db: PluginDatabase): Rea
         // Layered-defence against a label-transition failure leaving
         // the issue with both agentbox-ready and a paused row.
         `SELECT 1 FROM ${db.prefix}runs WHERE issue_number = ? AND status IN ('running', 'paused', 'success') LIMIT 1`,
+        [`${db.prefix}runs`],
       )
       .get(iss.number);
     return !row;
@@ -394,7 +395,7 @@ export async function cancelRun(
   opts: { db: PluginDatabase; repo: string },
 ): Promise<void> {
   const row = opts.db
-    .prepare(`SELECT issue_number, status FROM ${opts.db.prefix}runs WHERE id = ?`)
+    .prepare(`SELECT issue_number, status FROM ${opts.db.prefix}runs WHERE id = ?`, [`${opts.db.prefix}runs`])
     .get(runId) as { issue_number: number; status: string } | undefined;
   if (!row) {
     throw new Error(`Run ${String(runId)} does not exist`);
@@ -445,7 +446,7 @@ export async function pauseRun(
   opts: { db: PluginDatabase; repo: string },
 ): Promise<void> {
   const row = opts.db
-    .prepare(`SELECT issue_number, status FROM ${opts.db.prefix}runs WHERE id = ?`)
+    .prepare(`SELECT issue_number, status FROM ${opts.db.prefix}runs WHERE id = ?`, [`${opts.db.prefix}runs`])
     .get(runId) as { issue_number: number; status: string } | undefined;
   if (!row) throw new Error(`Run ${String(runId)} does not exist`);
   if (row.status === 'success' || row.status === 'failed' || row.status === 'cancelled' || row.status === 'paused') {
@@ -479,7 +480,7 @@ export async function resumeRun(
   opts: { db: PluginDatabase; repo: string; binaryPath?: string },
 ): Promise<ExecuteRunResult> {
   const row = opts.db
-    .prepare(`SELECT issue_number, status, output_path FROM ${opts.db.prefix}runs WHERE id = ?`)
+    .prepare(`SELECT issue_number, status, output_path FROM ${opts.db.prefix}runs WHERE id = ?`, [`${opts.db.prefix}runs`])
     .get(runId) as { issue_number: number; status: string; output_path: string | null } | undefined;
   if (!row) throw new Error(`Run ${String(runId)} does not exist`);
   if (row.status !== 'paused') {
