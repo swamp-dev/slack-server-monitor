@@ -11,6 +11,7 @@ import { closeUserStore, getUserStore, resolveUserStoreDbPath } from './services
 import { evaluateAuthStartup } from './services/auth-startup.js';
 import { startBackupSchedule } from './services/db-backup.js';
 import { startWebServer, stopWebServer } from './web/index.js';
+import { getServerHealth } from './services/server-health.js';
 import { setConnected, setDisconnected } from './services/socket-mode-status.js';
 
 let stopBackupSchedule: (() => void) | null = null;
@@ -173,6 +174,10 @@ async function main(): Promise<void> {
     // Start web server if enabled
     if (config.web?.enabled) {
       await startWebServer(config.web);
+      // Pre-warm health cache so the first dashboard load doesn't block on 5 shell commands
+      getServerHealth().catch((err: unknown) =>
+        logger.warn('Health cache pre-warm failed', { error: err instanceof Error ? err.message : String(err) })
+      );
     }
 
     // Register slash commands (async to load context)
