@@ -177,10 +177,11 @@ describe('context-loader', () => {
       expect(errors).toHaveLength(0);
     });
 
-    it('returns error for a nonexistent directory, including the path', async () => {
+    it('returns error for a nonexistent directory, including the alias and path', async () => {
       const missingPath = path.join(testDir, 'does-not-exist');
       const errors = await validateContextDirectories([{ alias: 'missing', path: missingPath }]);
       expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('missing');
       expect(errors[0]).toContain(missingPath);
     });
 

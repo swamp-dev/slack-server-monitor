@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { logger } from '../utils/logger.js';
+import type { ContextOption } from '../config/schema.js';
 
 /**
  * Follow symlinks and return the real path
@@ -220,10 +221,7 @@ export function clearContextCacheForAlias(alias: string): void {
   contextCache.delete(alias);
 }
 
-export interface ContextOption {
-  alias: string;
-  path: string;
-}
+export type { ContextOption };
 
 /**
  * Validate all configured context directories at startup.
@@ -250,7 +248,7 @@ export async function validateContextDirectories(options: ContextOption[]): Prom
       const context = await loadContextFromDirectory(option.path);
       if (!context.claudeMd && context.contextFiles.size === 0) {
         errors.push(
-          `Context alias '${option.alias}': directory '${option.path}' contains no .md files`,
+          `Context alias '${option.alias}': directory '${option.path}' contains no recognized context files (.md, .txt, .yaml, .yml, .json)`,
         );
       }
     } catch (error) {
