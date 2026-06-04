@@ -8,6 +8,7 @@ import { destroyPlugins } from './plugins/index.js';
 import { logger } from './utils/logger.js';
 import { closeConversationStore, getConversationStore } from './services/conversation-store.js';
 import { closeUserStore, getUserStore, resolveUserStoreDbPath } from './services/user-store.js';
+import { validateContextDirectories } from './services/context-loader.js';
 import { evaluateAuthStartup } from './services/auth-startup.js';
 import { startBackupSchedule } from './services/db-backup.js';
 import { startWebServer, stopWebServer } from './web/index.js';
@@ -171,6 +172,15 @@ async function main(): Promise<void> {
         backupDir,
         retain: config.claude.dbBackupRetain,
       });
+    }
+
+    // Validate context directories at startup so operators see loud errors
+    // instead of silent no-ops (non-fatal — bot still starts with bad paths).
+    if (config.claude?.contextOptions && config.claude.contextOptions.length > 0) {
+      const contextErrors = await validateContextDirectories(config.claude.contextOptions);
+      for (const error of contextErrors) {
+        logger.error('Context directory validation failed at startup', { error });
+      }
     }
 
     // Start web server if enabled
