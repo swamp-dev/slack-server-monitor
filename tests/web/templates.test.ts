@@ -1719,11 +1719,12 @@ describe('web templates', () => {
     });
 
     describe('theme system', () => {
-      it('includes Dracula CSS variables', () => {
+      it('includes Cosmic dark theme CSS variables', () => {
         const css = getThemeStyles();
-        expect(css).toContain('#282a36');
-        expect(css).toContain('#f8f8f2');
-        expect(css).toContain('#ff79c6');
+        // New cosmic dark palette (replaced Dracula)
+        expect(css).toContain('#05050f');
+        expect(css).toContain('#7c3aed');
+        expect(css).toContain('--gradient-primary');
       });
 
       it('includes light theme variables', () => {
@@ -1748,10 +1749,11 @@ describe('web templates', () => {
 
       it('uses system font stack without external font dependencies', () => {
         const html = wrapInShell({ title: 'Test', styles: '', body: '<p>test</p>' });
+        // No external CDN — home server should not leak page views to Google
         expect(html).not.toContain('fonts.googleapis.com');
-        // Font stack is now in the static CSS bundle, not inlined in HTML
         const css = getStaticCss();
         expect(css).toContain('-apple-system');
+        expect(css).toContain('Inter');
       });
 
       it('includes FOWT prevention script', () => {
