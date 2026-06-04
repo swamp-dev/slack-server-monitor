@@ -155,7 +155,7 @@ Full details: [docs/security.md](docs/security.md)
 
 ```bash
 npm run setup           # Interactive setup wizard (creates/updates .env)
-npm install             # Install dependencies
+npm install             # Install dependencies (also initializes vendor/agentbox submodule and builds the Go binary if Go is installed)
 npm run dev             # Hot reload development server
 npm test                # Run tests
 npm run typecheck       # Type checking
