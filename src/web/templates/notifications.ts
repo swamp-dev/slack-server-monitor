@@ -250,7 +250,7 @@ const notificationPageStyles = `
     margin-bottom: 2px;
   }
   .notif-entry .notif-entry-title a {
-    color: var(--fg);
+    color: var(--text);
     text-decoration: none;
   }
   .notif-entry .notif-entry-title a:hover {
@@ -289,7 +289,7 @@ const notificationPageStyles = `
     border-radius: 4px;
   }
   .notif-actions button:hover {
-    color: var(--fg);
+    color: var(--text);
     background: var(--bg);
   }
   .notif-empty {

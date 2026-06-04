@@ -31,6 +31,7 @@ const sessionListStyles = `
   .nav-tabs a.active {
     color: var(--accent);
     border-bottom-color: var(--accent);
+    background: linear-gradient(to right, rgba(124,58,237,0.08), transparent);
   }
   .nav-tabs a:hover:not(.active) {
     color: var(--text);
@@ -40,19 +41,20 @@ const sessionListStyles = `
     justify-content: space-between;
     align-items: center;
     padding: 16px;
-    margin-bottom: 8px;
+    margin-bottom: var(--space-2);
     background: var(--card-bg);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: var(--radius-lg);
     text-decoration: none;
     color: var(--text);
-    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
     position: relative;
+    animation: fadeUp 0.2s ease-out both;
   }
   .session-card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px var(--shadow);
-    border-color: var(--surface-hover);
+    box-shadow: var(--shadow);
+    border-color: rgba(124,58,237,0.3);
     text-decoration: none;
   }
   /* Active indicator: green dot for recent conversations */
@@ -507,7 +509,8 @@ export function renderSessionList(
             : '';
           lastSection = section;
 
-          return `${sectionHeader}<a href="${escapeHtml(link)}" class="session-card${activeClass}" data-index="${String(i)}" data-updated="${String(s.updatedAt)}" data-conv-id="${String(s.id)}">
+          const staggerDelay = Math.min(i * 30, 300);
+          return `${sectionHeader}<a href="${escapeHtml(link)}" class="session-card${activeClass}" data-index="${String(i)}" data-updated="${String(s.updatedAt)}" data-conv-id="${String(s.id)}" style="animation-delay:${String(staggerDelay)}ms">
             ${preview}
             <div class="session-card-body">
               <div class="session-card-title">${activeDot}<span class="${starClass}" data-id="${String(s.id)}" tabindex="0" role="button" aria-label="Toggle favorite">&#9733;</span> ${sessionTitle}</div>

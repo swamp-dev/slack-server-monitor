@@ -38,462 +38,466 @@ function getGreeting(): string {
 
 const dashboardStyles = `
   .dashboard-greeting {
-    margin-bottom: 24px;
+    margin-bottom: var(--space-6);
   }
   .dashboard-greeting h1 {
-    font-size: 1.75rem;
-    margin: 0 0 4px 0;
+    font-size: var(--text-3xl);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 var(--space-1) 0;
   }
   .dashboard-greeting .subtitle {
     color: var(--text-muted);
-    font-size: 0.9rem;
+    font-size: var(--text-sm);
   }
+
+  /* ── Stats row ────────────────────────────────────────────── */
   .stats-row {
-    display: flex;
-    gap: 16px;
-    margin-bottom: 32px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-4);
+    margin-bottom: var(--space-8);
   }
   .stat-card {
-    flex: 1;
-    background: var(--surface);
-    border-radius: 12px;
-    padding: 20px;
+    background: var(--card-bg);
+    border-radius: var(--radius-xl);
+    padding: var(--space-5);
     border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
+    animation: fadeUp 0.3s ease-out both;
   }
+  /* Gradient top-edge accent per card */
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--gradient-primary);
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  }
+  .stat-card:nth-child(1)::before { background: linear-gradient(90deg, #7c3aed, #4f46e5); }
+  .stat-card:nth-child(2)::before { background: linear-gradient(90deg, #4f46e5, #06b6d4); }
+  .stat-card:nth-child(3)::before { background: linear-gradient(90deg, #06b6d4, #10b981); }
   .stat-card .stat-value {
-    font-size: 2rem;
+    font-size: var(--text-4xl);
     font-weight: 700;
-    color: var(--fg);
+    color: var(--text);
     line-height: 1.1;
     font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
   }
   .stat-card .stat-label {
     color: var(--text-muted);
-    font-size: 0.8rem;
+    font-size: var(--text-xs);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-top: 4px;
+    letter-spacing: 0.07em;
+    margin-top: var(--space-1);
+    font-weight: 600;
   }
   .stat-card .stat-detail {
     color: var(--text-muted);
-    font-size: 0.75rem;
-    margin-top: 6px;
+    font-size: var(--text-xs);
+    margin-top: var(--space-2);
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-1);
   }
   .stat-card .stat-detail .active-dot {
     display: inline-block;
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 1.5s infinite;
   }
+
+  /* ── Bento grid ───────────────────────────────────────────── */
   .dashboard-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 24px;
-    margin-bottom: 32px;
+    grid-template-columns: repeat(12, 1fr);
+    gap: var(--space-4);
+    margin-bottom: var(--space-8);
   }
   .dashboard-section {
-    background: var(--surface);
-    border-radius: 12px;
-    padding: 20px;
+    background: var(--card-bg);
+    border-radius: var(--radius-xl);
+    padding: var(--space-5);
     border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    animation: fadeUp 0.3s ease-out both;
   }
+  .span-4  { grid-column: span 4; }
+  .span-6  { grid-column: span 6; }
+  .span-8  { grid-column: span 8; }
+  .span-12 { grid-column: span 12; }
   .dashboard-section h2 {
-    font-size: 1rem;
-    margin: 0 0 16px 0;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    margin: 0 0 var(--space-4) 0;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
+
+  /* ── Tool chart ───────────────────────────────────────────── */
   .tool-chart {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--space-2);
   }
   .tool-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    position: relative;
+    gap: var(--space-2);
   }
   .tool-bar {
-    height: 24px;
-    background: var(--accent);
-    border-radius: 4px;
+    height: 8px;
+    background: var(--gradient-primary);
+    border-radius: var(--radius-full);
     min-width: 4px;
-    transition: width 0.3s ease;
-    opacity: 0.8;
+    transition: width 0.4s ease;
   }
   .tool-name {
-    font-size: 0.8rem;
-    color: var(--fg);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
     white-space: nowrap;
     min-width: 120px;
   }
   .tool-count {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--text-muted);
     margin-left: auto;
+    font-variant-numeric: tabular-nums;
   }
+
+  /* ── Recent items ─────────────────────────────────────────── */
   .recent-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--space-2);
   }
   .recent-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 10px 12px;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     text-decoration: none;
-    color: var(--fg);
-    background: var(--bg);
+    color: var(--text);
+    background: var(--surface);
     border: 1px solid var(--border);
-    transition: border-color 0.15s ease;
+    transition: border-color 0.15s ease, background 0.15s ease;
+    font-size: var(--text-sm);
   }
   .recent-item:hover {
-    border-color: var(--accent);
+    border-color: rgba(124,58,237,0.4);
+    background: rgba(124,58,237,0.04);
     text-decoration: none;
   }
   .recent-item .recent-title {
-    font-size: 0.85rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 300px;
   }
   .recent-item .recent-time {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--text-muted);
     white-space: nowrap;
+    margin-left: var(--space-2);
   }
   .section-footer {
-    margin-top: 12px;
+    margin-top: var(--space-3);
     text-align: right;
   }
   .section-footer a {
-    font-size: 0.8rem;
+    font-size: var(--text-xs);
     color: var(--accent);
     text-decoration: none;
+    font-weight: 500;
   }
-  .section-footer a:hover {
-    text-decoration: underline;
-  }
+  .section-footer a:hover { text-decoration: underline; }
+
+  /* ── Quick actions ────────────────────────────────────────── */
   .quick-actions {
     display: flex;
-    gap: 12px;
-    margin-bottom: 32px;
+    gap: var(--space-3);
+    margin-bottom: var(--space-6);
+    flex-wrap: wrap;
   }
   .quick-actions a {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 10px 18px;
-    border-radius: 8px;
-    font-size: 0.85rem;
+    gap: var(--space-2);
+    padding: 9px 18px;
+    border-radius: var(--radius-full);
+    font-size: var(--text-sm);
+    font-weight: 500;
     text-decoration: none;
     border: 1px solid var(--border);
-    color: var(--fg);
-    background: var(--surface);
-    transition: border-color 0.15s ease, background 0.15s ease;
+    color: var(--text);
+    background: var(--surface-alpha);
+    transition: all 0.15s ease;
   }
   .quick-actions a:hover {
-    border-color: var(--accent);
+    border-color: rgba(124,58,237,0.4);
+    background: rgba(124,58,237,0.08);
     text-decoration: none;
   }
   .quick-actions a.primary {
-    background: var(--accent);
-    color: var(--bg);
-    border-color: var(--accent);
-  }
-  /* Light theme: --bg (#f8f8f2) is too pale to read on the pink accent
-     fill, so the icon and label nearly disappear. Force white text +
-     currentColor-driven SVG strokes for clear contrast. */
-  [data-theme="light"] .quick-actions a.primary {
+    background: var(--gradient-primary);
     color: #fff;
+    border-color: transparent;
+    box-shadow: 0 0 0 0 var(--accent-glow);
   }
   .quick-actions a.primary:hover {
-    opacity: 0.9;
+    box-shadow: 0 4px 16px var(--accent-glow);
+    transform: translateY(-1px);
   }
+
+  /* ── Tag cloud ────────────────────────────────────────────── */
   .tag-cloud {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: var(--space-2);
   }
   .tag-cloud a {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     padding: 4px 10px;
-    border-radius: 12px;
-    background: var(--bg);
+    border-radius: var(--radius-full);
+    background: var(--surface-alpha);
     color: var(--text-muted);
     text-decoration: none;
     border: 1px solid var(--border);
-    transition: border-color 0.15s ease;
+    transition: all 0.15s ease;
+    font-weight: 500;
   }
   .tag-cloud a:hover {
-    border-color: var(--accent);
-    color: var(--fg);
+    border-color: rgba(124,58,237,0.4);
+    color: var(--accent);
+    background: rgba(124,58,237,0.08);
   }
+
+  /* ── Widget section ───────────────────────────────────────── */
   .widget-section {
-    margin-bottom: 32px;
+    margin-bottom: var(--space-8);
   }
   .widget-section > h2 {
-    font-size: 1rem;
-    margin: 0 0 16px 0;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    margin: 0 0 var(--space-4) 0;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
   .widget-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: var(--space-4);
   }
   .widget-card {
-    background: var(--surface);
-    border-radius: 12px;
-    padding: 16px;
+    background: var(--card-bg);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
     border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    animation: fadeUp 0.3s ease-out both;
+    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+  }
+  .widget-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+    border-color: rgba(124,58,237,0.2);
   }
   .widget-card .widget-header {
-    font-size: 0.9rem;
+    font-size: var(--text-sm);
     font-weight: 600;
-    margin-bottom: 12px;
+    margin-bottom: var(--space-3);
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
   }
   .widget-card .widget-header a {
-    color: var(--fg);
+    color: var(--text);
     text-decoration: none;
   }
-  .widget-card .widget-header a:hover {
-    color: var(--accent);
-  }
-  .widget-card .widget-body {
-    font-size: 0.85rem;
-    color: var(--fg);
-  }
+  .widget-card .widget-header a:hover { color: var(--accent); }
+  .widget-card .widget-body { font-size: var(--text-sm); }
   .widget-small { grid-column: span 1; }
   .widget-medium { grid-column: span 1; }
   .widget-large { grid-column: span 2; }
-  @media (max-width: 768px) {
-    .widget-large { grid-column: span 1; }
-  }
+  @media (max-width: 768px) { .widget-large { grid-column: span 1; } }
+
+  /* ── Health section ───────────────────────────────────────── */
   .health-section {
-    margin-bottom: 24px;
+    margin-bottom: var(--space-6);
   }
   .health-section h2 {
-    font-size: 0.9rem;
-    margin: 0 0 12px 0;
+    font-size: var(--text-xs);
+    margin: 0 0 var(--space-3) 0;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-weight: 600;
   }
   .health-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 12px;
+    gap: var(--space-3);
   }
-  /* Tablet: explicitly force 2x2 instead of auto-fill landing on 3+1.
-     Below 1024px the four cards used to break to a 3-column row plus a
-     single Disk card on its own line, wasting horizontal space. */
   @media (min-width: 641px) and (max-width: 1024px) {
-    .health-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
+    .health-grid { grid-template-columns: repeat(2, 1fr); }
   }
   .health-card {
-    background: var(--surface);
-    border-radius: 10px;
+    background: var(--card-bg);
+    border-radius: var(--radius-lg);
     padding: 14px 16px;
     border: 1px solid var(--border);
+    transition: border-color 0.2s;
   }
   .health-card .health-label {
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
     color: var(--text-muted);
     margin-bottom: 4px;
+    font-weight: 600;
   }
   .health-card .health-value {
-    font-size: 1.4rem;
+    font-size: 1.5rem;
     font-weight: 700;
     line-height: 1.2;
+    font-variant-numeric: tabular-nums;
   }
   .health-card .health-detail {
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     color: var(--text-muted);
     margin-top: 4px;
   }
   .health-bar {
     height: 6px;
     background: var(--border);
-    border-radius: 3px;
-    margin-top: 8px;
+    border-radius: var(--radius-full);
+    margin-top: var(--space-2);
     overflow: hidden;
   }
   .health-bar-fill {
     height: 100%;
-    border-radius: 3px;
+    border-radius: var(--radius-full);
     transition: width 0.5s ease;
   }
-  .health-bar-fill.ok { background: var(--green); }
-  .health-bar-fill.warn { background: var(--yellow); }
-  .health-bar-fill.danger { background: var(--red); }
-  /* Health card severity borders */
-  .health-card.severity-warn {
-    border-color: var(--yellow);
-  }
+  .health-bar-fill.ok    { background: linear-gradient(90deg, #059669, #10b981); }
+  .health-bar-fill.warn  { background: linear-gradient(90deg, #b45309, #f59e0b); }
+  .health-bar-fill.danger { background: linear-gradient(90deg, #b91c1c, #ef4444); }
+  .health-card.severity-warn { border-color: rgba(245,158,11,0.5); }
   .health-card.severity-danger {
-    border-color: var(--red);
-    animation: pulse-border 2s ease-in-out infinite;
-  }
-  @keyframes pulse-border {
-    0%, 100% { border-color: var(--red); }
-    50% { border-color: var(--border); }
+    border-color: rgba(239,68,68,0.6);
+    animation: glow-pulse 2s ease-in-out infinite;
+    --accent-glow: rgba(239,68,68,0.3);
   }
   .health-status-text {
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.05em;
     margin-top: 4px;
   }
-  .health-status-text.ok { color: var(--green); }
-  .health-status-text.warn { color: var(--yellow); }
+  .health-status-text.ok    { color: var(--green); }
+  .health-status-text.warn  { color: var(--yellow); }
   .health-status-text.danger { color: var(--red); }
-  /* Greeting health summary */
+
+  /* ── Greeting health badge ────────────────────────────────── */
   .greeting-health {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-size: 0.8rem;
-    padding: 4px 10px;
-    border-radius: 12px;
-    margin-left: 8px;
+    font-size: var(--text-xs);
+    padding: 4px 12px;
+    border-radius: var(--radius-full);
+    margin-left: var(--space-3);
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    vertical-align: middle;
   }
-  .greeting-health.all-ok {
-    background: rgba(80, 250, 123, 0.1);
-    color: var(--green);
-  }
-  .greeting-health.has-warn {
-    background: rgba(241, 250, 140, 0.1);
-    color: var(--yellow);
-  }
-  .greeting-health.has-danger {
-    background: rgba(255, 85, 85, 0.1);
-    color: var(--red);
-  }
-  .quick-links-section {
-    margin-bottom: 24px;
-  }
+  .greeting-health.all-ok  { background: rgba(16,185,129,0.12); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+  .greeting-health.has-warn { background: rgba(245,158,11,0.12); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+  .greeting-health.has-danger { background: rgba(239,68,68,0.12); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+
+  /* ── Quick links ──────────────────────────────────────────── */
+  .quick-links-section { margin-bottom: var(--space-6); }
   .quick-links-section h2 {
-    font-size: 0.9rem;
-    margin: 0 0 10px 0;
+    font-size: var(--text-xs);
+    margin: 0 0 var(--space-2) 0;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-weight: 600;
   }
-  .quick-links-bar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
+  .quick-links-bar { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .quick-link-card {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 14px;
-    border-radius: 8px;
-    font-size: 0.8rem;
+    gap: var(--space-2);
+    padding: 7px 14px;
+    border-radius: var(--radius-full);
+    font-size: var(--text-xs);
+    font-weight: 500;
     text-decoration: none;
-    color: var(--fg);
-    background: var(--surface);
+    color: var(--text);
+    background: var(--surface-alpha);
     border: 1px solid var(--border);
-    transition: border-color 0.15s ease;
+    transition: all 0.15s ease;
   }
   .quick-link-card:hover {
-    border-color: var(--accent);
+    border-color: rgba(124,58,237,0.4);
+    background: rgba(124,58,237,0.08);
     text-decoration: none;
   }
+
+  /* ── Empty welcome ────────────────────────────────────────── */
   .empty-welcome {
     text-align: center;
     padding: 80px 20px;
   }
-  .empty-welcome svg {
-    color: var(--text-muted);
-    margin-bottom: 16px;
-  }
-  .empty-welcome h2 {
-    font-size: 1.5rem;
-    margin: 0 0 8px 0;
-  }
-  .empty-welcome p {
-    color: var(--text-muted);
-    margin: 0 0 24px 0;
-  }
-  /* Mobile: collapse stats to a single column. Tablet (641-768px) keeps
-     the 3-column row — three short cards fit horizontally without
-     looking cramped, and stacking them wastes vertical space. */
+  .empty-welcome svg { color: var(--text-muted); margin-bottom: var(--space-4); opacity: 0.4; }
+  .empty-welcome h2 { font-size: var(--text-2xl); margin: 0 0 var(--space-2) 0; font-weight: 700; }
+  .empty-welcome p { color: var(--text-muted); margin: 0 0 var(--space-6) 0; }
+
+  /* ── Responsive ───────────────────────────────────────────── */
   @media (max-width: 640px) {
-    .stats-row {
-      flex-direction: column;
-    }
+    .stats-row { grid-template-columns: 1fr; }
+    .dashboard-grid { grid-template-columns: 1fr; }
+    .span-4, .span-6, .span-8, .span-12 { grid-column: span 1; }
+    .quick-actions { flex-direction: column; }
+    .recent-item .recent-title { max-width: 200px; }
   }
-  @media (max-width: 768px) {
-    .dashboard-grid {
-      grid-template-columns: 1fr;
-    }
-    .quick-actions {
-      flex-direction: column;
-    }
-    .recent-item .recent-title {
-      max-width: 200px;
-    }
+  @media (min-width: 641px) and (max-width: 1024px) {
+    .dashboard-grid { grid-template-columns: repeat(2, 1fr); }
+    .span-4, .span-6 { grid-column: span 1; }
+    .span-8, .span-12 { grid-column: span 2; }
   }
   @media (max-width: 414px) {
-    .dashboard-card {
-      padding: 14px;
-    }
-    .stat-card {
-      padding: 12px;
-    }
-    .stat-card .stat-value {
-      font-size: 1.25rem;
-    }
-    .health-grid {
-      grid-template-columns: 1fr;
-    }
-    .health-metric {
-      padding: 10px;
-    }
-    .widget-grid {
-      grid-template-columns: 1fr;
-    }
-    .recent-item {
-      padding: 10px;
-    }
-    .recent-item .recent-title {
-      max-width: 160px;
-      font-size: 0.8rem;
-    }
-    .quick-actions a {
-      padding: 10px;
-      font-size: 0.8rem;
-    }
-    .links-grid {
-      grid-template-columns: 1fr;
-    }
-    .empty-welcome h2 {
-      font-size: 1.2rem;
-    }
+    .stat-card { padding: var(--space-3); }
+    .stat-card .stat-value { font-size: var(--text-2xl); }
+    .health-grid { grid-template-columns: 1fr; }
+    .widget-grid { grid-template-columns: 1fr; }
+    .recent-item { padding: 10px; }
+    .recent-item .recent-title { max-width: 160px; }
   }
 `;
 
@@ -565,8 +569,8 @@ export function renderDashboard(
   // Top tools bar chart
   const maxToolCount = stats.topTools.length > 0 ? Math.max(...stats.topTools.map((t) => t.count)) : 1;
   const toolChartHtml = stats.topTools.length > 0
-    ? `<div class="dashboard-section">
-        <h2>${icon('wrench', 16)} Top Tools</h2>
+    ? `<div class="dashboard-section span-8">
+        <h2>${icon('bar-chart', 14)} Top Tools</h2>
         <div class="tool-chart">
           ${stats.topTools.map((tool) => {
             const pct = Math.round((tool.count / maxToolCount) * 100);
@@ -582,8 +586,8 @@ export function renderDashboard(
 
   // Recent conversations
   const recentHtml = recent.length > 0
-    ? `<div class="dashboard-section">
-        <h2>${icon('clock', 16)} Recent Conversations</h2>
+    ? `<div class="dashboard-section span-6">
+        <h2>${icon('clock', 14)} Recent</h2>
         <div class="recent-list">
           ${recent.map((s) => {
             const link = `/c/${encodeURIComponent(s.threadTs)}/${encodeURIComponent(s.channelId)}`;
@@ -601,8 +605,8 @@ export function renderDashboard(
 
   // Favorites
   const favoritesHtml = favorites.length > 0
-    ? `<div class="dashboard-section">
-        <h2>${icon('star', 16)} Favorites${favCount > favorites.length ? ` <span style="font-weight:400;font-size:0.8rem;color:var(--text-muted)">(${String(favCount)} total)</span>` : ''}</h2>
+    ? `<div class="dashboard-section span-6">
+        <h2>${icon('star', 14)} Favorites${favCount > favorites.length ? ` <span style="font-weight:400;color:var(--text-muted)">(${String(favCount)} total)</span>` : ''}</h2>
         <div class="recent-list">
           ${favorites.map((s) => {
             const link = `/c/${encodeURIComponent(s.threadTs)}/${encodeURIComponent(s.channelId)}`;
@@ -618,11 +622,11 @@ export function renderDashboard(
 
   // Tags
   const tagsHtml = allTags.length > 0
-    ? `<div class="dashboard-section">
-        <h2>${icon('tag', 16)} Tags</h2>
+    ? `<div class="dashboard-section span-4">
+        <h2>${icon('tag', 14)} Tags</h2>
         <div class="tag-cloud">
           ${allTags.map((t) =>
-            `<a href="/c/tag/${encodeURIComponent(t.name)}">${escapeHtml(t.name)} (${String(t.count)})</a>`
+            `<a href="/c/tag/${encodeURIComponent(t.name)}">${escapeHtml(t.name)} <span style="opacity:0.6">${String(t.count)}</span></a>`
           ).join('\n')}
         </div>
       </div>`
@@ -635,6 +639,7 @@ export function renderDashboard(
       <a href="/c">${icon('search', 16)} Search</a>
       <a href="/c">${icon('message-circle', 16)} All Conversations</a>
     </div>`;
+
 
   // Server health section
   const healthHtml = health
@@ -768,22 +773,23 @@ export function renderDashboard(
     }
   }
 
-  // Build the grid: left column = tools + tags, right column = recent + favorites
-  const leftCol = isAuthenticated ? [toolChartHtml, tagsHtml].filter(Boolean).join('\n') : '';
-  const rightCol = isAuthenticated ? [recentHtml, favoritesHtml].filter(Boolean).join('\n') : '';
-
   const loginPromptHtml = !isAuthenticated ? `
-    <div class="dashboard-section" style="text-align:center;padding:24px;">
-      <p style="color:var(--text-muted);margin-bottom:12px;">Log in to see conversations, notifications, and full dashboard.</p>
-      <a href="/login" class="primary" style="display:inline-flex;align-items:center;gap:6px;">${icon('log-in', 16)} Log in</a>
+    <div class="dashboard-section span-12" style="text-align:center;padding:var(--space-6);">
+      <p style="color:var(--text-muted);margin-bottom:var(--space-3);">Log in to see conversations, notifications, and full dashboard.</p>
+      <a href="/login" class="btn btn-primary">${icon('log-in', 16)} Log in</a>
     </div>` : '';
+
+  // Bento grid — all sections placed directly, each carries its own span class
+  const bentoSections = isAuthenticated
+    ? [toolChartHtml, tagsHtml, recentHtml, favoritesHtml].filter(Boolean).join('\n')
+    : loginPromptHtml;
 
   const bodyHtml = `
   <main class="container">
     <div class="dashboard-greeting">
       <h1>${greeting}${healthBadgeHtml}</h1>
       ${isAuthenticated
-        ? `<div class="subtitle">Last 24 hours: ${String(stats.totalSessions)} sessions, ${String(stats.totalMessages)} messages, ${String(stats.totalToolCalls)} tool calls</div>`
+        ? `<div class="subtitle">Last 24 hours: ${String(stats.totalSessions)} sessions &middot; ${String(stats.totalMessages)} messages &middot; ${String(stats.totalToolCalls)} tool calls</div>`
         : `<div class="subtitle">Public dashboard</div>`
       }
     </div>
@@ -792,10 +798,8 @@ export function renderDashboard(
     ${isAuthenticated ? quickLinksHtml : ''}
     ${isAuthenticated ? statsHtml : ''}
     ${widgetsHtml}
-    ${loginPromptHtml}
     <div class="dashboard-grid">
-      ${leftCol || ''}
-      ${rightCol || ''}
+      ${bentoSections}
     </div>
   </main>`;
 
