@@ -28,10 +28,19 @@ jobs:
           submodules: recursive
           token: ${{ secrets.PARENT_REPO_TOKEN || github.token }}
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
       - name: Get submodule SHA for cache key
         id: submodule-sha
         run: |
           SHA=$(git ls-tree HEAD vendor/agentbox | awk '{print $3}')
+          if [ -z "$SHA" ]; then
+            echo "ERROR: vendor/agentbox not found in tree — submodule commit missing" >&2
+            exit 1
+          fi
           echo "cache-key=agentbox-bin-${SHA}" >> $GITHUB_OUTPUT
 
       - name: Restore agentbox binary cache
@@ -66,6 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          submodules: recursive
           token: ${{ secrets.PARENT_REPO_TOKEN || github.token }}
 
       - name: Setup Node.js
