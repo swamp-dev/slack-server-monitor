@@ -24,7 +24,8 @@
     "setup": "tsx src/setup/wizard.ts",
     "screenshots": "tsx scripts/take-screenshots.ts",
     "manage-users": "tsx src/cli/manage-users.ts",
-    "agentbox:build": "bash scripts/build-agentbox.sh"
+    "agentbox:build": "bash scripts/build-agentbox.sh",
+    "prepare": "git submodule update --init --recursive && npm run agentbox:build"
   },
   "keywords": [
     "slack",
