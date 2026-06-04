@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
+import { createStoreSingleton } from './store-factory.js';
 
 /**
  * Safely truncate a string without splitting multi-byte UTF-8 characters
@@ -1322,23 +1323,12 @@ export class ConversationStore {
   }
 }
 
-// Singleton instance - lazily initialized
-let store: ConversationStore | null = null;
+const conversationSingleton = createStoreSingleton<ConversationStore>('ConversationStore');
 
-/**
- * Get the conversation store singleton
- */
 export function getConversationStore(dbPath: string, ttlHours = 24): ConversationStore {
-  store ??= new ConversationStore(dbPath, ttlHours);
-  return store;
+  return conversationSingleton.get(dbPath, () => new ConversationStore(dbPath, ttlHours));
 }
 
-/**
- * Close the conversation store
- */
 export function closeConversationStore(): void {
-  if (store) {
-    store.close();
-    store = null;
-  }
+  conversationSingleton.close();
 }

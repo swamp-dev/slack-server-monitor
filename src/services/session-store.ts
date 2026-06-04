@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
+import { createStoreSingleton } from './store-factory.js';
 
 /**
  * Web session record
@@ -149,23 +150,12 @@ export class SessionStore {
   }
 }
 
-// Singleton instance
-let store: SessionStore | null = null;
+const sessionSingleton = createStoreSingleton<SessionStore>('SessionStore');
 
-/**
- * Get the session store singleton
- */
 export function getSessionStore(dbPath: string, ttlHours = 72): SessionStore {
-  store ??= new SessionStore(dbPath, ttlHours);
-  return store;
+  return sessionSingleton.get(dbPath, () => new SessionStore(dbPath, ttlHours));
 }
 
-/**
- * Close the session store
- */
 export function closeSessionStore(): void {
-  if (store) {
-    store.close();
-    store = null;
-  }
+  sessionSingleton.close();
 }

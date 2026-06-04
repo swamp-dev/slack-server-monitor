@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { z } from 'zod';
+import { createStoreSingleton } from './store-factory.js';
 import { logger } from '../utils/logger.js';
 import {
   SlackUserIdSchema,
@@ -207,27 +208,12 @@ function mapRow(row: InviteRow): InviteCode {
   };
 }
 
-let store: InviteStore | null = null;
-let storeDbPath: string | null = null;
+const inviteSingleton = createStoreSingleton<InviteStore>('InviteStore');
 
 export function getInviteStore(dbPath: string): InviteStore {
-  if (store && storeDbPath !== dbPath) {
-    throw new Error(
-      `InviteStore already initialized at ${storeDbPath ?? '<unknown>'} — ` +
-        `cannot re-initialize at ${dbPath}. Call closeInviteStore() first.`,
-    );
-  }
-  if (!store) {
-    store = new InviteStore(dbPath);
-    storeDbPath = dbPath;
-  }
-  return store;
+  return inviteSingleton.get(dbPath, () => new InviteStore(dbPath));
 }
 
 export function closeInviteStore(): void {
-  if (store) {
-    store.close();
-    store = null;
-    storeDbPath = null;
-  }
+  inviteSingleton.close();
 }
