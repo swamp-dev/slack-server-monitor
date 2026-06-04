@@ -26,10 +26,35 @@ vi.mock('../../src/commands/ask.js', () => ({
   checkAndRecordClaudeRequest: vi.fn().mockReturnValue(true),
 }));
 
+// Call-through spy wrappers — existing tests use the real implementations;
+// DB-cleanup tests override with mockImplementationOnce per-test.
+vi.mock('../../src/services/plugin-database.js', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const real = await importOriginal<typeof import('../../src/services/plugin-database.js')>();
+  return {
+    ...real,
+    getPluginDatabase: vi.fn().mockImplementation(real.getPluginDatabase),
+    removePluginDatabase: vi.fn().mockImplementation(real.removePluginDatabase),
+    closePluginDatabases: vi.fn().mockImplementation(real.closePluginDatabases),
+    getPluginDatabasePath: vi.fn().mockImplementation(real.getPluginDatabasePath),
+  };
+});
+
+vi.mock('../../src/services/tools/validation.js', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const real = await importOriginal<typeof import('../../src/services/tools/validation.js')>();
+  return {
+    ...real,
+    validatePluginTools: vi.fn().mockImplementation(real.validatePluginTools),
+  };
+});
+
 // Import after mocking
 const { discoverPlugins, getPluginTools, destroyPlugins, getLoadedPlugins, registerPlugins } =
   await import('../../src/plugins/loader.js');
 const { clearRegisteredCommands } = await import('../../src/plugins/plugin-app.js');
+const { getPluginDatabase, removePluginDatabase } = await import('../../src/services/plugin-database.js');
+const { validatePluginTools } = await import('../../src/services/tools/validation.js');
 
 const TEST_PLUGINS_DIR = resolve(process.cwd(), '.plugins-test-tmp');
 
@@ -319,5 +344,46 @@ describe('plugin loader', () => {
       // Plugin should not have loaded due to timeout
       expect(getLoadedPlugins()).toHaveLength(0);
     }, 15000); // Test timeout of 15s
+  });
+
+  describe('DB cleanup on failure paths', () => {
+    beforeEach(() => {
+      vi.mocked(getPluginDatabase).mockClear();
+      vi.mocked(removePluginDatabase).mockClear();
+      vi.mocked(validatePluginTools).mockClear();
+    });
+
+    it('does not call getPluginDatabase or removePluginDatabase when validatePluginTools throws', async () => {
+      vi.mocked(validatePluginTools).mockImplementationOnce(() => {
+        throw new Error('Validation crash');
+      });
+
+      await mkdir(TEST_PLUGINS_DIR);
+      await writeFile(
+        join(TEST_PLUGINS_DIR, 'validatefail.js'),
+        // toolName present so the code reaches validatePluginTools before getPluginDatabase
+        createValidPluginContent('validatefail', { toolName: 'test_tool' })
+      );
+
+      await registerPlugins(mockApp, TEST_PLUGINS_DIR);
+
+      expect(getPluginDatabase).not.toHaveBeenCalled();
+      expect(removePluginDatabase).not.toHaveBeenCalled();
+    });
+
+    it('calls removePluginDatabase exactly once when init() throws after DB allocation', async () => {
+      await mkdir(TEST_PLUGINS_DIR);
+      // Use a unique name so jiti does not return a cached import from a prior test
+      await writeFile(
+        join(TEST_PLUGINS_DIR, 'initfail.js'),
+        createValidPluginContent('initfail', { hasInit: true, throwInInit: true })
+      );
+
+      await registerPlugins(mockApp, TEST_PLUGINS_DIR);
+
+      expect(getPluginDatabase).toHaveBeenCalledOnce();
+      expect(removePluginDatabase).toHaveBeenCalledOnce();
+      expect(removePluginDatabase).toHaveBeenCalledWith('initfail');
+    });
   });
 });
