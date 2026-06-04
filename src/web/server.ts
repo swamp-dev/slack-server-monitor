@@ -227,6 +227,28 @@ export async function startWebServer(webConfig: WebConfig): Promise<void> {
   app.use(express.urlencoded({ extended: false }));
   app.use(express.json());
 
+  // Request timing — logs slow requests (all response types) and adds X-Response-Time header (send paths only)
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const start = Date.now();
+
+    // 'finish' fires for all response types: send, json, redirect, SSE end — comprehensive coverage
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      if (duration > 500) {
+        logger.warn('Slow request', { method: req.method, path: req.path, status: res.statusCode, durationMs: duration });
+      }
+    });
+
+    // X-Response-Time header on res.send() paths (normal routes, API endpoints) for DevTools visibility
+    const originalSend = res.send.bind(res);
+    res.send = function (body: Parameters<typeof res.send>[0]) {
+      res.setHeader('X-Response-Time', String(Date.now() - start) + 'ms');
+      return originalSend(body);
+    };
+
+    next();
+  });
+
   // Security headers
   app.use((_req: Request, res: Response, next: NextFunction) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
