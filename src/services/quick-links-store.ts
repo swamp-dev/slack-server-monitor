@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
+import { createStoreSingleton } from './store-factory.js';
 
 /**
  * Quick link record
@@ -160,22 +161,12 @@ function mapRow(row: Record<string, unknown>): QuickLink {
 
 // ─── Singleton ───────────────────────────────────────────────────────
 
-let store: QuickLinksStore | null = null;
+const quickLinksSingleton = createStoreSingleton<QuickLinksStore>('QuickLinksStore');
 
-/**
- * Get the quick links store singleton
- */
 export function getQuickLinksStore(dbPath: string): QuickLinksStore {
-  store ??= new QuickLinksStore(dbPath);
-  return store;
+  return quickLinksSingleton.get(dbPath, () => new QuickLinksStore(dbPath));
 }
 
-/**
- * Close the quick links store
- */
 export function closeQuickLinksStore(): void {
-  if (store) {
-    store.close();
-    store = null;
-  }
+  quickLinksSingleton.close();
 }

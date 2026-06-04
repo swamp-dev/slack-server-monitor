@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
+import { createStoreSingleton } from './store-factory.js';
 
 /**
  * Channel context selection record
@@ -111,23 +112,12 @@ export class ContextStore {
   }
 }
 
-// Singleton instance - lazily initialized
-let store: ContextStore | null = null;
+const contextSingleton = createStoreSingleton<ContextStore>('ContextStore');
 
-/**
- * Get the context store singleton
- */
 export function getContextStore(dbPath: string): ContextStore {
-  store ??= new ContextStore(dbPath);
-  return store;
+  return contextSingleton.get(dbPath, () => new ContextStore(dbPath));
 }
 
-/**
- * Close the context store
- */
 export function closeContextStore(): void {
-  if (store) {
-    store.close();
-    store = null;
-  }
+  contextSingleton.close();
 }

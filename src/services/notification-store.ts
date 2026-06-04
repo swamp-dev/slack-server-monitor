@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
 import { getEventBus } from './event-bus.js';
+import { createStoreSingleton } from './store-factory.js';
 
 /**
  * Notification record
@@ -217,22 +218,12 @@ function mapRow(row: Record<string, unknown>): Notification {
 
 // ─── Singleton ───────────────────────────────────────────────────────
 
-let store: NotificationStore | null = null;
+const notificationSingleton = createStoreSingleton<NotificationStore>('NotificationStore');
 
-/**
- * Get the notification store singleton
- */
 export function getNotificationStore(dbPath: string): NotificationStore {
-  store ??= new NotificationStore(dbPath);
-  return store;
+  return notificationSingleton.get(dbPath, () => new NotificationStore(dbPath));
 }
 
-/**
- * Close the notification store
- */
 export function closeNotificationStore(): void {
-  if (store) {
-    store.close();
-    store = null;
-  }
+  notificationSingleton.close();
 }

@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
+import { createStoreSingleton } from './store-factory.js';
 import {
   CreateUserInputSchema,
   PasswordSchema,
@@ -422,27 +423,12 @@ export function resolveUserStoreDbPath(claudeDbPath: string | undefined): string
   return claudeDbPath ?? './data/users.db';
 }
 
-let store: UserStore | null = null;
-let storeDbPath: string | null = null;
+const userSingleton = createStoreSingleton<UserStore>('UserStore');
 
 export function getUserStore(dbPath: string): UserStore {
-  if (store && storeDbPath !== dbPath) {
-    throw new Error(
-      `UserStore already initialized at ${storeDbPath ?? '<unknown>'} — ` +
-        `cannot re-initialize at ${dbPath}. Call closeUserStore() first.`,
-    );
-  }
-  if (!store) {
-    store = new UserStore(dbPath);
-    storeDbPath = dbPath;
-  }
-  return store;
+  return userSingleton.get(dbPath, () => new UserStore(dbPath));
 }
 
 export function closeUserStore(): void {
-  if (store) {
-    store.close();
-    store = null;
-    storeDbPath = null;
-  }
+  userSingleton.close();
 }
