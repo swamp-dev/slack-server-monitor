@@ -202,59 +202,9 @@ describe('PluginDatabase', () => {
       });
     });
 
-    describe('blocked operations', () => {
-      it('should block access to conversations table', () => {
-        expect(() => {
-          db.prepare('SELECT * FROM conversations').all();
-        }).toThrow(/access core table "conversations"/);
-      });
-
-      it('should block access to tool_calls table', () => {
-        expect(() => {
-          db.prepare('INSERT INTO tool_calls (conversation_id) VALUES (?)').run(1);
-        }).toThrow(/access core table "tool_calls"/);
-      });
-
-      it('should block access to channel_context table', () => {
-        expect(() => {
-          db.prepare('DELETE FROM channel_context WHERE channel_id = ?').run('C123');
-        }).toThrow(/access core table "channel_context"/);
-      });
-
-      it('should block access to other plugins tables', () => {
-        expect(() => {
-          db.prepare('SELECT * FROM plugin_otherplugin_data').all();
-        }).toThrow(/access another plugin's table "plugin_otherplugin_data"/);
-      });
-
-      it('should block creating tables without prefix', () => {
-        expect(() => {
-          db.exec('CREATE TABLE my_data (id INTEGER PRIMARY KEY)');
-        }).toThrow(/must prefix all tables/);
-      });
-
-      it('should block INSERT into non-prefixed table', () => {
-        expect(() => {
-          db.prepare('INSERT INTO users (name) VALUES (?)').run('test');
-        }).toThrow(/must prefix all tables/);
-      });
-
-      it('should block JOIN with core table', () => {
-        db.exec(`
-          CREATE TABLE IF NOT EXISTS plugin_testplugin_data (
-            id INTEGER PRIMARY KEY,
-            conversation_id INTEGER
-          )
-        `);
-
-        expect(() => {
-          db.prepare(`
-            SELECT d.* FROM plugin_testplugin_data d
-            JOIN conversations c ON c.id = d.conversation_id
-          `).all();
-        }).toThrow(/access core table "conversations"/);
-      });
-    });
+    // Regex-based blocked-operations tests removed — the SQL parser was replaced
+    // with explicit table declaration in prepare(). See 'prepare table declaration
+    // validation' below for the new enforcement model.
 
     describe('transaction support', () => {
       it('should support transactions', () => {
@@ -359,22 +309,6 @@ describe('PluginDatabase', () => {
       }).not.toThrow();
     });
 
-    it('should block subqueries accessing core tables', () => {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS plugin_testplugin_data (
-          id INTEGER PRIMARY KEY,
-          conversation_id INTEGER
-        )
-      `);
-
-      expect(() => {
-        db.prepare(`
-          SELECT * FROM plugin_testplugin_data
-          WHERE conversation_id IN (SELECT id FROM conversations)
-        `).all();
-      }).toThrow(/access core table "conversations"/);
-    });
-
     it('should handle LEFT JOIN with plugin tables', () => {
       db.exec(`
         CREATE TABLE IF NOT EXISTS plugin_testplugin_data (
@@ -395,6 +329,44 @@ describe('PluginDatabase', () => {
           LEFT JOIN plugin_testplugin_refs r ON r.data_id = d.id
         `).all();
       }).not.toThrow();
+    });
+  });
+
+  describe('prepare table declaration validation', () => {
+    let db: PluginDatabase;
+
+    beforeEach(() => {
+      db = getPluginDatabase('myplugin', testDbPath);
+    });
+
+    it('succeeds when the declared table uses the correct plugin prefix', () => {
+      expect(() => db.prepare('SELECT 1', ['plugin_myplugin_t'])).not.toThrow();
+    });
+
+    it('throws when a foreign plugin table name is declared', () => {
+      expect(() => db.prepare('SELECT 1', ['plugin_other_t'])).toThrow(
+        /plugin_other_t/,
+      );
+    });
+
+    it('includes the foreign table name in the error message', () => {
+      expect(() => db.prepare('SELECT 1', ['plugin_other_t'])).toThrow(
+        expect.objectContaining({ message: expect.stringContaining('plugin_other_t') }),
+      );
+    });
+
+    it('succeeds with an empty tables array (for statements like SELECT 1)', () => {
+      expect(() => db.prepare('SELECT 1', [])).not.toThrow();
+    });
+
+    it('throws when any table in the list is a foreign plugin table', () => {
+      expect(() =>
+        db.prepare('SELECT 1', ['plugin_myplugin_t', 'plugin_other_t']),
+      ).toThrow(/plugin_other_t/);
+    });
+
+    it('allows sqlite_ system tables to be declared', () => {
+      expect(() => db.prepare('SELECT 1', ['sqlite_master'])).not.toThrow();
     });
   });
 });
