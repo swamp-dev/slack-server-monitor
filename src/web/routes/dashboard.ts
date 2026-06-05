@@ -1,7 +1,5 @@
 import express, { type Request, type Response, type NextFunction, type Router } from 'express';
 import type { Config, WebConfig } from '../../config/schema.js';
-
-type ClaudeConfig = NonNullable<Config['claude']>;
 import { getSocketModeStatus } from '../../services/socket-mode-status.js';
 import { getConversationStore } from '../../services/conversation-store.js';
 import { getSessionStore } from '../../services/session-store.js';
@@ -29,6 +27,8 @@ import {
   getUserFilterIds,
 } from '../middleware/auth.js';
 import { attachTags } from './helpers.js';
+
+type ClaudeConfig = NonNullable<Config['claude']>;
 
 export function createDashboardRouter(
   claudeConfig: ClaudeConfig,

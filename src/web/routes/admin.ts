@@ -81,6 +81,7 @@ export function createAdminRouter(dbPath: string, webConfig: WebConfig): Router 
     // Last-admin protection: count + update aren't atomic. The window between count
     // check and updateRole is a few SQLite ops; concurrent demotions could each see
     // count=2 and both proceed, leaving zero admins. Acceptable for home-server scale.
+    // Once #310 (manage-users CLI) merges, swap to the atomic `demoteIfNotLastAdmin`.
     if (user.role === 'admin' && newRole !== 'admin' && userStore.countByRole('admin') <= 1) {
       res.redirect(302, '/admin/users?error=' + encodeURIComponent('Refusing to demote the last admin.'));
       return;
