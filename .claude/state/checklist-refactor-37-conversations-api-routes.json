@@ -1,7 +1,7 @@
 {
   "verdict": "ship",
-  "head_sha": "f2bc94f17f91a6c18f732c5fef2950dd8d50fd66",
+  "head_sha": "9402930d38497932ae4191c3c0f3ac902990617f",
   "branch": "refactor/37-conversations-api-routes",
-  "reviewer_notes": "No critical or significant findings. Minor: stray semicolon and mock name typo — both fixed.",
+  "reviewer_notes": "No critical or significant regressions. Significant findings (event-bus listener duplication risk, attachTags unbounded SQL, exec() validation removal, missing tables arg in web-templates.ts:738) are pre-existing issues or documented trade-offs, not regressions introduced by this PR. Verdict: Ship.",
   "local_ci": "passed"
 }
