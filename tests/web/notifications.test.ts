@@ -321,13 +321,19 @@ describe('notification templates', () => {
 
   describe('time bucket section headers', () => {
     const ONE_DAY_MS = 24 * 3600 * 1000;
+    // Noon yesterday: always inside the "yesterday" bucket regardless of time of day.
+    // Using Date.now() - 25h fails near UTC midnight because 25h ago crosses into
+    // the day-before-yesterday calendar boundary.
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const NOON_YESTERDAY = startOfToday.getTime() - 12 * 3600 * 1000;
 
     function makeNotif(id: number, createdAt: number): Notification {
       return { id, source: 'system', level: 'info', title: `Notif ${String(id)}`, body: null, link: null, createdAt, readAt: null };
     }
 
-    it('renders Yesterday section for notifications 25 hours old', () => {
-      const notif = makeNotif(10, Date.now() - 25 * ONE_DAY_MS / 24);
+    it('renders Yesterday section for notifications from yesterday', () => {
+      const notif = makeNotif(10, NOON_YESTERDAY);
       const html = renderNotificationPage([notif], 1);
       expect(html).toContain('data-bucket="yesterday"');
       expect(html).toContain('Yesterday');
@@ -349,7 +355,7 @@ describe('notification templates', () => {
 
     it('renders multiple bucket sections when notifications span days', () => {
       const today = makeNotif(20, Date.now() - 5 * 60 * 1000);
-      const yesterday = makeNotif(21, Date.now() - 25 * ONE_DAY_MS / 24);
+      const yesterday = makeNotif(21, NOON_YESTERDAY);
       const html = renderNotificationPage([today, yesterday], 2);
       expect(html).toContain('data-bucket="today"');
       expect(html).toContain('data-bucket="yesterday"');
