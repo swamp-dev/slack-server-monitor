@@ -101,13 +101,28 @@ export function registerStatsCommand(app: App): void {
           ),
         );
 
-        // Disk usage
+        // Disk usage — split system mounts from attached storage (/mnt/* or labeled mounts)
         if (health.disks.length > 0) {
-          const diskLines = health.disks.map((d) => {
+          const diskLabels = config.server.diskLabels;
+          const isAttached = (mountPoint: string) =>
+            mountPoint in diskLabels || mountPoint.startsWith('/mnt/');
+
+          const formatDiskLine = (d: { mountPoint: string; percentUsed: number; used: string; size: string }) => {
             const diskStatus = d.percentUsed >= 90 ? 'error' : d.percentUsed >= 75 ? 'warn' : 'ok';
-            return `${statusEmoji(diskStatus)} \`${d.mountPoint}\` ${progressBar(d.percentUsed, 100)} ${String(Math.round(d.percentUsed))}%`;
-          });
-          blocks.push(section(`*Disk Usage*\n${diskLines.join('\n')}`));
+            const label = diskLabels[d.mountPoint];
+            const displayName = label ? `${label} \`${d.mountPoint}\`` : `\`${d.mountPoint}\``;
+            return `${statusEmoji(diskStatus)} ${displayName} ${progressBar(d.percentUsed, 100)} ${String(Math.round(d.percentUsed))}%  ${d.used} / ${d.size}`;
+          };
+
+          const systemDisks = health.disks.filter((d) => !isAttached(d.mountPoint));
+          const attachedDisks = health.disks.filter((d) => isAttached(d.mountPoint));
+
+          if (systemDisks.length > 0 && attachedDisks.length > 0) {
+            blocks.push(section(`*System Disk*\n${systemDisks.map(formatDiskLine).join('\n')}`));
+            blocks.push(section(`*Attached Storage*\n${attachedDisks.map(formatDiskLine).join('\n')}`));
+          } else {
+            blocks.push(section(`*Disk Usage*\n${health.disks.map(formatDiskLine).join('\n')}`));
+          }
         }
       } else {
         blocks.push(section('_Could not fetch system health._'));

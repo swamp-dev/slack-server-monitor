@@ -7,6 +7,9 @@ vi.mock('../../src/config/index.js', () => ({
       dbPath: ':memory:',
       conversationTtlHours: 24,
     },
+    server: {
+      diskLabels: {},
+    },
   },
 }));
 
@@ -115,5 +118,43 @@ describe('stats command', () => {
     await handler({ ack: vi.fn(), respond: vi.fn() });
 
     expect(mockCountUniqueUsers).toHaveBeenCalledWith(24);
+  });
+
+  it('should show disk sizes alongside percentage', async () => {
+    const app = { command: vi.fn() };
+    registerStatsCommand(app as never);
+
+    const ack = vi.fn();
+    const respond = vi.fn();
+    const handler = app.command.mock.calls[0][1];
+    await handler({ ack, respond });
+
+    const blocks = respond.mock.calls[0][0].blocks;
+    const allText = blocks
+      .filter((b: Record<string, unknown>) => b.type === 'section')
+      .map((b: Record<string, unknown>) => (b.text as Record<string, string>).text)
+      .join('\n');
+
+    // Disk size info should appear in format "used / size"
+    expect(allText).toContain('2T / 8T');   // /mnt/storage mock values
+    expect(allText).toContain('200G / 500G'); // / mock values
+  });
+
+  it('should split system and attached disks into separate sections when both present', async () => {
+    const app = { command: vi.fn() };
+    registerStatsCommand(app as never);
+
+    const ack = vi.fn();
+    const respond = vi.fn();
+    const handler = app.command.mock.calls[0][1];
+    await handler({ ack, respond });
+
+    const blocks = respond.mock.calls[0][0].blocks;
+    const sectionTexts = blocks
+      .filter((b: Record<string, unknown>) => b.type === 'section')
+      .map((b: Record<string, unknown>) => (b.text as Record<string, string>).text);
+
+    expect(sectionTexts.some((t: string) => t.includes('System Disk'))).toBe(true);
+    expect(sectionTexts.some((t: string) => t.includes('Attached Storage'))).toBe(true);
   });
 });

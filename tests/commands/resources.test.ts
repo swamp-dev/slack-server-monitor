@@ -16,6 +16,14 @@ vi.mock('../../src/utils/logger.js', () => ({
   },
 }));
 
+vi.mock('../../src/config/index.js', () => ({
+  config: {
+    server: {
+      diskLabels: {},
+    },
+  },
+}));
+
 // Import after mocks
 const { registerResourcesCommand, registerDiskCommand } = await import(
   '../../src/commands/resources.js'
