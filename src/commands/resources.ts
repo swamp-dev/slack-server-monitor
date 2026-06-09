@@ -1,5 +1,6 @@
 import type { App } from '@slack/bolt';
 import type { KnownBlock } from '@slack/types';
+import { config } from '../config/index.js';
 import { getSystemResources, getDiskUsage } from '../executors/system.js';
 import {
   header,
@@ -152,11 +153,15 @@ export function registerDiskCommand(app: App): void {
         divider(),
       ];
 
+      const diskLabels = config.server.diskLabels;
+
       for (const mount of mounts) {
         const status = getUsageStatus(mount.percentUsed);
+        const label = diskLabels[mount.mountPoint];
+        const displayName = label ? `${label} \`${mount.mountPoint}\`` : mount.mountPoint;
         blocks.push(
           sectionWithFields([
-            `*${mount.mountPoint}*\n${statusEmoji(status)} ${String(mount.percentUsed)}% used`,
+            `*${displayName}*\n${statusEmoji(status)} ${String(mount.percentUsed)}% used`,
             `*Size:* ${mount.size}\n*Used:* ${mount.used}\n*Free:* ${mount.available}`,
           ])
         );

@@ -64,6 +64,26 @@ export function parseContextOptions(value: string | undefined): { alias: string;
 }
 
 /**
+ * Parse disk labels from comma-separated mount:label pairs
+ * Example: "/mnt/storage:Storage Drive,/mnt/backupDrive:Backup Drive"
+ * Malformed entries (missing colon, empty mount, empty label) are silently skipped.
+ */
+export function parseDiskLabels(value: string | undefined): Record<string, string> {
+  if (!value) return {};
+  const labels: Record<string, string> = {};
+  for (const pair of value.split(',').map((s) => s.trim()).filter((s) => s.length > 0)) {
+    const colonIndex = pair.indexOf(':');
+    if (colonIndex === -1) continue;
+    const mount = pair.slice(0, colonIndex).trim();
+    const label = pair.slice(colonIndex + 1).trim();
+    if (mount && label) {
+      labels[mount] = label;
+    }
+  }
+  return labels;
+}
+
+/**
  * Parse GitHub repos from comma-separated owner/repo:description pairs
  * Example: "swamp-dev/ansible:Home server playbooks,swamp-dev/bot:Slack bot"
  */
@@ -124,6 +144,7 @@ function loadConfig(): Config {
       maxLogLines: parseIntWithDefault(process.env.MAX_LOG_LINES, 50),
       backupDirs: parseCommaSeparated(process.env.BACKUP_DIRS),
       s3BackupBucket: process.env.S3_BACKUP_BUCKET ?? undefined,
+      diskLabels: parseDiskLabels(process.env.DISK_LABELS),
     },
     logging: {
       level: (process.env.LOG_LEVEL ?? 'info') as 'debug' | 'info' | 'warn' | 'error',
