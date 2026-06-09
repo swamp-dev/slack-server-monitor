@@ -158,7 +158,7 @@ export function registerDiskCommand(app: App): void {
       for (const mount of mounts) {
         const status = getUsageStatus(mount.percentUsed);
         const label = diskLabels[mount.mountPoint];
-        const displayName = label ? `${label} (${mount.mountPoint})` : mount.mountPoint;
+        const displayName = label ? `${label} \`${mount.mountPoint}\`` : mount.mountPoint;
         blocks.push(
           sectionWithFields([
             `*${displayName}*\n${statusEmoji(status)} ${String(mount.percentUsed)}% used`,
