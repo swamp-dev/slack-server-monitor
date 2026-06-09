@@ -12,7 +12,7 @@ vi.stubEnv('SLACK_APP_TOKEN', 'xapp-test-token');
 vi.stubEnv('AUTHORIZED_USER_IDS', 'U12345678');
 
 // Now we can safely import the parsing functions
-const { parseCommaSeparated, parseIntWithDefault, parseContextOptions, parseGithubRepos } = await import(
+const { parseCommaSeparated, parseIntWithDefault, parseContextOptions, parseGithubRepos, parseDiskLabels } = await import(
   '../../src/config/index.js'
 );
 
@@ -208,6 +208,62 @@ describe('config parsing functions', () => {
         { repo: 'org/repo-a', description: 'A' },
         { repo: 'org/repo-b', description: 'B' },
       ]);
+    });
+  });
+
+  describe('parseDiskLabels', () => {
+    it('should parse mount:label pairs', () => {
+      const result = parseDiskLabels('/mnt/storage:Storage Drive');
+      expect(result).toEqual({ '/mnt/storage': 'Storage Drive' });
+    });
+
+    it('should parse multiple pairs', () => {
+      const result = parseDiskLabels('/mnt/storage:Storage Drive,/mnt/backupDrive:Backup Drive');
+      expect(result).toEqual({
+        '/mnt/storage': 'Storage Drive',
+        '/mnt/backupDrive': 'Backup Drive',
+      });
+    });
+
+    it('should handle empty string', () => {
+      expect(parseDiskLabels('')).toEqual({});
+    });
+
+    it('should handle undefined', () => {
+      expect(parseDiskLabels(undefined)).toEqual({});
+    });
+
+    it('should trim whitespace around mount and label', () => {
+      const result = parseDiskLabels('  /mnt/storage : Storage Drive  ');
+      expect(result).toEqual({ '/mnt/storage': 'Storage Drive' });
+    });
+
+    it('should skip malformed entries with no colon', () => {
+      const result = parseDiskLabels('/mnt/storage,/mnt/backupDrive:Backup Drive');
+      expect(result).toEqual({ '/mnt/backupDrive': 'Backup Drive' });
+    });
+
+    it('should skip entries with empty mount path', () => {
+      const result = parseDiskLabels(':Storage Drive,/mnt/backupDrive:Backup Drive');
+      expect(result).toEqual({ '/mnt/backupDrive': 'Backup Drive' });
+    });
+
+    it('should skip entries with empty label', () => {
+      const result = parseDiskLabels('/mnt/storage:,/mnt/backupDrive:Backup Drive');
+      expect(result).toEqual({ '/mnt/backupDrive': 'Backup Drive' });
+    });
+
+    it('should handle labels containing colons', () => {
+      const result = parseDiskLabels('/mnt/storage:Storage: Main Drive');
+      expect(result).toEqual({ '/mnt/storage': 'Storage: Main Drive' });
+    });
+
+    it('should filter empty entries from trailing commas', () => {
+      const result = parseDiskLabels('/mnt/storage:Storage Drive,,/mnt/backupDrive:Backup Drive,');
+      expect(result).toEqual({
+        '/mnt/storage': 'Storage Drive',
+        '/mnt/backupDrive': 'Backup Drive',
+      });
     });
   });
 

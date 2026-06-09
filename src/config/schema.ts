@@ -150,6 +150,8 @@ export const ConfigSchema = z.object({
     backupDirs: z.array(SafeBackupDirSchema).default([]),
     /** S3 bucket for backup verification */
     s3BackupBucket: z.string().optional(),
+    /** Friendly labels for specific mount points, e.g. { '/mnt/storage': 'Storage Drive' } */
+    diskLabels: z.record(z.string(), z.string()).default({}),
   }),
 
   logging: z.object({
