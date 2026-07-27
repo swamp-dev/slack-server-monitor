@@ -98,6 +98,55 @@ describe('plugin template helpers', () => {
       const css = pluginStyles('test', '.a { color: red; } .b { color: blue; }');
       expect(css).toContain('.plugin-test');
     });
+
+    it('should leave @media preludes intact while scoping the rules inside', () => {
+      const css = pluginStyles('test', '@media (max-width: 900px) { .card { color: red; } }');
+
+      // A mangled prelude like "@.plugin-test media (...)" is an invalid at-keyword
+      // token, and browsers drop the entire block.
+      expect(css).toContain('@media (max-width: 900px)');
+      expect(css).not.toContain('@.plugin-test');
+      expect(css).toContain('.plugin-test .card');
+    });
+
+    it('should leave @keyframes preludes intact and not scope percentage stops', () => {
+      const css = pluginStyles(
+        'test',
+        '@keyframes lift { 0% { transform: none; } 100% { transform: scale(2); } }'
+      );
+
+      expect(css).toContain('@keyframes lift');
+      expect(css).not.toContain('@.plugin-test');
+      expect(css).not.toContain('.plugin-test 0%');
+      expect(css).not.toContain('.plugin-test 100%');
+    });
+
+    it('should not scope from/to keyframe stops', () => {
+      const css = pluginStyles('test', '@keyframes fade { from { opacity: 0; } to { opacity: 1; } }');
+
+      expect(css).toContain('@keyframes fade');
+      expect(css).not.toContain('.plugin-test from');
+      expect(css).not.toContain('.plugin-test to');
+    });
+
+    it('should still scope top-level rules that follow an at-rule block', () => {
+      const css = pluginStyles(
+        'test',
+        '@media (min-width: 600px) { .a { color: red; } } .b { color: blue; }'
+      );
+
+      expect(css).toContain('@media (min-width: 600px)');
+      expect(css).toContain('.plugin-test .a');
+      expect(css).toContain('.plugin-test .b');
+    });
+
+    it('should leave @supports preludes intact', () => {
+      const css = pluginStyles('test', '@supports (display: grid) { .grid { display: grid; } }');
+
+      expect(css).toContain('@supports (display: grid)');
+      expect(css).not.toContain('@.plugin-test');
+      expect(css).toContain('.plugin-test .grid');
+    });
   });
 
   describe('pluginCard', () => {
