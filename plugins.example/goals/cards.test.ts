@@ -108,7 +108,7 @@ describe('goals cards', () => {
       const [a, b, c, d] = seed(todo.id, 4);
 
       // Drop A at index 2 of the list with A removed: [B, C, D] -> [B, C, A, D]
-      const result = moveCard(t.db, { cardId: a, toColumnId: todo.id, toIndex: 2 });
+      const result = moveCard(t.db, { cardId: a!, toColumnId: todo.id, toIndex: 2 });
 
       expect(cardOrder(t, todo.id)).toEqual([b, c, a, d]);
       expect(result.toIndex).toBe(2);
@@ -119,7 +119,7 @@ describe('goals cards', () => {
     it('moves a card up', () => {
       const [a, b, c, d] = seed(todo.id, 4);
 
-      moveCard(t.db, { cardId: d, toColumnId: todo.id, toIndex: 1 });
+      moveCard(t.db, { cardId: d!, toColumnId: todo.id, toIndex: 1 });
 
       expect(cardOrder(t, todo.id)).toEqual([a, d, b, c]);
     });
@@ -127,7 +127,7 @@ describe('goals cards', () => {
     it('moves a card to the top', () => {
       const [a, b, c] = seed(todo.id, 3);
 
-      moveCard(t.db, { cardId: c, toColumnId: todo.id, toIndex: 0 });
+      moveCard(t.db, { cardId: c!, toColumnId: todo.id, toIndex: 0 });
 
       expect(cardOrder(t, todo.id)).toEqual([c, a, b]);
     });
@@ -135,7 +135,7 @@ describe('goals cards', () => {
     it('clamps an index past the end to the tail', () => {
       const [a, b, c] = seed(todo.id, 3);
 
-      const result = moveCard(t.db, { cardId: a, toColumnId: todo.id, toIndex: 999 });
+      const result = moveCard(t.db, { cardId: a!, toColumnId: todo.id, toIndex: 999 });
 
       expect(cardOrder(t, todo.id)).toEqual([b, c, a]);
       expect(result.toIndex).toBe(2);
@@ -144,7 +144,7 @@ describe('goals cards', () => {
     it('is a no-op when dropped back where it started', () => {
       const [a, b, c] = seed(todo.id, 3);
 
-      moveCard(t.db, { cardId: b, toColumnId: todo.id, toIndex: 1 });
+      moveCard(t.db, { cardId: b!, toColumnId: todo.id, toIndex: 1 });
 
       expect(cardOrder(t, todo.id)).toEqual([a, b, c]);
       expect(cardPositions(t, todo.id)).toEqual([0, 1, 2]);
@@ -167,7 +167,7 @@ describe('goals cards', () => {
       const [a, b, c] = seed(todo.id, 3);
       const [x, y] = seed(doing.id, 2);
 
-      moveCard(t.db, { cardId: b, toColumnId: doing.id, toIndex: 1 });
+      moveCard(t.db, { cardId: b!, toColumnId: doing.id, toIndex: 1 });
 
       expect(cardOrder(t, todo.id)).toEqual([a, c]);
       expect(cardPositions(t, todo.id)).toEqual([0, 1]);

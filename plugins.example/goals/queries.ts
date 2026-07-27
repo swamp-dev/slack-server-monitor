@@ -23,7 +23,6 @@ import { getBoard, listBoardsFor } from './boards.js';
 import { listColumns, getColumn } from './columns.js';
 import { listMembers, getMember } from './members.js';
 import { listComments } from './comments.js';
-import { getCard } from './cards.js';
 
 interface CardJoinRow {
   id: number;

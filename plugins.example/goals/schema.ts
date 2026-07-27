@@ -136,13 +136,16 @@ export function migrateSchema(db: PluginDatabase): void {
 }
 
 /**
- * Create the shared starter board on first run.
- * Returns the existing default board's id if one is already present.
+ * Create the shared starter board on first run, so the page is never a dead end.
+ *
+ * Skips as soon as *any* board exists, not just a default one — otherwise
+ * deleting the starter board and making your own would resurrect it on the
+ * next restart. Returns the id of the board that already stands in for it.
  */
 export function seedDefaultBoard(db: PluginDatabase, ownerId: string): number {
   return db.transaction(() => {
     const existing = db
-      .prepare(`SELECT id FROM ${db.prefix}boards WHERE is_default = 1 ORDER BY id LIMIT 1`)
+      .prepare(`SELECT id FROM ${db.prefix}boards ORDER BY is_default DESC, id LIMIT 1`)
       .get() as { id: number } | undefined;
     if (existing) return existing.id;
 

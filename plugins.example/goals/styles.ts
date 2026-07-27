@@ -96,7 +96,8 @@ export const GOALS_CSS = `
 }
 .goals-board {
   display: flex;
-  align-items: flex-start;
+  /* Equal-height lanes: a ragged row of boxes reads as unfinished. */
+  align-items: stretch;
   gap: var(--space-4);
   min-height: 60vh;
 }
@@ -245,6 +246,13 @@ export const GOALS_CSS = `
   100% { transform: scale(1); }
 }
 
+/* Title and actions share a flex row, so the buttons can never sit on top of
+   the text at any card width. */
+.goals-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
 .goals-card-title {
   font-size: var(--text-sm);
   font-weight: 500;
@@ -252,6 +260,8 @@ export const GOALS_CSS = `
   margin: 0;
   color: var(--text);
   overflow-wrap: anywhere;
+  flex: 1;
+  min-width: 0;
 }
 .goals-card.is-done .goals-card-title {
   color: var(--text-muted);
@@ -317,11 +327,10 @@ export const GOALS_CSS = `
   color: var(--text-muted);
 }
 .goals-card-actions {
-  position: absolute;
-  top: 6px;
-  right: 6px;
   display: flex;
   gap: 2px;
+  flex-shrink: 0;
+  margin: -2px -2px 0 0;
   opacity: 0;
   transition: opacity 120ms ease;
 }
@@ -445,6 +454,13 @@ export const GOALS_CSS = `
   min-height: 96px;
   resize: vertical;
   line-height: 1.5;
+}
+/* A native colour input ignores the text padding and collapses, which
+   knocks its label out of line with the rest of the row. */
+.goals-input[type='color'] {
+  height: 38px;
+  padding: 4px;
+  cursor: pointer;
 }
 .goals-row {
   display: flex;

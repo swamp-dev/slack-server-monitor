@@ -17,7 +17,6 @@ import { renderPluginPage, escapeHtml, pluginAlert } from '../../src/web/plugin-
 import { logger } from '../../src/utils/logger.js';
 
 import {
-  GoalsError,
   isGoalsError,
   type Actor,
   type GoalsErrorCode,

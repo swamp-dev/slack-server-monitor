@@ -94,13 +94,15 @@ export function renderCard(card: CardView, column: ColumnView, today = todayIso(
     `<li class="goals-card${doneClass}" role="listitem" tabindex="0" ` +
     `data-card-id="${String(card.id)}" data-column-id="${String(card.columnId)}" ` +
     `data-title="${escapeHtml(card.title)}">` +
+    `<div class="goals-card-head">` +
+    `<p class="goals-card-title">${escapeHtml(card.title)}</p>` +
     `<div class="goals-card-actions">` +
     `<button type="button" class="goals-icon-btn goals-grip" tabindex="-1" aria-hidden="true" ` +
     `title="Drag to move">${icon('grid', 14)}</button>` +
     `<button type="button" class="goals-icon-btn goals-menu-trigger" aria-haspopup="menu" ` +
     `aria-expanded="false" aria-label="Move ${escapeHtml(card.title)}">${icon('arrow-right', 14)}</button>` +
     `</div>` +
-    `<p class="goals-card-title">${escapeHtml(card.title)}</p>` +
+    `</div>` +
     `<div class="goals-card-meta">${meta.join('')}</div>` +
     `</li>`
   );

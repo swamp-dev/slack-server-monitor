@@ -13,6 +13,7 @@ import { createColumn } from './columns.js';
 import { createCard } from './cards.js';
 import { createComment } from './comments.js';
 import { createMember } from './members.js';
+import { todayIso } from './queries.js';
 
 /** Fixed offsets from a caller-supplied "today" keep screenshots reproducible. */
 function shift(today: string, days: number): string {
@@ -21,7 +22,12 @@ function shift(today: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-export function seedScreenshotData(db: PluginDatabase, today = '2026-07-25'): void {
+/**
+ * `today` defaults to the real current date so the due-date states stay
+ * correct whenever the screenshots are taken — a hardcoded date silently
+ * turns the "due today" card into an overdue one as soon as it passes.
+ */
+export function seedScreenshotData(db: PluginDatabase, today = todayIso()): void {
   createSchema(db);
   migrateSchema(db);
 

@@ -183,5 +183,24 @@ describe('goals schema', () => {
         (raw.prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}boards`).get() as { c: number }).c
       ).toBe(1);
     });
+
+    it('does not resurrect a starter board once any board exists', () => {
+      createSchema(db);
+      const now = Date.now();
+      const existing = db
+        .prepare(
+          `INSERT INTO ${db.prefix}boards
+           (title, description, owner_id, visibility, is_default, archived, position, created_at, updated_at)
+           VALUES ('My own board', '', 'web:andy', 'shared', 0, 0, 0, ?, ?)`
+        )
+        .run(now, now);
+
+      const seeded = seedDefaultBoard(db, 'admin');
+
+      expect(seeded).toBe(Number(existing.lastInsertRowid));
+      expect(
+        (raw.prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}boards`).get() as { c: number }).c
+      ).toBe(1);
+    });
   });
 });
