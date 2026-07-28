@@ -78,6 +78,26 @@ describe('goals cards', () => {
         createCard(t.db, { columnId: 999, title: 'Card', createdBy: 'admin' })
       ).toThrow(GoalsError);
     });
+
+    it('refuses past the per-column cap', () => {
+      seed(todo.id, 500);
+
+      try {
+        createCard(t.db, { columnId: todo.id, title: 'One too many', createdBy: 'admin' });
+        expect.unreachable('expected a GoalsError');
+      } catch (err) {
+        expect((err as GoalsError).code).toBe('LIMIT_REACHED');
+      }
+    });
+
+    it('does not count archived cards toward the cap', () => {
+      const ids = seed(todo.id, 500);
+      setCardArchived(t.db, ids[0]!, true);
+
+      expect(() =>
+        createCard(t.db, { columnId: todo.id, title: 'Fits now', createdBy: 'admin' })
+      ).not.toThrow();
+    });
   });
 
   describe('renumberColumn', () => {

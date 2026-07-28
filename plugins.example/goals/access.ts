@@ -51,3 +51,15 @@ export function canDeleteComment(comment: Comment, actor: Actor): boolean {
 export function canHardDeleteMember(actor: Actor): boolean {
   return actor.isAdmin;
 }
+
+/**
+ * Linking a roster member to an app identity is an authorisation decision, not
+ * a cosmetic one: it decides whose `/goals add` auto-assigns to that member and
+ * who gets notified about their work. Admins only.
+ *
+ * Renaming, recolouring and archiving stay open to anyone signed in — this is a
+ * shared family roster, and fixing a typo should not need an admin.
+ */
+export function canRelinkMember(actor: Actor): boolean {
+  return actor.isAdmin;
+}

@@ -3,6 +3,7 @@ import type { PluginApp } from '../../src/plugins/plugin-app.js';
 import { isValidPlugin } from '../../src/plugins/types.js';
 import { makeTestDb, makeMockContext, type TestDb } from './test-support.js';
 import { captureRoutes } from './route-support.js';
+import { todayIso } from './queries.js';
 
 vi.mock('../../src/utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -184,11 +185,18 @@ describe('goals plugin manifest', () => {
       const cards = t.raw.prepare(`SELECT COUNT(*) AS c FROM ${t.db.prefix}cards`).get() as {
         c: number;
       };
+      // The fixture dates are relative to the real today, so that the "due
+      // today" card never silently ages into an overdue one.
       const overdue = t.raw
         .prepare(
-          `SELECT COUNT(*) AS c FROM ${t.db.prefix}cards WHERE due_date IS NOT NULL AND due_date < '2026-07-25'`
+          `SELECT COUNT(*) AS c FROM ${t.db.prefix}cards WHERE due_date IS NOT NULL AND due_date < ?`
         )
-        .get() as { c: number };
+        .get(todayIso()) as { c: number };
+
+      const dueToday = t.raw
+        .prepare(`SELECT COUNT(*) AS c FROM ${t.db.prefix}cards WHERE due_date = ?`)
+        .get(todayIso()) as { c: number };
+      expect(dueToday.c).toBeGreaterThan(0);
 
       expect(boards.c).toBeGreaterThanOrEqual(2);
       expect(cards.c).toBeGreaterThan(5);

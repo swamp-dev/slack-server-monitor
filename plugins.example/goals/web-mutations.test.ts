@@ -511,6 +511,103 @@ describe('goals mutation routes', () => {
       expect(getMember(t.db, res.jsonBody?.memberId as number)?.color).toBe('#06b6d4');
     });
 
+    it('lets anyone signed in fix a name or colour', async () => {
+      const member = createMember(t.db, { displayName: 'Robn', color: '#7c3aed', identity: null });
+
+      const res = makeRes(stranger);
+      await invoke(
+        'POST',
+        '/members/update',
+        makeAjaxReq({ memberId: member.id, name: 'Robin' }),
+        res,
+        ctx
+      );
+
+      expect(res.jsonBody?.ok).toBe(true);
+      expect(getMember(t.db, member.id)?.displayName).toBe('Robin');
+    });
+
+    it('403s a non-admin relinking someone to a different account', async () => {
+      const member = createMember(t.db, {
+        displayName: 'Ada',
+        color: '#7c3aed',
+        identity: 'web:ada',
+      });
+
+      const res = makeRes(stranger);
+      await invoke(
+        'POST',
+        '/members/update',
+        makeAjaxReq({ memberId: member.id, identity: 'U999' }),
+        res,
+        ctx
+      );
+
+      // Relinking decides whose /goals add auto-assigns to this member.
+      expect(res.statusCode).toBe(403);
+      expect(getMember(t.db, member.id)?.identity).toBe('web:ada');
+    });
+
+    it('403s a non-admin unlinking an account', async () => {
+      const member = createMember(t.db, {
+        displayName: 'Ada',
+        color: '#7c3aed',
+        identity: 'web:ada',
+      });
+
+      const res = makeRes(stranger);
+      await invoke(
+        'POST',
+        '/members/update',
+        makeAjaxReq({ memberId: member.id, identity: '' }),
+        res,
+        ctx
+      );
+
+      expect(res.statusCode).toBe(403);
+      expect(getMember(t.db, member.id)?.identity).toBe('web:ada');
+    });
+
+    it('lets an admin relink someone', async () => {
+      const member = createMember(t.db, {
+        displayName: 'Ada',
+        color: '#7c3aed',
+        identity: 'web:ada',
+      });
+
+      const res = makeRes(admin);
+      await invoke(
+        'POST',
+        '/members/update',
+        makeAjaxReq({ memberId: member.id, identity: 'U777' }),
+        res,
+        ctx
+      );
+
+      expect(res.jsonBody?.ok).toBe(true);
+      expect(getMember(t.db, member.id)?.identity).toBe('U777');
+    });
+
+    it('allows a non-admin update that resends the unchanged identity', async () => {
+      const member = createMember(t.db, {
+        displayName: 'Ada',
+        color: '#7c3aed',
+        identity: 'web:ada',
+      });
+
+      const res = makeRes(stranger);
+      await invoke(
+        'POST',
+        '/members/update',
+        makeAjaxReq({ memberId: member.id, name: 'Ada L', identity: 'web:ada' }),
+        res,
+        ctx
+      );
+
+      expect(res.jsonBody?.ok).toBe(true);
+      expect(getMember(t.db, member.id)?.displayName).toBe('Ada L');
+    });
+
     it('archives and restores someone', async () => {
       const member = createMember(t.db, { displayName: 'Ada', color: '#7c3aed', identity: null });
 

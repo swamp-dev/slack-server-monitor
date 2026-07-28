@@ -97,8 +97,11 @@ export function createCard(db: PluginDatabase, input: CreateCardInput): Card {
     const column = getColumn(db, input.columnId);
     if (!column) throw new GoalsError('NOT_FOUND', 'That column no longer exists');
 
+    // Archived cards do not occupy a slot — otherwise a column that has
+    // accumulated 500 archived cards becomes permanently un-addable-to while
+    // displaying as empty.
     const count = db
-      .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE column_id = ?`)
+      .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE column_id = ? AND archived = 0`)
       .get(column.id) as { c: number };
     if (count.c >= LIMITS.maxCardsPerColumn) {
       throw new GoalsError(
@@ -225,7 +228,9 @@ export function moveCard(db: PluginDatabase, input: MoveCardInput): MoveResult {
 
     if (fromColumnId !== target.id) {
       const count = db
-        .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE column_id = ?`)
+        .prepare(
+          `SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE column_id = ? AND archived = 0`
+        )
         .get(target.id) as { c: number };
       if (count.c >= LIMITS.maxCardsPerColumn) {
         throw new GoalsError(

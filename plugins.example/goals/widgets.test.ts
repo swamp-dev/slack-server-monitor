@@ -68,6 +68,33 @@ describe('goals dashboard widget', () => {
     expect(html).toContain('1 due today');
   });
 
+  it('leaves private boards out of a tile everyone can see', () => {
+    const shared = createBoard(t.db, { title: 'Shared', ownerId: 'admin', withDefaultColumns: false });
+    const sharedTodo = createColumn(t.db, { boardId: shared.id, name: 'Todo' });
+    createCard(t.db, { columnId: sharedTodo.id, title: 'Everyone sees this', createdBy: 'a' });
+
+    const priv = createBoard(t.db, {
+      title: 'Private',
+      ownerId: 'web:andy',
+      visibility: 'private',
+      withDefaultColumns: false,
+    });
+    const privTodo = createColumn(t.db, { boardId: priv.id, name: 'Todo' });
+    createCard(t.db, { columnId: privTodo.id, title: 'Secret', createdBy: 'web:andy' });
+    createCard(t.db, {
+      columnId: privTodo.id,
+      title: 'Secret and late',
+      createdBy: 'web:andy',
+      dueDate: '2026-07-01',
+    });
+
+    const html = getGoalsWidgets(TODAY)[0]?.html ?? '';
+
+    expect(html).toContain('>1</p>');
+    expect(html).toContain('open across 1 board(s)');
+    expect(html).toContain('nothing overdue');
+  });
+
   it('says when nothing is overdue', () => {
     const board = createBoard(t.db, { title: 'B', ownerId: 'admin', withDefaultColumns: false });
     createColumn(t.db, { boardId: board.id, name: 'Todo' });

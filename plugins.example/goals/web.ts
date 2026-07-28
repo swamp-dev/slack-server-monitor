@@ -35,7 +35,15 @@ import {
   parseClientId,
   parseBool,
 } from './validation.js';
-import { actorFrom, canViewBoard, canEditBoardContent, canAdminBoard, canDeleteComment, canHardDeleteMember } from './access.js';
+import {
+  actorFrom,
+  canViewBoard,
+  canEditBoardContent,
+  canAdminBoard,
+  canDeleteComment,
+  canHardDeleteMember,
+  canRelinkMember,
+} from './access.js';
 import { getBoard, createBoard, updateBoard, deleteBoard } from './boards.js';
 import { getColumn, createColumn, updateColumn, deleteColumn, countCardsInColumn } from './columns.js';
 import { getCard, createCard, updateCard, setCardArchived, deleteCard, moveCard } from './cards.js';
@@ -908,6 +916,20 @@ export function registerGoalsWebRoutes(router: PluginRouter): void {
         400,
         'INVALID',
         'An account looks like U012ABC or web:name',
+        '/p/goals/members'
+      );
+      return;
+    }
+
+    // Relinking decides whose /goals add auto-assigns here — see canRelinkMember.
+    const existing = getMember(ctx.db, memberId);
+    if (identity !== undefined && existing && identity !== existing.identity && !canRelinkMember(actor)) {
+      respondErr(
+        req,
+        res,
+        403,
+        'FORBIDDEN',
+        'Only an admin can change which account someone is linked to',
         '/p/goals/members'
       );
       return;

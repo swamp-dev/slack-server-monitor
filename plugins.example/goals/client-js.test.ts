@@ -84,6 +84,19 @@ describe('goals client script', () => {
       expect(script).toContain('function settle()');
       expect(script).toContain('pendingRefresh = false; scheduleRefresh();');
     });
+
+    it('survives the card permalink page, which has no board region', () => {
+      // The same script is served on /p/goals/card/:id, where #goals-region
+      // does not exist. Touching region.innerHTML there would throw.
+      expect(script).toContain('if (!region) { window.location.reload(); return; }');
+      expect(script).toContain('function inRegion(el)');
+      expect(script).toContain('if (!region) return [];');
+      expect(script).not.toContain('region.contains(cardEl)');
+    });
+
+    it('does not open an event stream on a page it cannot live-update', () => {
+      expect(script).toContain("typeof EventSource !== 'undefined' && region");
+    });
   });
 
   describe('accessibility', () => {

@@ -23,30 +23,46 @@ interface Totals {
   boards: number;
 }
 
+/**
+ * The dashboard renders one widget for everyone and getWidgets() has no
+ * request context, so there is no actor to filter by. Counting only shared
+ * boards keeps a private board's contents — including how many are overdue —
+ * out of a tile other people can see.
+ */
+const SHARED_BOARDS = (prefix: string) =>
+  `SELECT id FROM ${prefix}boards WHERE archived = 0 AND visibility = 'shared'`;
+
 function readTotals(database: PluginDatabase, today: string): Totals {
+  const shared = SHARED_BOARDS(database.prefix);
+
   const open = database
     .prepare(
       `SELECT COUNT(*) AS c FROM ${database.prefix}cards
-       WHERE archived = 0 AND completed_at IS NULL`
+       WHERE archived = 0 AND completed_at IS NULL AND board_id IN (${shared})`
     )
     .get() as { c: number };
 
   const overdue = database
     .prepare(
       `SELECT COUNT(*) AS c FROM ${database.prefix}cards
-       WHERE archived = 0 AND completed_at IS NULL AND due_date IS NOT NULL AND due_date < ?`
+       WHERE archived = 0 AND completed_at IS NULL AND due_date IS NOT NULL AND due_date < ?
+         AND board_id IN (${shared})`
     )
     .get(today) as { c: number };
 
   const dueToday = database
     .prepare(
       `SELECT COUNT(*) AS c FROM ${database.prefix}cards
-       WHERE archived = 0 AND completed_at IS NULL AND due_date = ?`
+       WHERE archived = 0 AND completed_at IS NULL AND due_date = ?
+         AND board_id IN (${shared})`
     )
     .get(today) as { c: number };
 
   const boards = database
-    .prepare(`SELECT COUNT(*) AS c FROM ${database.prefix}boards WHERE archived = 0`)
+    .prepare(
+      `SELECT COUNT(*) AS c FROM ${database.prefix}boards
+       WHERE archived = 0 AND visibility = 'shared'`
+    )
     .get() as { c: number };
 
   return { open: open.c, overdue: overdue.c, dueToday: dueToday.c, boards: boards.c };

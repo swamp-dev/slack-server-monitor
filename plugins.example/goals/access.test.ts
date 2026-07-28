@@ -8,6 +8,7 @@ import {
   canAdminBoard,
   canDeleteComment,
   canHardDeleteMember,
+  canRelinkMember,
 } from './access.js';
 
 function board(overrides: Partial<Board> = {}): Board {
@@ -132,6 +133,14 @@ describe('goals access', () => {
       expect(canHardDeleteMember(admin)).toBe(true);
       expect(canHardDeleteMember(owner)).toBe(false);
       expect(canHardDeleteMember(other)).toBe(false);
+    });
+  });
+
+  describe('canRelinkMember', () => {
+    it('is admin-only, because linking decides who a goal auto-assigns to', () => {
+      expect(canRelinkMember(admin)).toBe(true);
+      expect(canRelinkMember(owner)).toBe(false);
+      expect(canRelinkMember(other)).toBe(false);
     });
   });
 });
