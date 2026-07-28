@@ -268,6 +268,32 @@ Import from `../src/plugins/index.js`:
 | `sanitizeUrl(url)` | URL allowlist (http/https/relative only) |
 | `formatTimestamp(ts)` | Human-readable date/time |
 
+### Styling a plugin page
+
+Pass your CSS to `renderPluginPage({ styles })` and write selectors **unscoped** —
+each one is prefixed with `.plugin-{name}` for you:
+
+```css
+.my-widget { padding: var(--space-4); }      /* -> .plugin-myplugin .my-widget */
+
+@media (max-width: 640px) {
+  .my-widget { padding: var(--space-2); }    /* prelude kept, selector scoped */
+}
+```
+
+At-rule preludes (`@media`, `@keyframes`, `@supports`) are passed through
+untouched and the selectors nested inside them are scoped, so responsive rules
+and animations work. Keyframe stops (`0%`, `from`, `to`) are left alone. Don't
+write `.plugin-{name}` yourself — it would end up doubled.
+
+Use the theme's CSS variables (`--bg`, `--surface`, `--card-bg`, `--border`,
+`--text`, `--text-muted`, `--accent`, `--space-*`, `--radius-*`, `--text-*` and
+the semantic colours) so your page follows the reader's light/dark choice.
+
+Anything your script creates at runtime and appends to `document.body` lands
+**outside** the scoped wrapper and won't pick up these styles. Append it to an
+element inside your own page instead.
+
 ## Security
 
 **Plugins run with full process privileges.** Only install plugins from trusted sources.

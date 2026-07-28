@@ -55,27 +55,46 @@ export function renderPluginPage(opts: PluginPageOptions): string {
 
 /**
  * Scope CSS rules under a plugin-specific class.
- * Prepends `.plugin-{name}` to each top-level rule selector.
+ * Prepends `.plugin-{name}` to each rule selector.
  *
- * Limitation: Only handles flat selectors. At-rules (@media, @keyframes)
- * should be written with the plugin class manually:
- *   `@media (...) { .plugin-name .card { ... } }`
+ * At-rule preludes (`@media`, `@keyframes`, `@supports`) are passed through
+ * untouched — rewriting one produces an invalid at-keyword token and browsers
+ * drop the entire block. Selectors nested inside them are still scoped, so
+ * `@media (...) { .card { ... } }` becomes
+ * `@media (...) { .plugin-name .card { ... } }`.
+ *
+ * Limitation: only handles flat selectors. Keyframe stops (`0%`, `from`, `to`)
+ * are recognised and left alone.
  */
 export function pluginStyles(pluginName: string, css: string): string {
   const prefix = `.plugin-${pluginName}`;
 
-  // Skip at-rules — they need manual scoping
-  return css.replace(/([^{}@]+)\{/g, (_match, selector: string) => {
-    // Don't scope if inside an at-rule block (contains % for keyframes)
+  return css.replace(/([^{}]*)\{/g, (_match, block: string) => {
+    // Statement at-rules (`@import url(...);`) are not selectors and may sit in
+    // front of one. Keep everything up to the last `;` verbatim and treat only
+    // the tail as the selector.
+    const lastSemicolon = block.lastIndexOf(';');
+    const leading = lastSemicolon === -1 ? '' : block.slice(0, lastSemicolon + 1);
+    const selector = block.slice(lastSemicolon + 1);
     const trimmed = selector.trim();
-    if (/^\d+%$/.test(trimmed) || trimmed === 'from' || trimmed === 'to') {
-      return `${selector}{`;
+
+    // At-rule prelude — must reach the browser byte-for-byte.
+    if (trimmed.startsWith('@')) {
+      return `${leading}${selector}{`;
     }
-    const scoped = trimmed
-      .split(',')
-      .map((s: string) => `${prefix} ${s.trim()}`)
-      .join(', ');
-    return `${scoped} {`;
+
+    const parts = trimmed.split(',').map((s: string) => s.trim());
+
+    // Keyframe stops ("0%", "from", "to", "0%, 100%") are not selectors.
+    const isKeyframeStops = parts.every(
+      (s: string) => /^\d+(?:\.\d+)?%$/.test(s) || s === 'from' || s === 'to'
+    );
+    if (isKeyframeStops) {
+      return `${leading}${selector}{`;
+    }
+
+    const scoped = parts.map((s: string) => `${prefix} ${s}`).join(', ');
+    return `${leading}${scoped} {`;
   });
 }
 

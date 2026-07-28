@@ -174,6 +174,12 @@ export async function startScreenshotServer(): Promise<number> {
   return new Promise((resolve, reject) => {
     const app = express();
 
+    // Mirror the real server's body parsing (src/web/server.ts), so a plugin's
+    // POST routes behave here the same way they do in the app. Without these,
+    // req.body is undefined and every plugin mutation rejects as malformed.
+    app.use(express.urlencoded({ extended: false }));
+    app.use(express.json());
+
     // Set a consistent userId for plugin routes (plugins read res.locals.userId)
     app.use((_req, res, next) => {
       res.locals.userId = 'web-user';
