@@ -2,9 +2,8 @@
  * Composite read models — the shapes the views actually render.
  *
  * Kept separate from the per-entity stores so a page is one call, and so the
- * joins live in one place. Note the aliased joins: PluginDatabase's SQL
- * validation reads an identifier straight after ON as a table name, so
- * `ON m.id = c.assignee_id` is safe but `ON lower(x) = ?` is not.
+ * joins live in one place. Every prepare() declares the tables it reads —
+ * including the ones only reached through CARD_SELECT's join and subquery.
  */
 import type { PluginDatabase } from '../../src/services/plugin-database.js';
 import type {
@@ -81,6 +80,13 @@ function mapCardView(row: CardJoinRow): CardView {
  * `extraColumns` is appended to the select list (e.g. a joined column name);
  * `extraJoins` is appended after the assignee join.
  */
+/** Tables CARD_SELECT touches, for PluginDatabase's table declaration. */
+const CARD_SELECT_TABLES = (prefix: string): string[] => [
+  `${prefix}cards`,
+  `${prefix}members`,
+  `${prefix}comments`,
+];
+
 const CARD_SELECT = (prefix: string, extraColumns = '', extraJoins = '') => `
   SELECT c.*,
          m.id AS member_id,
@@ -105,14 +111,14 @@ export function todayIso(now: Date = new Date()): string {
 
 export function boardStats(db: PluginDatabase, boardId: number, today = todayIso()): BoardStats {
   const total = db
-    .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE board_id = ? AND archived = 0`)
+    .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE board_id = ? AND archived = 0`, [`${db.prefix}cards`])
     .get(boardId) as { c: number };
 
   const done = db
     .prepare(
       `SELECT COUNT(*) AS c FROM ${db.prefix}cards
        WHERE board_id = ? AND archived = 0 AND completed_at IS NOT NULL`
-    )
+    , [`${db.prefix}cards`])
     .get(boardId) as { c: number };
 
   const overdue = db
@@ -120,7 +126,7 @@ export function boardStats(db: PluginDatabase, boardId: number, today = todayIso
       `SELECT COUNT(*) AS c FROM ${db.prefix}cards
        WHERE board_id = ? AND archived = 0 AND completed_at IS NULL
          AND due_date IS NOT NULL AND due_date < ?`
-    )
+    , [`${db.prefix}cards`])
     .get(boardId, today) as { c: number };
 
   return { total: total.c, done: done.c, overdue: overdue.c };
@@ -130,7 +136,7 @@ export function boardStats(db: PluginDatabase, boardId: number, today = todayIso
 export function loadIndexView(db: PluginDatabase, actor: Actor, today = todayIso()): BoardSummary[] {
   return listBoardsFor(db, actor).map((board) => {
     const columns = db
-      .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}columns WHERE board_id = ?`)
+      .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}columns WHERE board_id = ?`, [`${db.prefix}columns`])
       .get(board.id) as { c: number };
 
     return {
@@ -153,7 +159,8 @@ export function loadBoardView(
   const rows = db
     .prepare(
       `${CARD_SELECT(db.prefix)} WHERE c.board_id = ? AND c.archived = 0
-       ORDER BY c.position, c.id`
+       ORDER BY c.position, c.id`,
+      CARD_SELECT_TABLES(db.prefix)
     )
     .all(boardId) as CardJoinRow[];
 
@@ -183,9 +190,9 @@ export function loadBoardView(
 
 /** One card, with its comments and the pickers the editor needs. */
 export function loadCardDetail(db: PluginDatabase, cardId: number): CardDetail | null {
-  const row = db.prepare(`${CARD_SELECT(db.prefix)} WHERE c.id = ?`).get(cardId) as
-    | CardJoinRow
-    | undefined;
+  const row = db
+    .prepare(`${CARD_SELECT(db.prefix)} WHERE c.id = ?`, CARD_SELECT_TABLES(db.prefix))
+    .get(cardId) as CardJoinRow | undefined;
   if (!row) return null;
 
   const card = mapCardView(row);
@@ -225,7 +232,8 @@ export function listOpenCards(db: PluginDatabase, actor: Actor, limit = 25): Ope
         `JOIN ${db.prefix}columns col ON col.id = c.column_id`
       )}
        WHERE c.archived = 0 AND col.is_done = 0
-       ORDER BY c.position, c.id`
+       ORDER BY c.position, c.id`,
+      [...CARD_SELECT_TABLES(db.prefix), `${db.prefix}columns`]
     )
     .all() as (CardJoinRow & { column_name: string })[];
 

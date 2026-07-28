@@ -45,7 +45,7 @@ export function createMember(db: PluginDatabase, input: CreateMemberInput): Memb
       .prepare(
         `INSERT INTO ${db.prefix}members (display_name, color, identity, archived, created_at)
          VALUES (?, ?, ?, 0, ?)`
-      )
+      , [`${db.prefix}members`])
       .run(input.displayName, input.color, input.identity, Date.now());
 
     const member = getMember(db, Number(result.lastInsertRowid));
@@ -70,20 +70,20 @@ export function listMembers(db: PluginDatabase, options: ListMembersOptions = {}
     ? (db
         .prepare(
           `SELECT * FROM ${db.prefix}members ORDER BY archived, display_name COLLATE NOCASE, id`
-        )
+        , [`${db.prefix}members`])
         .all() as MemberRow[])
     : (db
         .prepare(
           `SELECT * FROM ${db.prefix}members WHERE archived = 0
            ORDER BY display_name COLLATE NOCASE, id`
-        )
+        , [`${db.prefix}members`])
         .all() as MemberRow[]);
 
   return rows.map(mapMember);
 }
 
 export function getMember(db: PluginDatabase, id: number): Member | null {
-  const row = db.prepare(`SELECT * FROM ${db.prefix}members WHERE id = ?`).get(id) as
+  const row = db.prepare(`SELECT * FROM ${db.prefix}members WHERE id = ?`, [`${db.prefix}members`]).get(id) as
     | MemberRow
     | undefined;
   return row ? mapMember(row) : null;
@@ -94,7 +94,7 @@ export function findMemberByIdentity(db: PluginDatabase, identity: string): Memb
   if (identity === '') return null;
 
   const row = db
-    .prepare(`SELECT * FROM ${db.prefix}members WHERE identity = ? AND archived = 0`)
+    .prepare(`SELECT * FROM ${db.prefix}members WHERE identity = ? AND archived = 0`, [`${db.prefix}members`])
     .get(identity) as MemberRow | undefined;
   return row ? mapMember(row) : null;
 }
@@ -120,7 +120,7 @@ export function updateMember(
   try {
     db.prepare(
       `UPDATE ${db.prefix}members SET display_name = ?, color = ?, identity = ? WHERE id = ?`
-    ).run(displayName, color, identity, id);
+    , [`${db.prefix}members`]).run(displayName, color, identity, id);
   } catch (err) {
     if (isUniqueViolation(err)) {
       throw new GoalsError('IDENTITY_TAKEN', 'Another member is already linked to that identity');
@@ -137,7 +137,7 @@ export function setMemberArchived(db: PluginDatabase, id: number, archived: bool
   const existing = getMember(db, id);
   if (!existing) throw new GoalsError('NOT_FOUND', 'That member no longer exists');
 
-  db.prepare(`UPDATE ${db.prefix}members SET archived = ? WHERE id = ?`).run(archived ? 1 : 0, id);
+  db.prepare(`UPDATE ${db.prefix}members SET archived = ? WHERE id = ?`, [`${db.prefix}members`]).run(archived ? 1 : 0, id);
 
   const updated = getMember(db, id);
   if (!updated) throw new GoalsError('NOT_FOUND', 'That member no longer exists');
@@ -151,10 +151,10 @@ export interface MemberReferences {
 
 export function countMemberReferences(db: PluginDatabase, id: number): MemberReferences {
   const cards = db
-    .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE assignee_id = ?`)
+    .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE assignee_id = ?`, [`${db.prefix}cards`])
     .get(id) as { c: number };
   const comments = db
-    .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}comments WHERE author_member_id = ?`)
+    .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}comments WHERE author_member_id = ?`, [`${db.prefix}comments`])
     .get(id) as { c: number };
 
   return { cards: cards.c, comments: comments.c };
@@ -177,6 +177,6 @@ export function hardDeleteMember(db: PluginDatabase, id: number): void {
       );
     }
 
-    db.prepare(`DELETE FROM ${db.prefix}members WHERE id = ?`).run(id);
+    db.prepare(`DELETE FROM ${db.prefix}members WHERE id = ?`, [`${db.prefix}members`]).run(id);
   });
 }

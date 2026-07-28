@@ -33,13 +33,13 @@ function mapComment(row: CommentRow): Comment {
 
 export function listComments(db: PluginDatabase, cardId: number): Comment[] {
   const rows = db
-    .prepare(`SELECT * FROM ${db.prefix}comments WHERE card_id = ? ORDER BY created_at, id`)
+    .prepare(`SELECT * FROM ${db.prefix}comments WHERE card_id = ? ORDER BY created_at, id`, [`${db.prefix}comments`])
     .all(cardId) as CommentRow[];
   return rows.map(mapComment);
 }
 
 export function getComment(db: PluginDatabase, id: number): Comment | null {
-  const row = db.prepare(`SELECT * FROM ${db.prefix}comments WHERE id = ?`).get(id) as
+  const row = db.prepare(`SELECT * FROM ${db.prefix}comments WHERE id = ?`, [`${db.prefix}comments`]).get(id) as
     | CommentRow
     | undefined;
   return row ? mapComment(row) : null;
@@ -47,7 +47,7 @@ export function getComment(db: PluginDatabase, id: number): Comment | null {
 
 export function countComments(db: PluginDatabase, cardId: number): number {
   const row = db
-    .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}comments WHERE card_id = ?`)
+    .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}comments WHERE card_id = ?`, [`${db.prefix}comments`])
     .get(cardId) as { c: number };
   return row.c;
 }
@@ -60,7 +60,7 @@ export interface CreateCommentInput {
 
 export function createComment(db: PluginDatabase, input: CreateCommentInput): Comment {
   return db.transaction(() => {
-    const card = db.prepare(`SELECT id FROM ${db.prefix}cards WHERE id = ?`).get(input.cardId) as
+    const card = db.prepare(`SELECT id FROM ${db.prefix}cards WHERE id = ?`, [`${db.prefix}cards`]).get(input.cardId) as
       | { id: number }
       | undefined;
     if (!card) throw new GoalsError('NOT_FOUND', 'That card no longer exists');
@@ -78,7 +78,7 @@ export function createComment(db: PluginDatabase, input: CreateCommentInput): Co
       .prepare(
         `INSERT INTO ${db.prefix}comments (card_id, author_id, author_member_id, body, created_at)
          VALUES (?, ?, ?, ?, ?)`
-      )
+      , [`${db.prefix}comments`])
       .run(input.cardId, input.authorId, member?.id ?? null, input.body, Date.now());
 
     const comment = getComment(db, Number(result.lastInsertRowid));
@@ -91,5 +91,5 @@ export function deleteComment(db: PluginDatabase, id: number): void {
   const existing = getComment(db, id);
   if (!existing) throw new GoalsError('NOT_FOUND', 'That comment no longer exists');
 
-  db.prepare(`DELETE FROM ${db.prefix}comments WHERE id = ?`).run(id);
+  db.prepare(`DELETE FROM ${db.prefix}comments WHERE id = ?`, [`${db.prefix}comments`]).run(id);
 }

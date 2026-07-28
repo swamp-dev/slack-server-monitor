@@ -38,7 +38,8 @@ function readTotals(database: PluginDatabase, today: string): Totals {
   const open = database
     .prepare(
       `SELECT COUNT(*) AS c FROM ${database.prefix}cards
-       WHERE archived = 0 AND completed_at IS NULL AND board_id IN (${shared})`
+       WHERE archived = 0 AND completed_at IS NULL AND board_id IN (${shared})`,
+      [`${database.prefix}cards`, `${database.prefix}boards`]
     )
     .get() as { c: number };
 
@@ -46,7 +47,8 @@ function readTotals(database: PluginDatabase, today: string): Totals {
     .prepare(
       `SELECT COUNT(*) AS c FROM ${database.prefix}cards
        WHERE archived = 0 AND completed_at IS NULL AND due_date IS NOT NULL AND due_date < ?
-         AND board_id IN (${shared})`
+         AND board_id IN (${shared})`,
+      [`${database.prefix}cards`, `${database.prefix}boards`]
     )
     .get(today) as { c: number };
 
@@ -54,7 +56,8 @@ function readTotals(database: PluginDatabase, today: string): Totals {
     .prepare(
       `SELECT COUNT(*) AS c FROM ${database.prefix}cards
        WHERE archived = 0 AND completed_at IS NULL AND due_date = ?
-         AND board_id IN (${shared})`
+         AND board_id IN (${shared})`,
+      [`${database.prefix}cards`, `${database.prefix}boards`]
     )
     .get(today) as { c: number };
 
@@ -62,7 +65,7 @@ function readTotals(database: PluginDatabase, today: string): Totals {
     .prepare(
       `SELECT COUNT(*) AS c FROM ${database.prefix}boards
        WHERE archived = 0 AND visibility = 'shared'`
-    )
+    , [`${database.prefix}boards`])
     .get() as { c: number };
 
   return { open: open.c, overdue: overdue.c, dueToday: dueToday.c, boards: boards.c };

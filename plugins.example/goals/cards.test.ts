@@ -259,6 +259,28 @@ describe('goals cards', () => {
       expect(() => moveCard(t.db, { cardId: a!, toColumnId: 999, toIndex: 0 })).toThrow(GoalsError);
     });
 
+    it('refuses to move into a column that is already full', () => {
+      seed(doing.id, 500);
+      const [a] = seed(todo.id, 1);
+
+      try {
+        moveCard(t.db, { cardId: a!, toColumnId: doing.id, toIndex: 0 });
+        expect.unreachable('expected a GoalsError');
+      } catch (err) {
+        expect((err as GoalsError).code).toBe('LIMIT_REACHED');
+      }
+      expect(getCard(t.db, a!)?.columnId).toBe(todo.id);
+    });
+
+    it('does not count archived cards toward the destination limit', () => {
+      const ids = seed(doing.id, 500);
+      setCardArchived(t.db, ids[0]!, true);
+      const [a] = seed(todo.id, 1);
+
+      expect(() => moveCard(t.db, { cardId: a!, toColumnId: doing.id, toIndex: 0 })).not.toThrow();
+      expect(getCard(t.db, a!)?.columnId).toBe(doing.id);
+    });
+
     it('refuses to move an archived card', () => {
       const [a] = seed(todo.id, 1);
       setCardArchived(t.db, a!, true);

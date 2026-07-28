@@ -32,21 +32,33 @@ function mapColumn(row: ColumnRow): Column {
 
 export function listColumns(db: PluginDatabase, boardId: number): Column[] {
   const rows = db
-    .prepare(`SELECT * FROM ${db.prefix}columns WHERE board_id = ? ORDER BY position, id`)
+    .prepare(`SELECT * FROM ${db.prefix}columns WHERE board_id = ? ORDER BY position, id`, [`${db.prefix}columns`])
     .all(boardId) as ColumnRow[];
   return rows.map(mapColumn);
 }
 
 export function getColumn(db: PluginDatabase, id: number): Column | null {
-  const row = db.prepare(`SELECT * FROM ${db.prefix}columns WHERE id = ?`).get(id) as
+  const row = db.prepare(`SELECT * FROM ${db.prefix}columns WHERE id = ?`, [`${db.prefix}columns`]).get(id) as
     | ColumnRow
     | undefined;
   return row ? mapColumn(row) : null;
 }
 
+/**
+ * Cards a viewer can actually see in this column.
+ *
+ * Archived cards are excluded deliberately: this count is compared against the
+ * client's `expectedCardCount` when deleting a column, and the client counts
+ * the cards it rendered — which never include archived ones. Counting them here
+ * would make every delete fail with COUNT_MISMATCH, and reloading would not
+ * help, because the mismatch is permanent.
+ */
 export function countCardsInColumn(db: PluginDatabase, columnId: number): number {
   const row = db
-    .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE column_id = ?`)
+    .prepare(
+      `SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE column_id = ? AND archived = 0`,
+      [`${db.prefix}cards`]
+    )
     .get(columnId) as { c: number };
   return row.c;
 }
@@ -73,7 +85,7 @@ export function createColumn(db: PluginDatabase, input: CreateColumnInput): Colu
       .prepare(
         `INSERT INTO ${db.prefix}columns (board_id, name, color, is_done, wip_limit, position, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
+      , [`${db.prefix}columns`])
       .run(
         input.boardId,
         input.name,
@@ -106,7 +118,7 @@ export function updateColumn(db: PluginDatabase, id: number, input: UpdateColumn
 
     db.prepare(
       `UPDATE ${db.prefix}columns SET name = ?, color = ?, is_done = ?, wip_limit = ? WHERE id = ?`
-    ).run(
+    , [`${db.prefix}columns`]).run(
       input.name ?? existing.name,
       input.color ?? existing.color,
       isDone ? 1 : 0,
@@ -120,9 +132,9 @@ export function updateColumn(db: PluginDatabase, id: number, input: UpdateColumn
       if (isDone) {
         db.prepare(
           `UPDATE ${db.prefix}cards SET completed_at = ? WHERE column_id = ? AND completed_at IS NULL`
-        ).run(Date.now(), id);
+        , [`${db.prefix}cards`]).run(Date.now(), id);
       } else {
-        db.prepare(`UPDATE ${db.prefix}cards SET completed_at = NULL WHERE column_id = ?`).run(id);
+        db.prepare(`UPDATE ${db.prefix}cards SET completed_at = NULL WHERE column_id = ?`, [`${db.prefix}cards`]).run(id);
       }
     }
 
@@ -149,7 +161,7 @@ export function reorderColumns(db: PluginDatabase, boardId: number, orderedIds: 
       );
     }
 
-    const update = db.prepare(`UPDATE ${db.prefix}columns SET position = ? WHERE id = ?`);
+    const update = db.prepare(`UPDATE ${db.prefix}columns SET position = ? WHERE id = ?`, [`${db.prefix}columns`]);
     orderedIds.forEach((id, index) => update.run(index, id));
   });
 }
@@ -218,17 +230,17 @@ export function deleteColumn(db: PluginDatabase, input: DeleteColumnInput): Dele
         db
           .prepare(
             `SELECT id FROM ${db.prefix}cards WHERE column_id = ? ORDER BY position, id`
-          )
+          , [`${db.prefix}cards`])
           .all(column.id) as { id: number }[]
       ).map((r) => r.id);
 
       const tail = db
-        .prepare(`SELECT MAX(position) AS m FROM ${db.prefix}cards WHERE column_id = ?`)
+        .prepare(`SELECT MAX(position) AS m FROM ${db.prefix}cards WHERE column_id = ?`, [`${db.prefix}cards`])
         .get(target.id) as { m: number | null };
 
       const update = db.prepare(
         `UPDATE ${db.prefix}cards SET column_id = ?, position = ?, updated_at = ? WHERE id = ?`
-      );
+      , [`${db.prefix}cards`]);
       const now = Date.now();
       let next = (tail.m ?? -1) + 1;
       for (const id of movingIds) {
@@ -241,27 +253,27 @@ export function deleteColumn(db: PluginDatabase, input: DeleteColumnInput): Dele
         if (target.isDone) {
           db.prepare(
             `UPDATE ${db.prefix}cards SET completed_at = ? WHERE column_id = ? AND completed_at IS NULL`
-          ).run(now, target.id);
+          , [`${db.prefix}cards`]).run(now, target.id);
         } else {
           db.prepare(
             `UPDATE ${db.prefix}cards SET completed_at = NULL WHERE column_id = ?`
-          ).run(target.id);
+          , [`${db.prefix}cards`]).run(target.id);
         }
       }
     } else {
       db.prepare(
         `DELETE FROM ${db.prefix}comments
          WHERE card_id IN (SELECT id FROM ${db.prefix}cards WHERE column_id = ?)`
-      ).run(column.id);
-      const result = db.prepare(`DELETE FROM ${db.prefix}cards WHERE column_id = ?`).run(column.id);
+      , [`${db.prefix}comments`, `${db.prefix}cards`]).run(column.id);
+      const result = db.prepare(`DELETE FROM ${db.prefix}cards WHERE column_id = ?`, [`${db.prefix}cards`]).run(column.id);
       deleted = result.changes;
     }
 
-    db.prepare(`DELETE FROM ${db.prefix}columns WHERE id = ?`).run(column.id);
+    db.prepare(`DELETE FROM ${db.prefix}columns WHERE id = ?`, [`${db.prefix}columns`]).run(column.id);
 
     // Close the gap the removed column left.
     const remaining = listColumns(db, column.boardId);
-    const update = db.prepare(`UPDATE ${db.prefix}columns SET position = ? WHERE id = ?`);
+    const update = db.prepare(`UPDATE ${db.prefix}columns SET position = ? WHERE id = ?`, [`${db.prefix}columns`]);
     remaining.forEach((c, index) => update.run(index, c.id));
 
     return { boardId: column.boardId, moved, deleted };

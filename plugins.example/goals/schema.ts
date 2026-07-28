@@ -1,8 +1,9 @@
 /**
  * Goals plugin database schema.
  *
- * Every table is prefixed with `db.prefix` (plugin_goals_) — PluginDatabase
- * validates each statement and throws otherwise.
+ * Every table is prefixed with `db.prefix` (plugin_goals_). Each `prepare()`
+ * call declares the tables it touches as its second argument; PluginDatabase
+ * validates those names against the prefix and throws otherwise.
  *
  * Foreign keys are declarative documentation only: `PRAGMA foreign_keys` is
  * off, and turning it on would be a connection-global change to a file shared
@@ -145,7 +146,7 @@ export function migrateSchema(db: PluginDatabase): void {
 export function seedDefaultBoard(db: PluginDatabase, ownerId: string): number {
   return db.transaction(() => {
     const existing = db
-      .prepare(`SELECT id FROM ${db.prefix}boards ORDER BY is_default DESC, id LIMIT 1`)
+      .prepare(`SELECT id FROM ${db.prefix}boards ORDER BY is_default DESC, id LIMIT 1`, [`${db.prefix}boards`])
       .get() as { id: number } | undefined;
     if (existing) return existing.id;
 
@@ -155,7 +156,7 @@ export function seedDefaultBoard(db: PluginDatabase, ownerId: string): number {
         `INSERT INTO ${db.prefix}boards
          (title, description, owner_id, visibility, is_default, archived, position, created_at, updated_at)
          VALUES (?, ?, ?, 'shared', 1, 0, 0, ?, ?)`
-      )
+      , [`${db.prefix}boards`])
       .run('Family goals', 'Shared plans for everyone', ownerId, now, now);
 
     const boardId = Number(result.lastInsertRowid);
@@ -163,7 +164,7 @@ export function seedDefaultBoard(db: PluginDatabase, ownerId: string): number {
     const insertColumn = db.prepare(
       `INSERT INTO ${db.prefix}columns (board_id, name, color, is_done, wip_limit, position, created_at)
        VALUES (?, ?, ?, ?, NULL, ?, ?)`
-    );
+    , [`${db.prefix}columns`]);
     DEFAULT_COLUMNS.forEach((column, index) => {
       insertColumn.run(boardId, column.name, column.color, column.isDone ? 1 : 0, index, now);
     });

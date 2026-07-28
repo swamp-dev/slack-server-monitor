@@ -11,7 +11,7 @@ import {
   deleteColumn,
   countCardsInColumn,
 } from './columns.js';
-import { createCard, getCard } from './cards.js';
+import { createCard, getCard, setCardArchived } from './cards.js';
 import { createComment, listComments } from './comments.js';
 
 describe('goals columns', () => {
@@ -269,11 +269,33 @@ describe('goals columns', () => {
   });
 
   describe('countCardsInColumn', () => {
-    it('counts archived cards too, so the delete guard cannot be dodged', () => {
+    it('counts the cards a viewer can see', () => {
       const column = createColumn(t.db, { boardId: board.id, name: 'A' });
       createCard(t.db, { columnId: column.id, title: 'One', createdBy: 'a' });
 
       expect(countCardsInColumn(t.db, column.id)).toBe(1);
+    });
+
+    it('excludes archived cards, which the client never counted either', () => {
+      const column = createColumn(t.db, { boardId: board.id, name: 'A' });
+      const card = createCard(t.db, { columnId: column.id, title: 'Hidden', createdBy: 'a' });
+      setCardArchived(t.db, card.id, true);
+
+      expect(countCardsInColumn(t.db, column.id)).toBe(0);
+    });
+
+    it('lets a column with archived cards still be deleted', () => {
+      const doomed = createColumn(t.db, { boardId: board.id, name: 'Doomed' });
+      createColumn(t.db, { boardId: board.id, name: 'Keeper' });
+      const card = createCard(t.db, { columnId: doomed.id, title: 'Hidden', createdBy: 'a' });
+      setCardArchived(t.db, card.id, true);
+
+      // The client sends the count it rendered, which is 0. Counting the
+      // archived card server-side would make this permanently un-deletable.
+      expect(() =>
+        deleteColumn(t.db, { columnId: doomed.id, mode: 'delete', expectedCardCount: 0 })
+      ).not.toThrow();
+      expect(getColumn(t.db, doomed.id)).toBeNull();
     });
   });
 });

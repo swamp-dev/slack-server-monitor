@@ -38,7 +38,7 @@ function mapBoard(row: BoardRow): Board {
 }
 
 export function getBoard(db: PluginDatabase, id: number): Board | null {
-  const row = db.prepare(`SELECT * FROM ${db.prefix}boards WHERE id = ?`).get(id) as
+  const row = db.prepare(`SELECT * FROM ${db.prefix}boards WHERE id = ?`, [`${db.prefix}boards`]).get(id) as
     | BoardRow
     | undefined;
   return row ? mapBoard(row) : null;
@@ -47,7 +47,7 @@ export function getBoard(db: PluginDatabase, id: number): Board | null {
 /** Every board, in display order. Filter with `listBoardsFor` for a given actor. */
 export function listBoards(db: PluginDatabase): Board[] {
   const rows = db
-    .prepare(`SELECT * FROM ${db.prefix}boards WHERE archived = 0 ORDER BY position, id`)
+    .prepare(`SELECT * FROM ${db.prefix}boards WHERE archived = 0 ORDER BY position, id`, [`${db.prefix}boards`])
     .all() as BoardRow[];
   return rows.map(mapBoard);
 }
@@ -67,7 +67,7 @@ export interface CreateBoardInput {
 export function createBoard(db: PluginDatabase, input: CreateBoardInput): Board {
   return db.transaction(() => {
     const owned = db
-      .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}boards WHERE owner_id = ? AND archived = 0`)
+      .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}boards WHERE owner_id = ? AND archived = 0`, [`${db.prefix}boards`])
       .get(input.ownerId) as { c: number };
     if (owned.c >= LIMITS.maxBoardsPerOwner) {
       throw new GoalsError(
@@ -76,7 +76,7 @@ export function createBoard(db: PluginDatabase, input: CreateBoardInput): Board 
       );
     }
 
-    const next = db.prepare(`SELECT MAX(position) AS m FROM ${db.prefix}boards`).get() as {
+    const next = db.prepare(`SELECT MAX(position) AS m FROM ${db.prefix}boards`, [`${db.prefix}boards`]).get() as {
       m: number | null;
     };
     const now = Date.now();
@@ -86,7 +86,7 @@ export function createBoard(db: PluginDatabase, input: CreateBoardInput): Board 
         `INSERT INTO ${db.prefix}boards
          (title, description, owner_id, visibility, is_default, archived, position, created_at, updated_at)
          VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)`
-      )
+      , [`${db.prefix}boards`])
       .run(
         input.title,
         input.description ?? '',
@@ -103,7 +103,7 @@ export function createBoard(db: PluginDatabase, input: CreateBoardInput): Board 
       const insertColumn = db.prepare(
         `INSERT INTO ${db.prefix}columns (board_id, name, color, is_done, wip_limit, position, created_at)
          VALUES (?, ?, ?, ?, NULL, ?, ?)`
-      );
+      , [`${db.prefix}columns`]);
       DEFAULT_COLUMNS.forEach((column, index) => {
         insertColumn.run(boardId, column.name, column.color, column.isDone ? 1 : 0, index, now);
       });
@@ -128,7 +128,7 @@ export function updateBoard(db: PluginDatabase, id: number, input: UpdateBoardIn
   db.prepare(
     `UPDATE ${db.prefix}boards SET title = ?, description = ?, visibility = ?, updated_at = ?
      WHERE id = ?`
-  ).run(
+  , [`${db.prefix}boards`]).run(
     input.title ?? existing.title,
     input.description ?? existing.description,
     input.visibility ?? existing.visibility,
@@ -155,10 +155,10 @@ export function deleteBoard(db: PluginDatabase, id: number): void {
     db.prepare(
       `DELETE FROM ${db.prefix}comments
        WHERE card_id IN (SELECT id FROM ${db.prefix}cards WHERE board_id = ?)`
-    ).run(id);
-    db.prepare(`DELETE FROM ${db.prefix}cards WHERE board_id = ?`).run(id);
-    db.prepare(`DELETE FROM ${db.prefix}columns WHERE board_id = ?`).run(id);
-    db.prepare(`DELETE FROM ${db.prefix}boards WHERE id = ?`).run(id);
+    , [`${db.prefix}comments`, `${db.prefix}cards`]).run(id);
+    db.prepare(`DELETE FROM ${db.prefix}cards WHERE board_id = ?`, [`${db.prefix}cards`]).run(id);
+    db.prepare(`DELETE FROM ${db.prefix}columns WHERE board_id = ?`, [`${db.prefix}columns`]).run(id);
+    db.prepare(`DELETE FROM ${db.prefix}boards WHERE id = ?`, [`${db.prefix}boards`]).run(id);
   });
 }
 
@@ -168,7 +168,7 @@ export function getDefaultBoard(db: PluginDatabase): Board | null {
     .prepare(
       `SELECT * FROM ${db.prefix}boards WHERE archived = 0
        ORDER BY is_default DESC, position, id LIMIT 1`
-    )
+    , [`${db.prefix}boards`])
     .get() as BoardRow | undefined;
   return row ? mapBoard(row) : null;
 }
@@ -180,7 +180,7 @@ export function reorderBoards(db: PluginDatabase, orderedIds: number[]): void {
       throw new GoalsError('COUNT_MISMATCH', 'That board list is out of date. Reload and retry.');
     }
 
-    const update = db.prepare(`UPDATE ${db.prefix}boards SET position = ? WHERE id = ?`);
+    const update = db.prepare(`UPDATE ${db.prefix}boards SET position = ? WHERE id = ?`, [`${db.prefix}boards`]);
     orderedIds.forEach((id, index) => update.run(index, id));
   });
 }

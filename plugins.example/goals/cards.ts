@@ -53,7 +53,7 @@ function mapCard(row: CardRow): Card {
 }
 
 export function getCard(db: PluginDatabase, id: number): Card | null {
-  const row = db.prepare(`SELECT * FROM ${db.prefix}cards WHERE id = ?`).get(id) as
+  const row = db.prepare(`SELECT * FROM ${db.prefix}cards WHERE id = ?`, [`${db.prefix}cards`]).get(id) as
     | CardRow
     | undefined;
   return row ? mapCard(row) : null;
@@ -63,7 +63,7 @@ export function listCardsInColumn(db: PluginDatabase, columnId: number): Card[] 
   const rows = db
     .prepare(
       `SELECT * FROM ${db.prefix}cards WHERE column_id = ? AND archived = 0 ORDER BY position, id`
-    )
+    , [`${db.prefix}cards`])
     .all(columnId) as CardRow[];
   return rows.map(mapCard);
 }
@@ -75,11 +75,11 @@ export function listCardsInColumn(db: PluginDatabase, columnId: number): Card[] 
 export function renumberColumn(db: PluginDatabase, columnId: number): void {
   const ids = (
     db
-      .prepare(`SELECT id FROM ${db.prefix}cards WHERE column_id = ? ORDER BY position, id`)
+      .prepare(`SELECT id FROM ${db.prefix}cards WHERE column_id = ? ORDER BY position, id`, [`${db.prefix}cards`])
       .all(columnId) as { id: number }[]
   ).map((r) => r.id);
 
-  const update = db.prepare(`UPDATE ${db.prefix}cards SET position = ? WHERE id = ?`);
+  const update = db.prepare(`UPDATE ${db.prefix}cards SET position = ? WHERE id = ?`, [`${db.prefix}cards`]);
   ids.forEach((id, index) => update.run(index, id));
 }
 
@@ -101,7 +101,7 @@ export function createCard(db: PluginDatabase, input: CreateCardInput): Card {
     // accumulated 500 archived cards becomes permanently un-addable-to while
     // displaying as empty.
     const count = db
-      .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE column_id = ? AND archived = 0`)
+      .prepare(`SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE column_id = ? AND archived = 0`, [`${db.prefix}cards`])
       .get(column.id) as { c: number };
     if (count.c >= LIMITS.maxCardsPerColumn) {
       throw new GoalsError(
@@ -111,7 +111,7 @@ export function createCard(db: PluginDatabase, input: CreateCardInput): Card {
     }
 
     const tail = db
-      .prepare(`SELECT MAX(position) AS m FROM ${db.prefix}cards WHERE column_id = ?`)
+      .prepare(`SELECT MAX(position) AS m FROM ${db.prefix}cards WHERE column_id = ?`, [`${db.prefix}cards`])
       .get(column.id) as { m: number | null };
 
     const now = Date.now();
@@ -121,7 +121,7 @@ export function createCard(db: PluginDatabase, input: CreateCardInput): Card {
          (board_id, column_id, title, description, assignee_id, due_date, position,
           archived, created_by, created_at, updated_at, completed_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`
-      )
+      , [`${db.prefix}cards`])
       .run(
         column.boardId,
         column.id,
@@ -159,7 +159,7 @@ export function updateCard(db: PluginDatabase, id: number, input: UpdateCardInpu
     `UPDATE ${db.prefix}cards
      SET title = ?, description = ?, assignee_id = ?, due_date = ?, updated_at = ?
      WHERE id = ?`
-  ).run(
+  , [`${db.prefix}cards`]).run(
     input.title ?? existing.title,
     input.description ?? existing.description,
     input.assigneeId === undefined ? existing.assigneeId : input.assigneeId,
@@ -178,7 +178,7 @@ export function setCardArchived(db: PluginDatabase, id: number, archived: boolea
     const existing = getCard(db, id);
     if (!existing) throw new GoalsError('NOT_FOUND', 'That card no longer exists');
 
-    db.prepare(`UPDATE ${db.prefix}cards SET archived = ?, updated_at = ? WHERE id = ?`).run(
+    db.prepare(`UPDATE ${db.prefix}cards SET archived = ?, updated_at = ? WHERE id = ?`, [`${db.prefix}cards`]).run(
       archived ? 1 : 0,
       Date.now(),
       id
@@ -196,8 +196,8 @@ export function deleteCard(db: PluginDatabase, id: number): void {
     const existing = getCard(db, id);
     if (!existing) throw new GoalsError('NOT_FOUND', 'That card no longer exists');
 
-    db.prepare(`DELETE FROM ${db.prefix}comments WHERE card_id = ?`).run(id);
-    db.prepare(`DELETE FROM ${db.prefix}cards WHERE id = ?`).run(id);
+    db.prepare(`DELETE FROM ${db.prefix}comments WHERE card_id = ?`, [`${db.prefix}comments`]).run(id);
+    db.prepare(`DELETE FROM ${db.prefix}cards WHERE id = ?`, [`${db.prefix}cards`]).run(id);
     renumberColumn(db, existing.columnId);
   });
 }
@@ -230,7 +230,7 @@ export function moveCard(db: PluginDatabase, input: MoveCardInput): MoveResult {
       const count = db
         .prepare(
           `SELECT COUNT(*) AS c FROM ${db.prefix}cards WHERE column_id = ? AND archived = 0`
-        )
+        , [`${db.prefix}cards`])
         .get(target.id) as { c: number };
       if (count.c >= LIMITS.maxCardsPerColumn) {
         throw new GoalsError(
@@ -246,7 +246,7 @@ export function moveCard(db: PluginDatabase, input: MoveCardInput): MoveResult {
       db
         .prepare(
           `SELECT id FROM ${db.prefix}cards WHERE column_id = ? AND archived = 0 ORDER BY position, id`
-        )
+        , [`${db.prefix}cards`])
         .all(target.id) as { id: number }[]
     )
       .map((r) => r.id)
@@ -258,7 +258,7 @@ export function moveCard(db: PluginDatabase, input: MoveCardInput): MoveResult {
     const now = Date.now();
     const update = db.prepare(
       `UPDATE ${db.prefix}cards SET column_id = ?, position = ?, updated_at = ? WHERE id = ?`
-    );
+    , [`${db.prefix}cards`]);
     destination.forEach((id, index) => update.run(target.id, index, now, id));
 
     if (fromColumnId !== target.id) {
@@ -266,9 +266,9 @@ export function moveCard(db: PluginDatabase, input: MoveCardInput): MoveResult {
 
       const wasDone = card.completedAt !== null;
       if (target.isDone && !wasDone) {
-        db.prepare(`UPDATE ${db.prefix}cards SET completed_at = ? WHERE id = ?`).run(now, card.id);
+        db.prepare(`UPDATE ${db.prefix}cards SET completed_at = ? WHERE id = ?`, [`${db.prefix}cards`]).run(now, card.id);
       } else if (!target.isDone && wasDone) {
-        db.prepare(`UPDATE ${db.prefix}cards SET completed_at = NULL WHERE id = ?`).run(card.id);
+        db.prepare(`UPDATE ${db.prefix}cards SET completed_at = NULL WHERE id = ?`, [`${db.prefix}cards`]).run(card.id);
       }
     }
 
